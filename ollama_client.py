@@ -1,77 +1,64 @@
 from __future__ import annotations
 
-import enum
 import logging
 import aiohttp
-
-from .const import (
-    CONF_STAGE1_IP,
-    CONF_STAGE1_PORT,
-    CONF_STAGE1_MODEL,
-    CONF_STAGE2_IP,
-    CONF_STAGE2_PORT,
-    CONF_STAGE2_MODEL,
-)
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class Stage(enum.Enum):
-    """Enum for Multi-Stage Assist stages."""
+class OllamaClient:
+    """Thin client for Ollama REST API."""
 
-    STAGE1 = 1
-    STAGE2 = 2
+    def __init__(self, ip: str, port: int):
+        self.ip = ip
+        self.port = port
+        self.base_url = f"http://{ip}:{port}"
 
+    async def test_connection(self) -> bool:
+        url = f"{self.base_url}/api/version"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as resp:
+                resp.raise_for_status()
+                return True
 
-def _get_stage_config(config: dict, stage: Stage) -> tuple[str, int, str]:
-    """Return (ip, port, model) for the given stage."""
-    if stage == Stage.STAGE1:
-        return (
-            config[CONF_STAGE1_IP],
-            config[CONF_STAGE1_PORT],
-            config[CONF_STAGE1_MODEL],
-        )
-    elif stage == Stage.STAGE2:
-        return (
-            config[CONF_STAGE2_IP],
-            config[CONF_STAGE2_PORT],
-            config[CONF_STAGE2_MODEL],
-        )
-    else:
-        raise ValueError(f"Unknown stage: {stage}")
+    async def get_models(self) -> list[str]:
+        url = f"{self.base_url}/api/tags"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+                return [m["name"] for m in data.get("models", [])]
 
+    async def chat(
+        self,
+        model: str,
+        system_prompt: str,
+        prompt: str,
+        temperature: float = 0.25,
+    ) -> str:
+        """Send a chat request to Ollama."""
+        url = f"{self.base_url}/api/chat"
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            "stream": False,
+            "options": {"num_ctx": 1024, "temperature": temperature},
+        }
 
-async def query_ollama(
-    config: dict,
-    stage: Stage,
-    system_prompt: str,
-    prompt: str,
-) -> str:
-    """Send a chat request to Ollama at given stage."""
-    ip, port, model = _get_stage_config(config, stage)
-    url = f"http://{ip}:{port}/api/chat"
+        _LOGGER.debug("Querying Ollama at %s with model=%s", url, model)
 
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ],
-        "stream": False,
-    }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, timeout=60) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
 
-    _LOGGER.debug("Querying Ollama %s at %s with model=%s", stage, url, model)
+        if "message" in data and "content" in data["message"]:
+            return data["message"]["content"]
+        if "response" in data:
+            return data["response"]
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload, timeout=60) as resp:
-            resp.raise_for_status()
-            data = await resp.json()
-
-    # Ollama returns either "message" or "response"
-    if "message" in data and "content" in data["message"]:
-        return data["message"]["content"]
-    if "response" in data:
-        return data["response"]
-
-    _LOGGER.warning("Unexpected Ollama response: %s", data)
-    return ""
+        _LOGGER.warning("Unexpected Ollama response: %s", data)
+        return ""

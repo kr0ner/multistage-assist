@@ -92,8 +92,23 @@ class PromptExecutor:
 
     @staticmethod
     def _schema_to_prompt(schema: dict) -> str:
-        """Convert a JSON schema into an 'Output format' block for the LLM."""
-        return "\n\n## Output format\n" + json.dumps(schema, indent=2, ensure_ascii=False)
+        """Convert a JSON schema into a clear 'Output format' block for the LLM."""
+        props = schema.get("properties", {})
+        required = schema.get("required", [])
+
+        lines = ["\n\n## Output format", "Return ONLY a JSON object with the following fields:"]
+
+        for key, val in props.items():
+            typ = val.get("type", "string")
+            enum = val.get("enum")
+            if enum:
+                lines.append(f'- "{key}": one of {enum}')
+            else:
+                lines.append(f'- "{key}": {typ}')
+            if key in required:
+                lines[-1] += " (required)"
+
+        return "\n".join(lines)
 
     @staticmethod
     def _validate_schema(result: dict[str, Any], schema: dict | None) -> bool:

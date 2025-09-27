@@ -145,6 +145,7 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
         _LOGGER.debug("Resolution LLM output for '%s': %s", user_input.text, data)
 
         entities = (data or {}).get("entities") or []
+        message = (data or {}).get("message") or ""
         action = (data or {}).get("action")
 
         if action == "abort":
@@ -170,7 +171,7 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
                 user_input,
             )
 
-        # Success: clear state
+        # ✅ Success: clear state
         self._pending_disambiguation.pop(key, None)
 
         intent_obj = pending.get("intent")
@@ -181,9 +182,7 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
 
                 # ✅ Build slots in HA format
                 if len(entities) == 1:
-                    slots: Dict[str, Dict[str, Any]] = {
-                        "name": {"value": entities[0]}
-                    }
+                    slots: Dict[str, Dict[str, Any]] = {"name": {"value": entities[0]}}
                 else:
                     slots = {"name": {"value": entities}}
 
@@ -208,6 +207,18 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
                     context=user_input.context,
                     language=user_input.language or "de",
                 )
+
+                # ✅ Always ensure speech is set
+                if not resp.speech:
+                    if message:
+                        resp.async_set_speech(message)
+                    else:
+                        # fallback if even LLM gave no message
+                        if len(entities) == 1:
+                            pretty = pending["candidates"].get(entities[0], entities[0])
+                            resp.async_set_speech(f"Okay, ich schalte {pretty} ein.")
+                        else:
+                            resp.async_set_speech("Okay, ich habe die Geräte geschaltet.")
 
                 return conversation.ConversationResult(
                     response=resp,

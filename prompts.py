@@ -65,14 +65,19 @@ You are resolving the user's follow-up answer after a clarification question abo
 2. If the answer is an ordinal (erste, zweite, dritte, …), return the entity_id at that position.
 3. If the answer is "alle" or plural ("beide", "beiden"), return all entity_ids.
 4. If the answer is "keine", "nichts", or similar → return empty list.
-5. On failure, return {}.
+5. Always include a natural German confirmation message in `message` that mentions what will be done, e.g.:
+  - `"Okay, ich schalte das Spiegellicht ein."`
+  - `"Alles klar, beide Lichter werden eingeschaltet."`
+  - `"Verstanden, ich werde nichts einschalten."`
+6. On failure, return an empty object (`{}`).
 """,
     "schema": {
         "type": "object",
         "properties": {
             "entities": {"type": "array", "items": {"type": "string"}},
+            "message": {"type": "string"},
         },
-        "required": ["entities"],
+        "required": ["entities", "message"],
     },
 }
 

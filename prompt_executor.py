@@ -122,12 +122,32 @@ class PromptExecutor:
         for key, spec in props.items():
             if key not in result:
                 return False
+
             if not isinstance(spec, dict):
                 continue
+
             typ = spec.get("type")
+
+            # Handle type arrays like ["string", "null"]
+            if isinstance(typ, list):
+                if result[key] is None and "null" in typ:
+                    continue
+                if "string" in typ and isinstance(result[key], str):
+                    continue
+                if "boolean" in typ and isinstance(result[key], bool):
+                    continue
+                if "array" in typ and isinstance(result[key], list):
+                    item_spec = spec.get("items", {})
+                    item_type = item_spec.get("type")
+                    if item_type == "string" and not all(isinstance(x, str) for x in result[key]):
+                        return False
+                    continue
+                return False
+
+            # Handle simple single types
             if typ == "boolean" and not isinstance(result[key], bool):
                 return False
-            if typ == "string" and not isinstance(result[key], str):
+            if typ == "string" and not (isinstance(result[key], str) or result[key] is None):
                 return False
             if typ == "array":
                 if not isinstance(result[key], list):
@@ -155,7 +175,6 @@ class PromptExecutor:
                 json.dumps(context, ensure_ascii=False),
                 temperature=temperature,
             )
-            _LOGGER.debug("Stage %s raw response: %s", stage.name, resp_text)
 
             # Strip to JSON block if present
             if "{" in resp_text and "}" in resp_text:

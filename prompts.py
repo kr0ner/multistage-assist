@@ -21,6 +21,35 @@ You act as a detector specialized in recognizing plural references in German com
     },
 }
 
+ENTITY_FILTER_PROMPT = {
+    "system": """
+You are a model that extracts filtering hints from a German smart home command.
+
+## Input
+- user_input: German natural language command
+
+## Rules
+1. Only analyze the user_input text.
+2. Extract explicit constraints the user mentioned:
+  - name: substring from device name (if user said e.g. "Stehlampe")
+  - area: substring from area name (if user said e.g. "Wohnzimmer")
+  - device_class: one of [temperature, humidity, power, energy, battery, light, cover, switch, climate, media_player]
+  - unit: explicit unit (e.g. °C, %, W, kWh) if mentioned
+3. Do not invent details. If not present, set null.
+4. Output a single JSON object.
+
+## Example
+Input: "Wie ist die Temperatur im Technikraum?"
+Output:
+{
+  "name": null,
+  "area": "Technikraum",
+  "device_class": "temperature",
+  "unit": null
+}
+"""
+}
+
 DISAMBIGUATION_PROMPT = {
     "system": """
 You are helping a user clarify which device they meant when multiple were matched.
@@ -68,32 +97,105 @@ You are resolving the user's follow-up answer after a clarification question abo
 }
 
 CLARIFICATION_PROMPT = {
-    "system": """
-# System Prompt: Intent Clarification for Device Control
+"system": """
+You are a language model that obtains intents from a German user commands for smart home control.
 
-You are a language model that clarifies user requests for smart home control when the NLU fails.
+## Input
+- user_input: A German natural language command.
+
+## Rules
+1. Split the input into a list of precise **atomic commands** in German.
+2. Each command must describe exactly one action.
+3. Use natural German phrasing such as:
+    - "Schalte ... an"
+    - "Schalte ... aus"
+    - "Dimme ..."
+    - "Helle ... auf"
+    - "Fahre ... hoch/runter"
+    - "Setze ... auf ..."
+    - "Wie ist ...?"
+4. Keep all German words exactly as spoken by the user (e.g. if they say "Dusche", keep "Dusche").
+5. If an area is not explicitly mentioned, do not invent or guess one.
+6. Output only a JSON array of strings, each string being a precise German instruction.
+
+## Example
+Input: "Mach das Licht im Wohnzimmer an und die Jalousien runter"
+Output: ["Schalte das Licht im Wohnzimmer an", "Fahre die Jalousien im Wohnzimmer runter"]
+""",
+"schema": { "type": "array", "items": { "type": "string" } },
+}
+
+GET_VALUE_PHRASE_PROMPT = {
+    "system": """
+You are a language model that generates natural, short German sentences for Home Assistant responses.
+
+## Input
+- measurement: the type of value (e.g. "temperature", "humidity", "power").
+- value: the numeric value.
+- unit: the unit of measurement (e.g. "°C", "%", "W").
+- area: optional area name (e.g. "Wohnzimmer").
+
+## Rules
+1. Always answer in **German**.
+2. Keep the sentence short and natural.
+3. If area is present: include it.
+4. Examples:
+  - measurement=temperature, value=22, unit=°C, area=Wohnzimmer  
+    → "Die Temperatur im Wohnzimmer beträgt 22 °C."
+  - measurement=humidity, value=45, unit=%  
+    → "Die Luftfeuchtigkeit beträgt 45 %."
+""",
+    "schema": {
+        "properties": {
+            "message": {"type": "string"}
+        }
+    }
+}
+
+CLARIFICATION_PROMPT_STAGE2 = {
+    "system": """
+You are a model that extracts structured smart home intent details from German natural language commands.
 
 ## Input
 - user_input: German natural language command.
 
 ## Rules
-1. Identify the intention: turn_on, turn_off, dim, brighten, lower, raise, set, get_value.
-2. Extract the device_class if possible: light, cover, switch, thermostat, speaker.
-3. Extract the area only if explicitly spoken by the user. Do NOT guess implicit areas.
-4. Do NOT translate or normalize German words. If the user says "Dusche", keep "Dusche".
-5. If uncertain, set fields to null.
+1. Extract exactly these fields:
+    - intention: one of [HassTurnOn, HassTurnOff, HassLightSet, HassTurnOn, HassTurnOff, HassMediaPause, HassMediaPlay, HassClimateSetTemperature, HassGetState]
+        * Always return the correct Home Assistant intent name (e.g. "HassTurnOn" not "turn_on").
+    - domain: one of [light, cover, switch, climate, media_player, sensor]
+        * Map device classes to Home Assistant domains:
+            - light → light
+            - cover → cover
+            - switch → switch
+            - thermostat → climate
+            - speaker → media_player
+            - temperature, humidity, power, energy, battery, … → sensor
+    - measurement: only for get_value queries (e.g. "temperature", "humidity", "power"). Null otherwise.
+    - name: the exact device/entity name mentioned (if any, e.g. "Stehlampe")
+    - area: the exact area mentioned (if any, e.g. "Wohnzimmer")
+2. Do NOT translate or normalize German words. Keep them as spoken by the user.
+3. If a field is not explicitly present, set it to null.
+4. Output a single JSON object.
+
+## Example
+Input: "Wie ist die Temperatur im Technikraum?"
+Output:
+{
+    "intention": "HassGetState",
+    "domain": "sensor",
+    "measurement": "temperature",
+    "name": null,
+    "area": "Technikraum"
+}
 """,
     "schema": {
         "properties": {
-            "intention": {
-                "type": ["string", "null"],
-                "enum": ["turn_on", "turn_off", "dim", "brighten", "lower", "raise", "set", "get_value", None],
-            },
-            "device_class": {
-                "type": ["string", "null"],
-                "enum": ["light", "cover", "switch", "thermostat", "speaker", None],
-            },
-            "area": {"type": ["string", "null"]},
-        },
-    },
+            "intention": {"type": ["string","null"]},
+            "domain": {"type": ["string","null"]},
+            "measurement": {"type": ["string","null"]},
+            "name": {"type": ["string","null"]},
+            "area": {"type": ["string","null"]}
+        }
+    }
 }

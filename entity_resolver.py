@@ -1,15 +1,34 @@
 # entity_resolver.py
 import dataclasses
-from homeassistant.helpers import area_registry, entity_registry, device_registry  # NEW
-from rapidfuzz import fuzz
+import asyncio
+import importlib
+from homeassistant.helpers import area_registry, entity_registry, device_registry
+
+_fuzz = None
+
+
+async def get_fuzz():
+    """Lazy-load rapidfuzz.fuzz in executor to avoid blocking event loop."""
+    global _fuzz
+    if _fuzz is None:
+        loop = asyncio.get_running_loop()
+
+        def _load():
+            return importlib.import_module("rapidfuzz.fuzz")
+
+        _fuzz = await loop.run_in_executor(None, _load)
+    return _fuzz
+
 
 @dataclasses.dataclass
 class ResolvedEntities:
     by_area: list[str]
     by_name: list[str]
+
     @property
     def merged(self) -> list[str]:
         return list({*self.by_area, *self.by_name})
+
 
 class EntityResolver:
     """Utility to resolve entities from NLU slots with fuzzy matching."""
@@ -33,6 +52,8 @@ class EntityResolver:
 
         norm_area = area_name.strip().lower() if area_name else None
         norm_name = name.strip().lower() if name else None
+
+        fuzz = await get_fuzz()
 
         for ent in ent_reg.entities.values():
             # Domain filter

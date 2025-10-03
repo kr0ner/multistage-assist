@@ -33,7 +33,7 @@ You are a model that extracts filtering hints from a German smart home command.
 2. Extract explicit constraints the user mentioned:
   - name: substring from device name (if user said e.g. "Stehlampe")
   - area: substring from area name (if user said e.g. "Wohnzimmer")
-  - device_class: one of [temperature, humidity, power, energy, battery, light, cover, switch, climate, media_player]
+  - device_class: known ones mentioned in the output
   - unit: explicit unit (e.g. °C, %, W, kWh) if mentioned
 3. Do not invent details. If not present, set null.
 4. Output a single JSON object.
@@ -47,7 +47,63 @@ Output:
   "device_class": "temperature",
   "unit": null
 }
-"""
+""",
+    "schema": {
+        "properties": {
+            "name": {"type": ["string", "null"]},
+            "area": {"type": ["string", "null"]},
+            "device_class": {
+                "anyOf": [
+                    {"type": "null"},
+                    {
+                        "type": "string",
+                        "enum": [
+                            "temperature",
+                            "humidity",
+                            "power",
+                            "energy",
+                            "battery",
+                            "light",
+                            "cover",
+                            "switch",
+                            "climate",
+                            "media_player",
+                        ],
+                    },
+                ]
+            },
+            "unit": {"type": ["string", "null"]},
+        },
+    },
+}
+
+SENSOR_SELECTION_PROMPT = {
+    "system": """
+You are a model that resolves ambiguous smart home sensor queries in German.
+
+## Input
+- user_input: The German natural language query from the user.
+- input_entities: A JSON object mapping entity_id → friendly_name of candidate sensors.
+
+## Rules
+1. Your task is to decide which entities from input_entities best match the user_input.
+2. If the user_input clearly refers to a single entity, return that entity.
+3. If multiple entities match and the user asked for all of them, or some subset ("erste", "letzte", "beide", "alle"), return the correct list.
+4. If the user requested an aggregation (Durchschnitt, Mittelwert, Durchschnittstemperatur, Minimum, Maximum, Summe, etc.), return the correct Python lambda as "function" that operates on `values: list[float]`.
+   Examples:
+     - average: "lambda values: sum(values)/len(values)"
+     - maximum: "lambda values: max(values)"
+     - minimum: "lambda values: min(values)"
+     - sum: "lambda values: sum(values)"
+5. If the user asked for none ("keine"), return an empty entity list.
+""",
+    "schema": {
+        "properties": {
+            "entities": {"type": "array", "items": {"type": "string"}},
+            "function": {"type": ["string", "null"]},
+            "message": {"type": ["string", "null"]},
+        },
+    },
 }
 
 DISAMBIGUATION_PROMPT = {
@@ -97,7 +153,7 @@ You are resolving the user's follow-up answer after a clarification question abo
 }
 
 CLARIFICATION_PROMPT = {
-"system": """
+    "system": """
 You are a language model that obtains intents from a German user commands for smart home control.
 
 ## Input
@@ -122,7 +178,10 @@ You are a language model that obtains intents from a German user commands for sm
 Input: "Mach das Licht im Wohnzimmer an und die Jalousien runter"
 Output: ["Schalte das Licht im Wohnzimmer an", "Fahre die Jalousien im Wohnzimmer runter"]
 """,
-"schema": { "type": "array", "items": { "type": "string" } },
+    "schema": {
+        "type": "array",
+        "items": {"type": "string"},
+    },
 }
 
 GET_VALUE_PHRASE_PROMPT = {

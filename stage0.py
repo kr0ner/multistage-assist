@@ -1,42 +1,31 @@
 import logging
-from typing import Optional, List
+from typing import Dict, Any
 
 from homeassistant.components import conversation
 from homeassistant.components.conversation.default_agent import DefaultAgent
 from hassil.recognize import recognize_best
+from homeassistant.helpers import intent
 
-from .entity_resolver import EntityResolver
+from .base_stage import BaseStage
+from .capabilities.entity_resolver import EntityResolverCapability
+from .conversation_utils import error_response
+from .stage_result import Stage0Result
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class Stage0Result:
-    """Container for Stage0 output passed forward."""
-    def __init__(self, type_: str, intent=None, raw=None, resolved_ids: Optional[List[str]] = None):
-        self.type = type_
-        self.intent = intent
-        self.raw = raw
-        self.resolved_ids = resolved_ids or []
-
-
-class Stage0Processor:
+class Stage0Processor(BaseStage):
     """Stage 0: Dry-run NLU and early entity resolution (no LLM)."""
-
-    def __init__(self, hass, config):
-        self.hass = hass
-        self.config = config
-        self.entities = EntityResolver(hass)
+    name = "stage0"
 
     async def _dry_run_recognize(self, user_input: conversation.ConversationInput):
         agent = conversation.async_get_agent(self.hass)
         if not isinstance(agent, DefaultAgent):
-            _LOGGER.warning("Only works with DefaultAgent right now")
             return None
 
         language = user_input.language or "de"
         lang_intents = await agent.async_get_or_load_intents(language)
-        if lang_intents is None:
-            _LOGGER.debug("No intents loaded for language=%s", language)
+        if not lang_intents:
             return None
 
         slot_lists = await agent._make_slot_lists()
@@ -53,31 +42,83 @@ class Stage0Processor:
                 best_slot_name="name",
             )
 
-        _LOGGER.debug("Running dry-run recognize for utterance='%s'", user_input.text)
         return await self.hass.async_add_executor_job(_run)
 
-    async def run(self, user_input: conversation.ConversationInput) -> Stage0Result | None:
-        result = await self._dry_run_recognize(user_input)
-        if not result or not result.intent:
-            _LOGGER.debug("NLU did not produce an intent.")
-            return None
+    def _normalize_entities(self, entities: Dict[str, Any] | None) -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        if not entities:
+            return out
+        for k, v in entities.items():
+            out[str(k)] = getattr(v, "value", v)
+        return out
 
-        entities = {k: v.value for k, v in (result.entities or {}).items()}
-        _LOGGER.debug("NLU extracted entities: %s", entities)
-        resolved = await self.entities.resolve(entities)
-        _LOGGER.debug(
-            "Resolved entity_ids: by_area=%s, by_name=%s, merged=%s",
-            resolved.by_area, resolved.by_name, resolved.merged
+    async def run(self, user_input: conversation.ConversationInput, prev_result=None):
+        match = await self._dry_run_recognize(user_input)
+        if not match or not getattr(match, "intent", None):
+            return {"status": "escalate", "result": None}
+
+        norm_entities = self._normalize_entities(getattr(match, "entities", None))
+
+        # Resolve entities
+        resolver = EntityResolverCapability(self.hass, self.config)
+        resolved = await resolver.run(user_input, entities=norm_entities)
+        resolved_ids = (resolved or {}).get("resolved_ids", [])
+
+        # Prepare Stage0Result once
+        intent_name = getattr(match.intent, "name", None) or match.intent
+        result = Stage0Result(
+            type=("intent" if resolved_ids else "clarification"),
+            intent=intent_name,
+            raw=user_input.text,
+            resolved_ids=resolved_ids,
         )
 
-        if not resolved.merged:
-            _LOGGER.debug("No entities resolved → Stage1 clarification")
-            return Stage0Result("clarification", raw=result)
-
+        # Too many candidates? Ask next stage to clarify.
         threshold = int(getattr(self.config, "early_filter_threshold", 10))
-        merged_ids = list(resolved.merged)
-        if len(merged_ids) > threshold:
-            _LOGGER.debug("Too many entities (%d) → Stage1 clarification", len(merged_ids))
-            return Stage0Result("clarification", raw=result)
+        if resolved_ids and len(resolved_ids) > threshold:
+            result = Stage0Result(
+                type="clarification",
+                intent=intent_name,
+                raw=user_input.text,
+                resolved_ids=resolved_ids,
+            )
+            return {"status": "escalate", "result": result}
 
-        return Stage0Result("intent", intent=result.intent, raw=result, resolved_ids=merged_ids)
+        # If there is nothing concrete yet → escalate
+        if not resolved_ids:
+            return {"status": "escalate", "result": result}
+
+        # Single, known Hass intent → execute directly
+        if len(resolved_ids) == 1 and intent_name and intent_name.startswith("Hass"):
+            try:
+                agent = conversation.async_get_agent(self.hass)
+                exec_result = await agent.async_handle_intents(user_input)
+
+                if isinstance(exec_result, conversation.ConversationResult):
+                    return {"status": "handled", "result": exec_result}
+
+                if isinstance(exec_result, intent.IntentResponse):
+                    conv_result = conversation.ConversationResult(
+                        response=exec_result,
+                        conversation_id=user_input.conversation_id,
+                        continue_conversation=True,
+                    )
+                    return {"status": "handled", "result": conv_result}
+
+                # Unknown type from agent
+                return {
+                    "status": "error",
+                    "result": await error_response(
+                        user_input,
+                        "Fehler: Unerwarteter Antworttyp vom Intent-Handler.",
+                    ),
+                }
+            except Exception as err:
+                _LOGGER.exception("[Stage0] Intent execution crashed: %s", err)
+                return {
+                    "status": "error",
+                    "result": await error_response(user_input, f"Interner Fehler beim Ausführen: {err}"),
+                }
+
+        # Multiple candidates → escalate for disambiguation
+        return {"status": "escalate", "result": result}

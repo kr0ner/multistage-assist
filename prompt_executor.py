@@ -16,10 +16,8 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class Stage(enum.Enum):
-    """Enum for Multi-Stage Assist stages."""
     STAGE1 = 1
     STAGE2 = 2
-    # STAGE3 = 3 (future)
 
 
 DEFAULT_ESCALATION_PATH: list[Stage] = [Stage.STAGE1, Stage.STAGE2]
@@ -27,17 +25,9 @@ DEFAULT_ESCALATION_PATH: list[Stage] = [Stage.STAGE1, Stage.STAGE2]
 
 def _get_stage_config(config: dict, stage: Stage) -> tuple[str, int, str]:
     if stage == Stage.STAGE1:
-        return (
-            config[CONF_STAGE1_IP],
-            config[CONF_STAGE1_PORT],
-            config[CONF_STAGE1_MODEL],
-        )
+        return (config[CONF_STAGE1_IP], config[CONF_STAGE1_PORT], config[CONF_STAGE1_MODEL])
     if stage == Stage.STAGE2:
-        return (
-            config[CONF_STAGE2_IP],
-            config[CONF_STAGE2_PORT],
-            config[CONF_STAGE2_MODEL],
-        )
+        return (config[CONF_STAGE2_IP], config[CONF_STAGE2_PORT], config[CONF_STAGE2_MODEL])
     raise ValueError(f"Unknown stage: {stage}")
 
 
@@ -63,61 +53,79 @@ class PromptExecutor:
         system_prompt = prompt["system"]
         schema = prompt.get("schema")
 
-        # Add schema-based output format to the system prompt automatically
         if schema:
             system_prompt = system_prompt.strip() + self._schema_to_prompt(schema)
 
         for stage in self.escalation_path:
             result = await self._execute(stage, system_prompt, context, temperature)
-
             if result is None:
-                _LOGGER.info("Stage %s returned None (execution/parsing error), escalating...", stage.name)
+                _LOGGER.info("Stage %s returned None, escalating...", stage.name)
                 continue
 
             if self._validate_schema(result, schema):
-                _LOGGER.debug("Stage %s validated successfully against schema: %s", stage.name, schema)
                 if isinstance(result, dict):
                     context.update(result)
                 return result
 
-            _LOGGER.info(
-                "Stage %s produced output but did not satisfy schema. Got=%s",
-                stage.name,
-                result,
-            )
+            _LOGGER.info("Stage %s produced output but did not satisfy schema. Got=%s", stage.name, result)
 
-        _LOGGER.warning("All stages exhausted without valid result for prompt.")
-        if schema and schema.get("type") == "array":
-            return []
-        return {}
+        return [] if (schema and schema.get("type") == "array") else {}
 
     @staticmethod
     def _schema_to_prompt(schema: dict) -> str:
-        """Emit a clear 'Output format' block with field names and types, no examples."""
+        """
+        Generate a STRICT output-format block that nudges small models
+        to return valid, minified JSON and nothing else.
+        """
         if not schema:
             return ""
 
-        schema_type = schema.get("type")
-
-        if schema_type == "array":
-            item_type = schema.get("items", {}).get("type", "string")
+        # Array schema
+        if schema.get("type") == "array":
+            item_type = (schema.get("items") or {}).get("type", "string")
             return (
-                "\n\n## Output format\n"
-                f"Return ONLY a JSON array of {item_type}s."
+                "\n\n## Output format (STRICT)\n"
+                f"Return ONLY a minified JSON array of {item_type}s.\n"
+                "- No text, no markdown, no backticks.\n"
+                '- Example: ["item1","item2"]\n'
+                '- Invalid: ```["item1"]```  or  Here you go: ["item1"]'
             )
 
-        props = (schema or {}).get("properties", {}) or {}
+        # Object schema (default)
+        props = (schema or {}).get("properties") or {}
         if not props:
-            return ""
+            return (
+                "\n\n## Output format (STRICT)\n"
+                "Return ONLY a minified JSON object.\n"
+                "- No text, no markdown, no backticks.\n"
+                "- Example: {}"
+            )
 
-        lines = ["\n\n## Output format", "Return ONLY a JSON object with all of the following fields that are not null:"]
-        for key, spec in props.items():
-            typ = spec.get("type", "string")
-            if typ == "array":
-                item_type = spec.get("items", {}).get("type", "string")
-                lines.append(f'- "{key}": array of {item_type}s')
-            else:
-                lines.append(f'- "{key}": {typ}')
+        keys = list(props.keys())
+
+        def _slot(t: str, spec: dict) -> str:
+            if t == "array":
+                it = (spec.get("items") or {}).get("type", "string")
+                return f"[<{it}>]"
+            return f"<{t}>"
+
+        example_pairs = []
+        for k, spec in props.items():
+            t = spec.get("type", "string")
+            example_pairs.append(f'"{k}":{_slot(t, spec)}')  # <-- fixed
+
+        example_obj = "{" + ",".join(example_pairs) + "}"
+
+        lines = [
+            "\n\n## Output format (STRICT)",
+            "Return ONLY a **minified JSON object** with **exactly** these keys and **no others**, in this order:",
+            ", ".join(f'"{k}"' for k in keys),
+            "",
+            "- No text, no explanations, no markdown, no backticks.",
+            f"- Example shape: {example_obj}",
+            '- Invalid: {"unexpected":true}, ```{...}```, or any leading/trailing text.',
+        ]
+
         return "\n".join(lines)
 
     @staticmethod
@@ -125,68 +133,60 @@ class PromptExecutor:
         if not schema:
             return bool(result)
 
-        schema_type = schema.get("type")
+        def _is_type(val, t) -> bool:
+            if t == "string":
+                return isinstance(val, str)
+            if t == "boolean":
+                return isinstance(val, bool)
+            if t == "object":
+                return isinstance(val, dict)
+            if t == "array":
+                return isinstance(val, list)
+            if t == "null":
+                return val is None
+            return True  # unknown → assume ok
 
-        # --- Array schema ---
-        if schema_type == "array":
+        stype = schema.get("type")
+
+        # Array schema
+        if stype == "array":
             if not isinstance(result, list):
                 return False
-            item_spec = schema.get("items", {})
-            item_type = item_spec.get("type")
-            if item_type:
-                for item in result:
-                    if item_type == "string" and not isinstance(item, str):
-                        return False
-                    if item_type == "object" and not isinstance(item, dict):
-                        return False
-                    if item_type == "boolean" and not isinstance(item, bool):
-                        return False
-            return True
+            item_type = schema.get("items", {}).get("type")
+            if not item_type:
+                return True
+            return all(_is_type(x, item_type) for x in result)
 
-        # --- Object schema ---
-        if schema_type == "object" or "properties" in schema:
+        # Object schema (or any schema with "properties")
+        if stype == "object" or "properties" in schema:
             if not isinstance(result, dict):
                 return False
 
             props = schema.get("properties", {}) or {}
-            if not props:
-                return True
-
-            # All declared properties are implicitly required
             for key, spec in props.items():
                 if key not in result:
                     return False
-                if not isinstance(spec, dict):
-                    continue
-                typ = spec.get("type")
 
-                # Handle union types like ["string", "null"]
-                if isinstance(typ, list):
-                    if result[key] is None and "null" in typ:
-                        continue
-                    if "string" in typ and isinstance(result[key], str):
-                        continue
-                    if "boolean" in typ and isinstance(result[key], bool):
-                        continue
-                    if "array" in typ and isinstance(result[key], list):
-                        item_spec = spec.get("items", {})
-                        item_type = item_spec.get("type")
-                        if item_type == "string" and not all(isinstance(x, str) for x in result[key]):
-                            return False
-                        continue
-                    return False
+                expected = spec.get("type")
+                val = result[key]
 
-                # Simple types
-                if typ == "boolean" and not isinstance(result[key], bool):
-                    return False
-                if typ == "string" and not (isinstance(result[key], str) or result[key] is None):
-                    return False
-                if typ == "array":
-                    if not isinstance(result[key], list):
+                # Union types like ["string", "null"] or ["array", "null"]
+                if isinstance(expected, list):
+                    return any(_is_type(val, t) for t in expected)
+
+                if expected == "array":
+                    if not isinstance(val, list):
                         return False
-                    item_spec = spec.get("items", {})
-                    item_type = item_spec.get("type")
-                    if item_type == "string" and not all(isinstance(x, str) for x in result[key]):
+                    item_t = spec.get("items", {}).get("type")
+                    if item_t:
+                        if not all(_is_type(x, item_t) for x in val):
+                            return False
+                else:
+                    # permit null if expected is a union implied by docs (string|null)
+                    if val is None and expected != "null":
+                        # allow None only if "null" explicitly allowed via list (handled above)
+                        return False
+                    if val is not None and not _is_type(val, expected or "string"):
                         return False
             return True
 
@@ -201,7 +201,6 @@ class PromptExecutor:
     ) -> dict[str, Any] | list | None:
         ip, port, model = _get_stage_config(self.config, stage)
         client = OllamaClient(ip, port)
-
         try:
             resp_text = await client.chat(
                 model,
@@ -209,15 +208,13 @@ class PromptExecutor:
                 json.dumps(context, ensure_ascii=False),
                 temperature=temperature,
             )
-
-            # Try to extract JSON block
+            # tolerant JSON block extraction
             if "[" in resp_text and "]" in resp_text:
-                cleaned = resp_text[resp_text.find("[") : resp_text.rfind("]") + 1]
+                cleaned = resp_text[resp_text.find("["): resp_text.rfind("]") + 1]
             elif "{" in resp_text and "}" in resp_text:
-                cleaned = resp_text[resp_text.find("{") : resp_text.rfind("}") + 1]
+                cleaned = resp_text[resp_text.find("{"): resp_text.rfind("}") + 1]
             else:
                 cleaned = resp_text.strip()
-
             _LOGGER.debug("Stage %s cleaned response: %s", stage.name, cleaned)
             return json.loads(cleaned)
         except Exception as err:

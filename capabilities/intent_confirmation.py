@@ -14,7 +14,7 @@ class IntentConfirmationCapability(Capability):
     name = "intent_confirmation"
     description = "Create a concise German confirmation message for an intended action."
 
-        PROMPT = {
+    PROMPT = {
         "system": """
 You produce a short, natural confirmation of what will be executed. Write the final message in German (du-form).
 

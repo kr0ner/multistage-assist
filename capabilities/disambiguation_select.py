@@ -32,6 +32,8 @@ You select which candidates the user meant. Do not write explanations.
    - Numeric forms ("1", "1.", "nr 1", "nummer 1") map to ordinal 1
 2. Friendly name fuzzy matching:
    - Normalize lowercased names (ignore accents, trim spaces/punctuation, treat ue/oe/ae ~ ü/ö/ä)
+   - If user_input contains a target that is common in the list of input_entities (e.g., "Badezimmer"), prefer a direct match
+     over variants with modifiers ("Badezimmer Spiegel", "Badezimmer Spots").
 3. "alle" → return all entity_ids.
 4. "beide", "beiden" → return all entity_ids if length of input is two.
 5. "keine", "nichts", "nein" → return an empty array.

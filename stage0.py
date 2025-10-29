@@ -21,11 +21,13 @@ class Stage0Processor(BaseStage):
     async def _dry_run_recognize(self, user_input: conversation.ConversationInput):
         agent = conversation.async_get_agent(self.hass)
         if not isinstance(agent, DefaultAgent):
+            _LOGGER.debug("[Stage0] DefaultAgent not available → skipping dry-run recognize.")
             return None
 
         language = user_input.language or "de"
         lang_intents = await agent.async_get_or_load_intents(language)
         if not lang_intents:
+            _LOGGER.debug("[Stage0] No language intents loaded for '%s'.", language)
             return None
 
         slot_lists = await agent._make_slot_lists()
@@ -53,19 +55,33 @@ class Stage0Processor(BaseStage):
         return out
 
     async def run(self, user_input: conversation.ConversationInput, prev_result=None):
+        _LOGGER.debug(
+            "[Stage0] Input='%s', prev_result=%s",
+            user_input.text,
+            type(prev_result).__name__,
+        )
+
         match = await self._dry_run_recognize(user_input)
         if not match or not getattr(match, "intent", None):
+            _LOGGER.debug("[Stage0] No NLU match → escalate.")
             return {"status": "escalate", "result": None}
 
-        norm_entities = self._normalize_entities(getattr(match, "entities", None))
+        intent_name = getattr(match.intent, "name", None) or match.intent
+        _LOGGER.debug("[Stage0] NLU matched intent='%s'", intent_name)
 
-        # Resolve entities
+        norm_entities = self._normalize_entities(getattr(match, "entities", None))
+        if norm_entities:
+            _LOGGER.debug("[Stage0] NLU extracted entities (raw) keys=%s", list(norm_entities.keys()))
+        else:
+            _LOGGER.debug("[Stage0] NLU extracted no entities")
+
+        # Resolve entities (map friendly/area/slots to concrete entity_ids)
         resolver = EntityResolverCapability(self.hass, self.config)
         resolved = await resolver.run(user_input, entities=norm_entities)
         resolved_ids = (resolved or {}).get("resolved_ids", [])
+        _LOGGER.debug("[Stage0] Entity resolver returned %d id(s): %s", len(resolved_ids), resolved_ids)
 
         # Prepare Stage0Result once
-        intent_name = getattr(match.intent, "name", None) or match.intent
         result = Stage0Result(
             type=("intent" if resolved_ids else "clarification"),
             intent=intent_name,
@@ -76,6 +92,11 @@ class Stage0Processor(BaseStage):
         # Too many candidates? Ask next stage to clarify.
         threshold = int(getattr(self.config, "early_filter_threshold", 10))
         if resolved_ids and len(resolved_ids) > threshold:
+            _LOGGER.debug(
+                "[Stage0] %d candidates exceed threshold=%d → escalate for clarification.",
+                len(resolved_ids),
+                threshold,
+            )
             result = Stage0Result(
                 type="clarification",
                 intent=intent_name,
@@ -84,20 +105,28 @@ class Stage0Processor(BaseStage):
             )
             return {"status": "escalate", "result": result}
 
-        # If there is nothing concrete yet → escalate
+        # If nothing concrete yet → escalate
         if not resolved_ids:
+            _LOGGER.debug("[Stage0] No concrete targets resolved → escalate.")
             return {"status": "escalate", "result": result}
 
-        # Single, known Hass intent → execute directly
+        # Single, known Hass intent → execute directly through HA agent
         if len(resolved_ids) == 1 and intent_name and intent_name.startswith("Hass"):
             try:
+                _LOGGER.debug(
+                    "[Stage0] Direct execution path: intent='%s', single target=%s → delegating to HA agent.",
+                    intent_name,
+                    resolved_ids[0],
+                )
                 agent = conversation.async_get_agent(self.hass)
                 exec_result = await agent.async_handle_intents(user_input)
 
                 if isinstance(exec_result, conversation.ConversationResult):
+                    _LOGGER.debug("[Stage0] Agent returned ConversationResult → handled.")
                     return {"status": "handled", "result": exec_result}
 
                 if isinstance(exec_result, intent.IntentResponse):
+                    _LOGGER.debug("[Stage0] Agent returned IntentResponse → wrapped as ConversationResult.")
                     conv_result = conversation.ConversationResult(
                         response=exec_result,
                         conversation_id=user_input.conversation_id,
@@ -105,7 +134,7 @@ class Stage0Processor(BaseStage):
                     )
                     return {"status": "handled", "result": conv_result}
 
-                # Unknown type from agent
+                _LOGGER.error("[Stage0] Unexpected response type from agent: %r", type(exec_result))
                 return {
                     "status": "error",
                     "result": await error_response(
@@ -121,4 +150,9 @@ class Stage0Processor(BaseStage):
                 }
 
         # Multiple candidates → escalate for disambiguation
+        _LOGGER.debug(
+            "[Stage0] %d candidate(s) and intent='%s' → escalate to Stage1 for disambiguation.",
+            len(resolved_ids),
+            intent_name,
+        )
         return {"status": "escalate", "result": result}

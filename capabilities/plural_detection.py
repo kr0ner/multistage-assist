@@ -5,14 +5,23 @@ from .base import Capability
 
 _LOGGER = logging.getLogger(__name__)
 
-# --- Common singular → plural mapping for smart home entities ---
-# Articles are added **only** where singular == plural (e.g. Fenster, Lautsprecher)
-_ENTITY_PLURALS = {
+# --- Group-specific singular → plural pairs ------------------------
+
+# Lights: used both for plural detection and keyword-based intent grouping
+LIGHT_KEYWORDS: Dict[str, str] = {
     "licht": "lichter",
     "lampe": "lampen",
+}
+
+# Covers: used both for plural detection and keyword-based intent grouping
+COVER_KEYWORDS: Dict[str, str] = {
     "rollladen": "rollläden",
     "rollo": "rollos",
     "jalousie": "jalousien",
+}
+
+# Other entity types (kept here for plural detection only, but can be grouped later)
+OTHER_ENTITY_PLURALS: Dict[str, str] = {
     "das fenster": "die fenster",            # article-based disambiguation
     "tür": "türen",
     "tor": "tore",
@@ -21,6 +30,14 @@ _ENTITY_PLURALS = {
     "ventilator": "ventilatoren",
     "der lautsprecher": "die lautsprecher",  # article-based disambiguation
     "gerät": "geräte",
+}
+
+# --- Common singular → plural mapping for smart home entities ---
+# This is the union of all helpers above
+_ENTITY_PLURALS: Dict[str, str] = {
+    **LIGHT_KEYWORDS,
+    **COVER_KEYWORDS,
+    **OTHER_ENTITY_PLURALS,
 }
 
 # --- Quantifier or numeric plural cues ---

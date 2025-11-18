@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
+from homeassistant.helpers import entity_exposure
 
 from .base import Capability
 
@@ -133,6 +134,27 @@ class EntityResolverCapability(Capability):
                     seen.add(eid)
             if fuzzy_added:
                 _LOGGER.debug("[EntityResolver] Fuzzy enriched with: %s", ", ".join(fuzzy_added))
+
+        # ---------- NEW: filter to exposed entities right before returning ----------
+        try:
+            expo = entity_exposure.get_exposed_entities(hass)
+            # handle either a set-like or dict-like return without importing its internals
+            if isinstance(expo, dict):
+                exposed_ids: Optional[Set[str]] = set(expo.keys())
+            else:
+                exposed_ids = set(expo) if expo is not None else None
+        except Exception as err:
+            _LOGGER.warning("Entity exposure lookup failed (%s); returning unfiltered", err)
+            exposed_ids = None
+
+        if exposed_ids is not None:
+            pre_count = len(resolved)
+            resolved = [eid for eid in resolved if eid in exposed_ids]
+            _LOGGER.debug(
+                "[EntityResolver] Exposure filter kept %d/%d entities",
+                len(resolved), pre_count
+            )
+        # ---------------------------------------------------------------------------
 
         _LOGGER.debug(
             "[EntityResolver] Result → %d entities (area_add=%d, exact=%d, fuzzy=%d): %s",

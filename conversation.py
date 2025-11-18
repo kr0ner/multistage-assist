@@ -22,6 +22,9 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
             Stage1Processor(hass, config),
             Stage2Processor(hass, config),
         ]
+        # 🔧 Give every stage a back-reference to the orchestrator
+        for stage in self._stages:
+            stage.agent = self
 
     @property
     def supported_languages(self) -> set[str]:

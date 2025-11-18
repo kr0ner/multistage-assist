@@ -9,6 +9,8 @@ from .capabilities.disambiguation_select import DisambiguationSelectCapability
 from .capabilities.plural_detection import PluralDetectionCapability
 from .capabilities.intent_confirmation import IntentConfirmationCapability
 from .capabilities.intent_executor import IntentExecutorCapability
+from .capabilities.entity_resolver import EntityResolverCapability
+from .capabilities.keyword_intent import KeywordIntentCapability
 from .conversation_utils import make_response, error_response, with_new_text
 from .stage_result import Stage0Result
 
@@ -26,6 +28,8 @@ class Stage1Processor(BaseStage):
         PluralDetectionCapability,
         IntentConfirmationCapability,
         IntentExecutorCapability,
+        EntityResolverCapability,
+        KeywordIntentCapability,
     ]
 
     def __init__(self, hass, config):
@@ -189,37 +193,101 @@ class Stage1Processor(BaseStage):
             _LOGGER.debug("[Stage1] Stored pending disambiguation context for %s", key)
             return {"status": "handled", "result": await make_response(msg, user_input)}
 
-        # --- Clarification & multi-command parsing -----------------------------
+        # --- Clarification: split into atomic commands -------------------------
         clar_data = await self.use("clarification", user_input)
 
         if isinstance(clar_data, list):
             _LOGGER.debug("[Stage1] Clarification produced %d atomic commands", len(clar_data))
 
-            if len(clar_data) == 1 and clar_data[0].strip().lower() == (user_input.text or "").strip().lower():
-                _LOGGER.debug("[Stage1] Clarification returned the same text → escalate forward.")
-                return {"status": "escalate", "result": prev_result}
+            # Normalize
+            original_norm = (user_input.text or "").strip().lower()
+            atomic = [c for c in clar_data if isinstance(c, str) and c.strip()]
 
-            agent = self.hass.data.get("custom_components.multistage_assist_agent")
-            if not agent:
-                _LOGGER.error("[Stage1] MultiStageAssistAgent not registered in hass.data")
-                return {"status": "error", "result": await error_response(user_input)}
+            # Case 1: Clarification returned same text
+            if len(atomic) == 1 and atomic[0].strip().lower() == original_norm:
+                _LOGGER.debug("[Stage1] Clarification returned the same text → try keyword-based intent derivation.")
 
-            results = []
-            for i, cmd in enumerate(clar_data, start=1):
-                if cmd.strip().lower() == (user_input.text or "").strip().lower():
-                    _LOGGER.debug("[Stage1] Command #%d identical to input → skipping to avoid loop.", i)
-                    continue
-                _LOGGER.debug("[Stage1] Executing atomic command %d/%d: %s", i, len(clar_data), cmd)
-                sub_input = with_new_text(user_input, cmd)
-                result = await agent._run_pipeline(sub_input)
-                results.append(result)
+                # That should never happen
+                if isinstance(prev_result, Stage0Result) and prev_result.intent and prev_result.type == "intent":
+                    _LOGGER.debug("[Stage1] Stage0 already has a known intent → escalate with prev_result.")
+                    return {"status": "escalate", "result": prev_result}
 
-            if results:
-                _LOGGER.debug("[Stage1] Multi-command execution finished (%d commands)", len(results))
-                return {"status": "handled", "result": results[-1]}
+                # Sonst: KeywordIntentCapability fragen
+                ki_data = await self.use("keyword_intent", user_input) or {}
+                intent_name = ki_data.get("intent")
+                slots = ki_data.get("slots") or {}
 
-            _LOGGER.warning("[Stage1] No valid atomic commands executed.")
-            return {"status": "error", "result": await error_response(user_input, "Keine gültigen Befehle erkannt.")}
+                if not intent_name:
+                    _LOGGER.debug("[Stage1] KeywordIntentCapability could not derive an intent → escalate to next stage.")
+                    return {"status": "escalate", "result": prev_result}
+
+                # Derive entities from slots
+                er_data = await self.use("entity_resolver", user_input, entities=slots) or {}
+                entity_ids = er_data.get("resolved_ids") or []
+
+                if not entity_ids:
+                    _LOGGER.debug(
+                        "[Stage1] EntityResolver could not resolve any entities for derived intent '%s' (slots=%s)",
+                        intent_name,
+                        slots,
+                    )
+                    # Escalate instead of guessing
+                    return {"status": "escalate", "result": prev_result}
+
+                # Params für IntentExecutor: alle Slots außer 'name' (wird vom Executor gesetzt) und 'entity_id'
+                params = {k: v for (k, v) in slots.items() if k not in ("name", "entity_id")}
+
+                try:
+                    exec_data = await self.use(
+                        "intent_executor",
+                        user_input,
+                        intent_name=intent_name,
+                        entity_ids=entity_ids,
+                        params=params,
+                        language=user_input.language or "de",
+                    )
+                except Exception as e:
+                    _LOGGER.exception("[Stage1] Direct execution of derived intent failed: %s", e)
+                    return {
+                        "status": "error",
+                        "result": await error_response(user_input, "Fehler beim Ausführen des Befehls."),
+                    }
+
+                if not exec_data or "result" not in exec_data:
+                    _LOGGER.warning("[Stage1] IntentExecutorCapability returned no result for derived intent.")
+                    return {
+                        "status": "error",
+                        "result": await error_response(user_input, "Fehler beim Ausführen des Befehls."),
+                    }
+
+                _LOGGER.debug(
+                    "[Stage1] Successfully executed derived intent '%s' for %d entities",
+                    intent_name,
+                    len(entity_ids),
+                )
+                return {"status": "handled", "result": exec_data["result"]}
+
+            # Case 2: LLM produced list > 1 of atomic results
+            if len(atomic) > 1 or (len(atomic) == 1 and atomic[0].strip().lower() != original_norm):
+                _LOGGER.debug("[Stage1] Clarification detected multiple/changed atomic commands → executing each via pipeline.")
+
+                agent = self.agent  # MultiStageAssistAgent
+                results = []
+                for i, cmd in enumerate(atomic, start=1):
+                    _LOGGER.debug("[Stage1] Executing atomic command %d/%d: %s", i, len(atomic), cmd)
+                    sub_input = with_new_text(user_input, cmd)
+                    result = await agent._run_pipeline(sub_input)
+                    results.append(result)
+
+                if results:
+                    _LOGGER.debug("[Stage1] Multi-command execution finished (%d commands)", len(results))
+                    return {"status": "handled", "result": results[-1]}
+
+                _LOGGER.warning("[Stage1] No valid atomic commands executed.")
+                return {
+                    "status": "error",
+                    "result": await error_response(user_input, "Keine gültigen Befehle erkannt."),
+                }
 
         # --- Default: no clarification, no disambiguation ----------------------
         _LOGGER.debug("[Stage1] No clarification or disambiguation triggered → escalate to next stage.")

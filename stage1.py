@@ -74,23 +74,17 @@ class Stage1Processor(BaseStage):
             _LOGGER.debug("[Stage1] Executing atomic command %d/%d: %s", i + 1, len(commands), cmd)
             sub_input = with_new_text(user_input, cmd)
             
-            # recursive call to pipeline
             result = await agent._run_pipeline(sub_input)
             
-            # Check if this command triggered a pending state (disambiguation needed)
             if key in self._pending:
                 _LOGGER.debug("[Stage1] Command '%s' triggered pending state. Halting sequence.", cmd)
-                
-                # Store remaining commands for later resumption
                 remaining = commands[i+1:]
                 if remaining:
                     self._pending[key]["remaining"] = remaining
                     _LOGGER.debug("[Stage1] Stored %d remaining commands for later.", len(remaining))
                 
-                # Merge previous success messages into the question/result so user knows what happened so far
                 if results:
                     self._merge_speech(result, results)
-                
                 return {"status": "handled", "result": result}
             
             results.append(result)
@@ -99,24 +93,122 @@ class Stage1Processor(BaseStage):
              return {"status": "error", "result": await error_response(user_input, "Keine Befehle ausgeführt.")}
         
         final = results[-1]
-        # Merge all previous results into the final one
         self._merge_speech(final, results[:-1])
         _LOGGER.debug("[Stage1] Sequence execution finished. Merged %d results.", len(results))
         return {"status": "handled", "result": final}
+
+    def _filter_candidates_by_state(self, entity_ids: List[str], intent_name: str) -> List[str]:
+        """Filter out entities that are already in the desired state."""
+        if intent_name not in ("HassTurnOn", "HassTurnOff"):
+            return entity_ids
+
+        filtered = []
+        for eid in entity_ids:
+            state_obj = self.hass.states.get(eid)
+            if not state_obj or state_obj.state in ("unavailable", "unknown"):
+                continue
+
+            state = state_obj.state
+            domain = eid.split(".", 1)[0]
+            
+            is_relevant = False
+            
+            if intent_name == "HassTurnOff":
+                if domain == "cover":
+                    if state != "closed": is_relevant = True
+                elif state != "off": 
+                    is_relevant = True
+
+            elif intent_name == "HassTurnOn":
+                if domain == "cover":
+                    if state != "open": is_relevant = True
+                elif state != "on":
+                    is_relevant = True
+            
+            if is_relevant:
+                filtered.append(eid)
+        
+        return filtered
+
+    async def _process_candidates(self, user_input, candidates: List[str], intent_name: str, params: Dict[str, Any] = None):
+        """Unified logic for handling multiple candidates (filter -> plural -> disambiguate)."""
+        key = getattr(user_input, "session_id", None) or user_input.conversation_id
+        
+        # 1) Plural detection (do this first to support "alle lichter")
+        pd = await self.use("plural_detection", user_input) or {}
+        if pd.get("multiple_entities") is True:
+            _LOGGER.debug("[Stage1] Plural confirmed → executing action for all %d entities.", len(candidates))
+            try:
+                exec_data = await self.use(
+                    "intent_executor",
+                    user_input,
+                    intent_name=intent_name,
+                    entity_ids=candidates,
+                    params=params,
+                    language=user_input.language or "de",
+                )
+                if not exec_data or "result" not in exec_data:
+                    return {"status": "error", "result": await error_response(user_input, "Fehler.")}
+                return {"status": "handled", "result": exec_data["result"]}
+            except Exception as e:
+                _LOGGER.exception("[Stage1] Direct multi-target execution failed: %s", e)
+                return {"status": "error", "result": await error_response(user_input, "Fehler.")}
+
+        # 2) Context-aware filtering
+        filtered_ids = self._filter_candidates_by_state(candidates, intent_name)
+        final_candidates = filtered_ids if filtered_ids else candidates
+        
+        if len(filtered_ids) < len(candidates):
+            _LOGGER.debug("[Stage1] State filtering reduced candidates from %d to %d", len(candidates), len(filtered_ids))
+
+        # 3) Check if we have exactly one winner after filtering
+        if len(final_candidates) == 1:
+            _LOGGER.debug("[Stage1] Auto-selecting single candidate: %s", final_candidates[0])
+            try:
+                exec_data = await self.use(
+                    "intent_executor",
+                    user_input,
+                    intent_name=intent_name,
+                    entity_ids=final_candidates,
+                    params=params,
+                    language=user_input.language or "de",
+                )
+                if not exec_data or "result" not in exec_data:
+                        return {"status": "error", "result": await error_response(user_input, "Fehler.")}
+                return {"status": "handled", "result": exec_data["result"]}
+            except Exception as e:
+                _LOGGER.exception("[Stage1] execution failed: %s", e)
+                return {"status": "error", "result": await error_response(user_input, "Fehler.")}
+
+        # 4) Otherwise: Disambiguation
+        _LOGGER.debug("[Stage1] Ambiguous candidates (%d) → initiating disambiguation.", len(final_candidates))
+        entities_map = {
+            eid: self.hass.states.get(eid).attributes.get("friendly_name", eid)
+            for eid in final_candidates
+        }
+        data = await self.use("disambiguation", user_input, entities=entities_map)
+        msg = (data or {}).get("message") or "Welches Gerät meinst du?"
+
+        self._pending[key] = {
+            "candidates": entities_map, 
+            "intent": intent_name, 
+            "params": params, # Store params so they are passed on resume
+            "raw": user_input.text
+        }
+        _LOGGER.debug("[Stage1] Stored pending disambiguation context for %s", key)
+        return {"status": "handled", "result": await make_response(msg, user_input)}
 
     async def run(self, user_input, prev_result=None):
         _LOGGER.debug("[Stage1] Input='%s', prev_result=%s", user_input.text, type(prev_result).__name__)
         key = getattr(user_input, "session_id", None) or user_input.conversation_id
 
-        # --- Handle disambiguation follow-up: execute the same intent with patched targets ---
+        # --- Handle disambiguation follow-up ---
         if key in self._pending:
             _LOGGER.debug("[Stage1] Resuming pending disambiguation for key=%s", key)
             pending = self._pending.pop(key, None)
             if not pending:
-                _LOGGER.warning("[Stage1] Pending state lost for key=%s", key)
                 return {"status": "error", "result": await error_response(user_input)}
 
-            # 1-based ordinals for "das erste/zweite/letzte"
             candidates = [
                 {"entity_id": eid, "name": name, "ordinal": i + 1}
                 for i, (eid, name) in enumerate(pending["candidates"].items())
@@ -124,134 +216,61 @@ class Stage1Processor(BaseStage):
 
             selected = await self.use("disambiguation_select", user_input, candidates=candidates)
             if not selected:
-                _LOGGER.warning("[Stage1] Disambiguation selection empty for input='%s'", user_input.text)
+                _LOGGER.warning("[Stage1] Disambiguation selection empty")
                 return {"status": "error", "result": await error_response(user_input)}
 
-            _LOGGER.debug("[Stage1] Disambiguation selected entities=%s", selected)
-
             intent_name = (pending.get("intent") or "").strip()
+            # Pass through original params (e.g. brightness, position)
+            params = pending.get("params", {}) 
 
             try:
-                # Execute patched intent (only for selected entities) via capability
                 exec_data = await self.use(
                     "intent_executor",
                     user_input,
                     intent_name=intent_name,
                     entity_ids=selected,
+                    params=params, 
                     language=user_input.language or "de",
                 )
                 if not exec_data or "result" not in exec_data:
-                    _LOGGER.warning("[Stage1] IntentExecutorCapability returned no result.")
-                    return {"status": "error", "result": await error_response(user_input, "Fehler beim Ausführen des Befehls.")}
+                    return {"status": "error", "result": await error_response(user_input, "Fehler.")}
 
                 conv_result = exec_data["result"]
-                final_resp = conv_result.response
-
-                # If no handler produced speech, synthesize concise confirmation via capability
-                def _has_plain_speech(r) -> bool:
-                    s = getattr(r, "speech", None)
-                    if not s or not isinstance(s, dict):
-                        return False
-                    plain = s.get("plain") or {}
-                    return bool(plain.get("speech"))
-
-                if not _has_plain_speech(final_resp):
-                    friendly = []
-                    for eid in selected:
-                        name = pending["candidates"].get(eid)
-                        if not name:
-                            st = self.hass.states.get(eid)
-                            name = (st and st.attributes.get("friendly_name")) or eid
-                        friendly.append({"entity_id": eid, "name": name})
-
-                    conf = await self.use(
-                        "intent_confirmation",
-                        user_input,
-                        intent=intent_name,
-                        entities=friendly,
-                        params=pending.get("params", {}) or {},
-                        language=user_input.language or "de",
-                        style="concise",
-                    )
-                    msg = (conf or {}).get("message")
-                    if msg:
-                        final_resp.async_set_speech(msg)
-
-                _LOGGER.debug("[Stage1] Action disambiguation resolved and executed successfully")
-
-                # Check for remaining commands to resume
+                
+                # Resume remaining commands if any
                 remaining = pending.get("remaining")
                 if remaining:
-                    _LOGGER.debug("[Stage1] Resuming %d remaining commands after disambiguation.", len(remaining))
+                    _LOGGER.debug("[Stage1] Resuming %d remaining commands.", len(remaining))
                     return await self._execute_sequence(user_input, remaining, previous_results=[conv_result])
 
                 return {"status": "handled", "result": conv_result}
 
             except Exception as e:
                 _LOGGER.exception("[Stage1] Direct action execution failed: %s", e)
-                return {"status": "error", "result": await error_response(user_input, "Fehler beim Ausführen des Befehls.")}
+                return {"status": "error", "result": await error_response(user_input, "Fehler.")}
 
         # --- Handle multiple entities from Stage0 --------------------------------
         if isinstance(prev_result, Stage0Result) and len(prev_result.resolved_ids or []) > 1:
-            _LOGGER.debug("[Stage1] Multiple entities from Stage0 detected → checking plurality first.")
-
-            # 1) Plural detection FIRST
-            pd = await self.use("plural_detection", user_input) or {}
-            if pd.get("multiple_entities") is True:
-                _LOGGER.debug("[Stage1] Plural confirmed → executing action for all resolved entities.")
-                
-                intent_name = (prev_result.intent or "").strip()
-                entities = list(prev_result.resolved_ids)
-
-                try:
-                    exec_data = await self.use(
-                        "intent_executor",
-                        user_input,
-                        intent_name=intent_name,
-                        entity_ids=entities,
-                        language=user_input.language or "de",
-                    )
-                    if not exec_data or "result" not in exec_data:
-                        return {"status": "error", "result": await error_response(user_input, "Fehler.")}
-
-                    conv_result = exec_data["result"]
-                    # (Speech logic omitted for brevity, handled by executor generally)
-                    return {"status": "handled", "result": conv_result}
-
-                except Exception as e:
-                    _LOGGER.exception("[Stage1] Direct multi-target execution failed: %s", e)
-                    return {"status": "error", "result": await error_response(user_input, "Fehler.")}
-
-            # 2) Otherwise: Disambiguation
-            _LOGGER.debug("[Stage1] Plural not confirmed → initiating disambiguation.")
-            entities_map = {
-                eid: self.hass.states.get(eid).attributes.get("friendly_name", eid)
-                for eid in prev_result.resolved_ids
-            }
-            data = await self.use("disambiguation", user_input, entities=entities_map)
-            msg = (data or {}).get("message") or "Welches Gerät meinst du?"
-
-            # store original 'raw' to preserve the user's original text later
-            self._pending[key] = {"candidates": entities_map, "intent": prev_result.intent, "raw": prev_result.raw}
-            _LOGGER.debug("[Stage1] Stored pending disambiguation context for %s", key)
-            return {"status": "handled", "result": await make_response(msg, user_input)}
+            _LOGGER.debug("[Stage1] Multiple entities from Stage0 detected.")
+            # Use unified logic
+            return await self._process_candidates(
+                user_input, 
+                list(prev_result.resolved_ids), 
+                (prev_result.intent or "").strip()
+            )
 
         # --- Clarification: split into atomic commands -------------------------
         clar_data = await self.use("clarification", user_input)
 
         if isinstance(clar_data, list):
-            _LOGGER.debug("[Stage1] Clarification produced %d atomic commands", len(clar_data))
-
-            # Normalize
             original_norm = (user_input.text or "").strip().lower()
             atomic = [c for c in clar_data if isinstance(c, str) and c.strip()]
 
             # Case 1: Clarification returned same text
             if len(atomic) == 1 and atomic[0].strip().lower() == original_norm:
-                _LOGGER.debug("[Stage1] Clarification returned the same text → try keyword-based intent derivation.")
+                _LOGGER.debug("[Stage1] Clarification returned same text.")
 
                 if isinstance(prev_result, Stage0Result) and prev_result.intent and prev_result.type == "intent":
-                    _LOGGER.debug("[Stage1] Stage0 already has a known intent → escalate with prev_result.")
                     return {"status": "escalate", "result": prev_result}
 
                 ki_data = await self.use("keyword_intent", user_input) or {}
@@ -259,40 +278,43 @@ class Stage1Processor(BaseStage):
                 slots = ki_data.get("slots") or {}
 
                 if not intent_name:
-                    _LOGGER.debug("[Stage1] KeywordIntentCapability could not derive an intent → escalate.")
                     return {"status": "escalate", "result": prev_result}
 
+                # Resolve
                 er_data = await self.use("entity_resolver", user_input, entities=slots) or {}
                 entity_ids = er_data.get("resolved_ids") or []
 
+                # --- NEW: Area Alias Fallback ---
                 if not entity_ids:
-                    _LOGGER.debug("[Stage1] EntityResolver could not resolve any entities for derived intent.")
+                    candidate_area = slots.get("area") or slots.get("name")
+                    if candidate_area:
+                        _LOGGER.debug("[Stage1] No entities found. Trying AreaAlias for '%s'", candidate_area)
+                        alias_res = await self.use("area_alias", user_input, search_text=candidate_area)
+                        mapped_area = alias_res.get("area")
+                        
+                        if mapped_area:
+                            _LOGGER.debug("[Stage1] AreaAlias mapped '%s' → '%s'. Retrying resolution.", candidate_area, mapped_area)
+                            new_slots = slots.copy()
+                            new_slots["area"] = mapped_area
+                            if new_slots.get("name") == candidate_area:
+                                new_slots.pop("name") 
+                            
+                            er_data = await self.use("entity_resolver", user_input, entities=new_slots) or {}
+                            entity_ids = er_data.get("resolved_ids") or []
+                            slots = new_slots 
+                # --------------------------------
+
+                if not entity_ids:
                     return {"status": "escalate", "result": prev_result}
 
+                # Execute (handling single OR multiple results via unified logic)
                 params = {k: v for (k, v) in slots.items() if k not in ("name", "entity_id")}
+                return await self._process_candidates(user_input, entity_ids, intent_name, params)
 
-                try:
-                    exec_data = await self.use(
-                        "intent_executor",
-                        user_input,
-                        intent_name=intent_name,
-                        entity_ids=entity_ids,
-                        params=params,
-                        language=user_input.language or "de",
-                    )
-                    if not exec_data or "result" not in exec_data:
-                         return {"status": "error", "result": await error_response(user_input, "Fehler.")}
-                    
-                    return {"status": "handled", "result": exec_data["result"]}
-                except Exception as e:
-                    _LOGGER.exception("[Stage1] execution failed: %s", e)
-                    return {"status": "error", "result": await error_response(user_input, "Fehler.")}
-
-            # Case 2: LLM produced list > 1 of atomic results
+            # Case 2: Multi-command
             if len(atomic) > 1 or (len(atomic) == 1 and atomic[0].strip().lower() != original_norm):
-                _LOGGER.debug("[Stage1] Clarification detected multiple/changed atomic commands → executing each via pipeline.")
+                _LOGGER.debug("[Stage1] Multi-command detected.")
                 return await self._execute_sequence(user_input, atomic)
 
-        # --- Default: no clarification, no disambiguation ----------------------
-        _LOGGER.debug("[Stage1] No clarification or disambiguation triggered → escalate to next stage.")
+        _LOGGER.debug("[Stage1] Escalate.")
         return {"status": "escalate", "result": prev_result}

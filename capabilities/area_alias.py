@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from homeassistant.helpers import area_registry as ar
 from .base import Capability
@@ -9,72 +9,48 @@ _LOGGER = logging.getLogger(__name__)
 
 class AreaAliasCapability(Capability):
     """
-    LLM-based mapping from a *German* user utterance to one of the existing
-    Home Assistant areas.
-
-    The model sees:
-    - the full German user command (e.g. "Schalte das Licht im Bad an")
-    - the list of HA areas (e.g. ["Badezimmer", "Wohnzimmer"])
-
-    It must decide whether the utterance refers to one of them.
+    LLM-based mapping from a user-provided location string (e.g. "Bad") 
+    to one of the existing Home Assistant areas.
     """
 
     name = "area_alias"
-    description = "Map a German user utterance to a Home Assistant area."
+    description = "Map a German location string to a Home Assistant area."
 
     PROMPT = {
         "system": """
-You are an assistant that maps a *German* smart-home voice command
-to one of the Home Assistant areas.
+You are a smart home helper that maps a user's spoken room name to the correct internal Home Assistant area name.
+
+## Input
+- user_query: The name of the room as spoken by the user (e.g. "Bad", "Küche", "Gästeklo").
+- areas: A list of available area names in the system.
 
 ## Task
-Given:
-- the full German user utterance (e.g. "Schalte das Licht im Bad an")
-- the list of existing HA areas
+1. Find the area in `areas` that best matches `user_query`.
+2. Handle synonyms, abbreviations, and partial matches (e.g., "Bad" -> "Badezimmer", "Unten" -> "Flur Unten").
+3. If multiple areas match (e.g., "Bad" matches "Gäste Bad" and "Badezimmer"), prefer the main/general one unless the query is specific.
+4. If no area matches plausibly, return null.
 
-Your job:
-1. Determine whether the utterance refers to one of these areas.
-2. Output ONLY an area name from the list — never invent or modify names.
-3. If none of the areas match, return null.
-
-You MUST analyze the entire utterance (not just single words).
-You MUST handle abbreviations, synonyms, and natural language
-(e.g. "Bad" → "Badezimmer").
-
-## German examples (IMPORTANT: keep these in German)
-- utterance: "Schalte das Licht im Bad an"
-  areas: ["Wohnzimmer","Badezimmer"]
-  → area = "Badezimmer"
-
-- utterance: "Mach das Licht im Kinderbad an"
-  areas: ["Kinderzimmer","Kinder Badezimmer"]
-  → area = "Kinder Badezimmer"
-
-- utterance: "Schalte das Licht im Garten an"
-  areas: ["Wohnzimmer","Badezimmer"]
-  → area = null
-
-## Output format (STRICT)
-Return a JSON object:
-{ "area": <string or null> }
-
-No explanations. No additional fields.
+## Output (STRICT)
+Return a JSON object: { "area": <string_from_list_or_null> }
 """,
         "schema": {
             "type": "object",
             "properties": {
-                "area": {
-                    "type": ["string", "null"],
-                }
+                "area": {"type": ["string", "null"]},
             },
             "required": ["area"],
-            "additionalProperties": False,
         },
     }
 
-    async def run(self, user_input, **_: Any) -> Dict[str, Any]:
-        """Run the area alias LLM mapping."""
-        text = (user_input.text or "").strip()
+    async def run(self, user_input, search_text: str = None, **_: Any) -> Dict[str, Any]:
+        """
+        Run the area alias LLM mapping.
+        If search_text is provided, we map THAT. Otherwise we map user_input.text.
+        """
+        # If specific text to resolve is passed (e.g. "Bad"), use it. 
+        # Otherwise fallback to full utterance (less precise).
+        text = (search_text or user_input.text or "").strip()
+        
         if not text:
             return {"area": None}
 
@@ -83,41 +59,30 @@ No explanations. No additional fields.
         areas: List[str] = [a.name for a in area_reg.async_list_areas() if a.name]
 
         if not areas:
-            _LOGGER.debug("[AreaAlias] No areas defined → cannot map.")
+            _LOGGER.debug("[AreaAlias] No areas defined in HA → cannot map.")
             return {"area": None}
 
+        # Quick check: exact match?
+        text_lower = text.lower()
+        for a in areas:
+            if a.lower() == text_lower:
+                return {"area": a}
+
         payload = {
-            "utterance": text,   # full German utterance
-            "areas": areas,      # all available HA area names
+            "user_query": text,
+            "areas": areas,
         }
 
-        _LOGGER.debug(
-            "[AreaAlias] Mapping utterance=%r to one of areas=%r",
-            text,
-            areas,
-        )
-
+        _LOGGER.debug("[AreaAlias] Mapping query=%r to one of areas=%s", text, areas)
         data = await self._safe_prompt(self.PROMPT, payload)
 
         if not isinstance(data, dict):
-            _LOGGER.warning("[AreaAlias] Model returned invalid object: %r", data)
             return {"area": None}
 
-        area = data.get("area")
+        mapped = data.get("area")
+        if mapped and mapped in areas:
+            _LOGGER.debug("[AreaAlias] Mapped '%s' → '%s'", text, mapped)
+            return {"area": mapped}
 
-        if not isinstance(area, str) or not area.strip():
-            _LOGGER.debug("[AreaAlias] No valid area chosen.")
-            return {"area": None}
-
-        area = area.strip()
-
-        if area not in areas:
-            _LOGGER.debug(
-                "[AreaAlias] Model chose %r which is not in available areas %r → ignoring.",
-                area,
-                areas,
-            )
-            return {"area": None}
-
-        _LOGGER.debug("[AreaAlias] Successfully mapped → %r", area)
-        return {"area": area}
+        _LOGGER.debug("[AreaAlias] No valid mapping found for '%s'", text)
+        return {"area": None}

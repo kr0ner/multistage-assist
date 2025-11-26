@@ -11,6 +11,8 @@ _LOGGER = logging.getLogger(__name__)
 LIGHT_KEYWORDS: Dict[str, str] = {
     "licht": "lichter",
     "lampe": "lampen",
+    "leuchte": "leuchten",
+    "beleuchtung": "beleuchtungen",
 }
 
 # Covers: used both for plural detection and keyword-based intent grouping
@@ -18,15 +20,33 @@ COVER_KEYWORDS: Dict[str, str] = {
     "rollladen": "rollläden",
     "rollo": "rollos",
     "jalousie": "jalousien",
+    "markise": "markisen",
+    "beschattung": "beschattungen",
 }
 
-# Other entity types (kept here for plural detection only, but can be grouped later)
+# Sensors: used for temperature/humidity queries
+SENSOR_KEYWORDS: Dict[str, str] = {
+    "temperatur": "temperaturen",
+    "luftfeuchtigkeit": "luftfeuchtigkeiten",
+    "feuchtigkeit": "feuchtigkeiten",
+    "wert": "werte",
+    "der status": "die status",              # article-based disambiguation
+    "zustand": "zustände",
+}
+
+# Climate: Heating/Thermostats
+CLIMATE_KEYWORDS: Dict[str, str] = {
+    "heizung": "heizungen",
+    "thermostat": "thermostate",
+    "klimaanlage": "klimaanlagen",
+}
+
+# Other entity types (kept here for plural detection only)
 OTHER_ENTITY_PLURALS: Dict[str, str] = {
     "das fenster": "die fenster",            # article-based disambiguation
     "tür": "türen",
     "tor": "tore",
     "steckdose": "steckdosen",
-    "heizung": "heizungen",
     "ventilator": "ventilatoren",
     "der lautsprecher": "die lautsprecher",  # article-based disambiguation
     "gerät": "geräte",
@@ -37,6 +57,8 @@ OTHER_ENTITY_PLURALS: Dict[str, str] = {
 _ENTITY_PLURALS: Dict[str, str] = {
     **LIGHT_KEYWORDS,
     **COVER_KEYWORDS,
+    **SENSOR_KEYWORDS,
+    **CLIMATE_KEYWORDS,
     **OTHER_ENTITY_PLURALS,
 }
 

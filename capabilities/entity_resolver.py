@@ -8,10 +8,27 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 from homeassistant.components.homeassistant.exposed_entities import async_should_expose
 from homeassistant.components.conversation import DOMAIN as CONVERSATION_DOMAIN
+from homeassistant.const import (
+    UnitOfTemperature,
+    UnitOfPower,
+    UnitOfEnergy,
+    PERCENTAGE,
+)
 
 from .base import Capability
 
 _LOGGER = logging.getLogger(__name__)
+
+# Map device classes to typical units for fallback matching
+DEVICE_CLASS_UNITS = {
+    "temperature": {UnitOfTemperature.CELSIUS, UnitOfTemperature.FAHRENHEIT, UnitOfTemperature.KELVIN},
+    "power": {UnitOfPower.WATT, UnitOfPower.KILO_WATT},
+    "energy": {UnitOfEnergy.WATT_HOUR, UnitOfEnergy.KILO_WATT_HOUR},
+    "humidity": {PERCENTAGE},
+    "battery": {PERCENTAGE},
+    "illuminance": {"lx", "lm"},
+    "pressure": {"hPa", "mbar", "bar", "psi"},
+}
 
 # ---------- non-blocking lazy import for rapidfuzz.fuzz ----------
 _fuzz = None
@@ -30,7 +47,7 @@ async def _get_fuzz():
 class EntityResolverCapability(Capability):
     """
     Resolve entity_ids from HA NLU slots and ENRICH with:
-      - area + domain lookup
+      - area + domain + device_class lookup
       - exact friendly/object_id match
       - fuzzy match within domain (optionally restricted to area)
     """
@@ -42,7 +59,6 @@ class EntityResolverCapability(Capability):
     _FUZZ_FALLBACK = 84
     _FUZZ_MAX_ADD = 4
 
-    # ---------- NEW: unified entity registry + states ----------
     def _all_entities(self) -> Dict[str, Any]:
         """Collect all known entities (registry + state machine)."""
         ent_reg = er.async_get(self.hass)
@@ -52,7 +68,6 @@ class EntityResolverCapability(Capability):
         for st in self.hass.states.async_all():
             if st.entity_id not in all_entities:
                 all_entities[st.entity_id] = None
-        _LOGGER.debug("[EntityResolver] _all_entities() collected %d total entities", len(all_entities))
         return all_entities
 
     async def run(self, user_input, *, entities: Dict[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
@@ -61,13 +76,14 @@ class EntityResolverCapability(Capability):
 
         # Extract likely slots
         domain = self._first_str(slots, "domain", "domain_name")
+        target_device_class = self._first_str(slots, "device_class")
         thing_name = self._first_str(slots, "name", "device", "entity", "label")
         raw_entity_id = self._first_str(slots, "entity_id")
         area_hint = self._first_str(slots, "area", "room")
 
         _LOGGER.debug(
-            "[EntityResolver] Incoming slots: domain=%r, name=%r, entity_id=%r, area=%r",
-            domain, thing_name, raw_entity_id, area_hint,
+            "[EntityResolver] Incoming slots: domain=%r, device_class=%r, name=%r, entity_id=%r, area=%r",
+            domain, target_device_class, thing_name, raw_entity_id, area_hint,
         )
 
         resolved: List[str] = []
@@ -136,9 +152,17 @@ class EntityResolverCapability(Capability):
             if fuzzy_added:
                 _LOGGER.debug("[EntityResolver] Fuzzy enriched with: %s", ", ".join(fuzzy_added))
 
-        # 5) Filter to exposed entities
+        # 5) Filter by device_class AND/OR unit (if requested)
+        if target_device_class:
+            before_dc = len(resolved)
+            resolved = [eid for eid in resolved if self._match_device_class_or_unit(eid, target_device_class)]
+            _LOGGER.debug(
+                "[EntityResolver] Device class/Unit filter (%s) kept %d/%d entities",
+                target_device_class, len(resolved), before_dc
+            )
+
+        # 6) Filter to exposed entities
         pre_count = len(resolved)
-        # Use the same helper the default conversation agent uses.
         resolved = [eid for eid in resolved if async_should_expose(hass, CONVERSATION_DOMAIN, eid)]
         _LOGGER.debug(
             "[EntityResolver] Exposure filter kept %d/%d entities",
@@ -157,12 +181,34 @@ class EntityResolverCapability(Capability):
     def _first_str(d: Dict[str, Any], *keys: str) -> Optional[str]:
         for k in keys:
             v = d.get(k)
+            # Handle both direct strings and slot objects {"value": "..."}
+            if isinstance(v, dict):
+                v = v.get("value")
             if isinstance(v, str) and v.strip():
                 return v.strip()
         return None
 
     def _state_exists(self, entity_id: str) -> bool:
         return self.hass.states.get(entity_id) is not None
+
+    def _match_device_class_or_unit(self, entity_id: str, target_class: str) -> bool:
+        """Check if entity matches target device_class OR appropriate unit."""
+        state = self.hass.states.get(entity_id)
+        if not state:
+            return False
+        
+        # 1. Device class match
+        dc = state.attributes.get("device_class")
+        if dc == target_class:
+            return True
+            
+        # 2. Unit match (fallback)
+        unit = state.attributes.get("unit_of_measurement")
+        expected_units = DEVICE_CLASS_UNITS.get(target_class)
+        if unit and expected_units and unit in expected_units:
+            return True
+
+        return False
 
     @staticmethod
     def _looks_like_entity_id(text: str) -> bool:
@@ -201,11 +247,6 @@ class EntityResolverCapability(Capability):
         return None
 
     def _entities_in_area(self, area, domain: Optional[str]) -> List[str]:
-        """Return all entities in or textually related to an area, optionally filtered by domain.
-
-        Fallback: if an entity has no assigned area, but its friendly name or entity_id
-        contains the area name (e.g. 'hauswirtschaftsraum'), include it.
-        """
         dev_reg = dr.async_get(self.hass)
         ent_reg = er.async_get(self.hass)
         canon_area = self._canon(area.name)
@@ -213,19 +254,13 @@ class EntityResolverCapability(Capability):
         out: List[str] = []
 
         for ent in ent_reg.entities.values():
-            # explicit area assignment or via device area
             dev = dev_reg.devices.get(ent.device_id) if ent.device_id else None
-
-            # is entity assigned to area directly or via device?
             has_any_area = bool(ent.area_id or (dev and dev.area_id))
-
-            # is entity explicitly assigned to the area of interest?
             in_area = (
                 ent.area_id == area.id
                 or (dev is not None and dev.area_id == area.id)
             )
 
-            # Text-fallback only if entity is not assigned to any area
             if not in_area and not has_any_area:
                 name_match = self._canon(ent.original_name or "")
                 eid_match = self._canon(ent.entity_id)
@@ -243,7 +278,6 @@ class EntityResolverCapability(Capability):
             area.name, len(out), domain or "any"
         )
         return out
-
 
     # ---- exact/fuzzy name matching ----
     def _collect_by_name_exact(
@@ -280,7 +314,6 @@ class EntityResolverCapability(Capability):
         *,
         allowed: Optional[Set[str]] = None,
     ) -> List[str]:
-        """Fuzzy-match within a domain; optionally restrict to allowed entity_ids."""
         needle = self._canon(name)
         if not needle:
             return []
@@ -311,11 +344,7 @@ class EntityResolverCapability(Capability):
         scored.sort(key=lambda x: (-x[1], len(str(x[2]))))
         top = [eid for (eid, _, _) in scored[: self._FUZZ_MAX_ADD]]
         _LOGGER.debug(
-            "[EntityResolver] Fuzzy match for %r (domain=%s%s) → %d hit(s): %s",
-            name,
-            domain,
-            f", restricted to area ({len(allowed)} items)" if allowed is not None else "",
-            len(top),
-            ", ".join(top),
+            "[EntityResolver] Fuzzy match for %r (domain=%s) → %d hit(s): %s",
+            name, domain, len(top), ", ".join(top),
         )
         return top

@@ -2,7 +2,7 @@ import logging
 from typing import Any, Dict, Optional, List
 
 from .base import Capability
-from .plural_detection import LIGHT_KEYWORDS, COVER_KEYWORDS
+from .plural_detection import LIGHT_KEYWORDS, COVER_KEYWORDS, SENSOR_KEYWORDS, CLIMATE_KEYWORDS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,11 +20,12 @@ class KeywordIntentCapability(Capability):
     description = "Derive a Home Assistant intent from a single German command using keyword domains."
 
     # Domain → list of keywords (singular + plural) reusing plural_detection helpers.
-    # LIGHT_KEYWORDS and COVER_KEYWORDS are expected to be dicts:
-    #   singular -> plural
     DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         "light": list(LIGHT_KEYWORDS.keys()) + list(LIGHT_KEYWORDS.values()),
         "cover": list(COVER_KEYWORDS.keys()) + list(COVER_KEYWORDS.values()),
+        # Sensor keywords + specific adjectives/nouns indicating a measurement request
+        "sensor": list(SENSOR_KEYWORDS.keys()) + list(SENSOR_KEYWORDS.values()) + ["grad", "warm", "kalt", "wieviel"],
+        "climate": list(CLIMATE_KEYWORDS.keys()) + list(CLIMATE_KEYWORDS.values()) + ["klima"],
     }
 
     # Intents per domain + extra description + examples to tune the prompt.
@@ -48,8 +49,8 @@ class KeywordIntentCapability(Capability):
         "cover": {
             "description": "Steuerung von Rollläden, Rollos und Jalousien.",
             "intents": {
-                "HassTurnOn": "Öffnet Rollläden, Rollos oder Jalousien.",
-                "HassTurnOff": "Schließt Rollläden, Rollos oder Jalousien.",
+                "HassTurnOn": "Öffnet Rollläden (hochfahren).",
+                "HassTurnOff": "Schließt Rollläden (runterfahren).",
                 "HassSetPosition": "Setzt die Position eines Rollladens (0–100%).",
                 "HassGetState": "Fragt den Zustand eines Rollladens ab.",
             },
@@ -60,10 +61,36 @@ class KeywordIntentCapability(Capability):
                 '→ {"intent":"HassTurnOn","slots":{"area":"Schlafzimmer","domain":"cover"}}',
             ],
         },
+        "sensor": {
+            "description": "Abfragen von Sensorwerten (Temperatur, Feuchtigkeit, Status).",
+            "intents": {
+                "HassGetState": "Fragt den Wert oder Zustand eines Sensors ab.",
+            },
+            "examples": [
+                'User: "Wie ist die Temperatur im Büro?"\n'
+                '→ {"intent":"HassGetState","slots":{"area":"Büro","domain":"sensor", "name":"Temperatur"}}',
+                'User: "Wieviel Grad hat es im Wohnzimmer?"\n'
+                '→ {"intent":"HassGetState","slots":{"area":"Wohnzimmer","domain":"sensor", "device_class":"temperature"}}',
+            ],
+        },
+        "climate": {
+            "description": "Steuerung von Heizkörpern, Thermostaten und Klimaanlagen.",
+            "intents": {
+                "HassClimateSetTemperature": "Setzt die Zieltemperatur.",
+                "HassTurnOn": "Schaltet Heizung/Klima ein.",
+                "HassTurnOff": "Schaltet Heizung/Klima aus.",
+                "HassGetState": "Fragt Status der Heizung ab.",
+            },
+            "examples": [
+                'User: "Stelle die Heizung im Bad auf 22 Grad"\n'
+                '→ {"intent":"HassClimateSetTemperature","slots":{"area":"Bad","temperature":22}}',
+                'User: "Mach die Heizung im Wohnzimmer aus"\n'
+                '→ {"intent":"HassTurnOff","slots":{"area":"Wohnzimmer","domain":"climate"}}',
+            ],
+        },
     }
 
     # JSON-Schema for PromptExecutor/_safe_prompt
-    # - "intent" is string or null; null means "no mapping possible".
     SCHEMA: Dict[str, Any] = {
         "properties": {
             "intent": {"type": ["string", "null"]},
@@ -76,13 +103,7 @@ class KeywordIntentCapability(Capability):
     # -------------------------------------------------------------------------
 
     def _detect_domain(self, text: str) -> Optional[str]:
-        """Keyword-based (with fuzzy) domain detection.
-
-        1. Try exact keyword substring matches (current behaviour).
-        2. If that yields no result, fall back to a lightweight fuzzy match
-           against single-word tokens in the utterance.
-        3. Only return a domain if we have exactly ONE unambiguous match.
-        """
+        """Keyword-based (with fuzzy) domain detection."""
         t = (text or "").lower()
         matches: List[str] = []
 
@@ -91,6 +112,11 @@ class KeywordIntentCapability(Capability):
             if any(k in t for k in keywords):
                 matches.append(domain)
 
+        # Ambiguity handling:
+        # If both 'climate' and 'sensor' match (e.g. "Heizung Temperatur"), prefer climate for control,
+        # or sensor for queries? Usually explicit domain keywords win.
+        # For now, strict: single match only, or return None to fall back.
+        
         if len(matches) == 1:
             _LOGGER.debug(
                 "[KeywordIntent] Detected domain '%s' from text=%r (exact match)",
@@ -100,6 +126,10 @@ class KeywordIntentCapability(Capability):
             return matches[0]
 
         if matches:
+            # If "sensor" and "climate" both match, prefer climate (control usually overrides query)
+            if "climate" in matches and "sensor" in matches:
+                 return "climate"
+            
             _LOGGER.debug(
                 "[KeywordIntent] Ambiguous exact domain match (%s) for text=%r → no domain chosen.",
                 ", ".join(matches),
@@ -107,7 +137,7 @@ class KeywordIntentCapability(Capability):
             )
             return None
 
-        # 2) Fuzzy matching fallback (for typos etc.)
+        # 2) Fuzzy matching fallback
         import difflib
         import re
 
@@ -122,7 +152,6 @@ class KeywordIntentCapability(Capability):
                     score = difflib.SequenceMatcher(None, kw_l, tok).ratio()
                     if score > best_score:
                         best_score = score
-            # Only consider reasonably strong matches
             if best_score >= 0.8:
                 fuzzy_scores[domain] = best_score
 
@@ -136,18 +165,6 @@ class KeywordIntentCapability(Capability):
                 score,
             )
             return domain
-
-        if not fuzzy_scores:
-            _LOGGER.debug(
-                "[KeywordIntent] No domain keyword match (exact or fuzzy) for text=%r",
-                text,
-            )
-        else:
-            _LOGGER.debug(
-                "[KeywordIntent] Ambiguous fuzzy domain match (%s) for text=%r → no domain chosen.",
-                ", ".join(fuzzy_scores.keys()),
-                text,
-            )
 
         return None
 
@@ -185,8 +202,8 @@ class KeywordIntentCapability(Capability):
             "Slots hints:",
             "- 'area': Raum- oder Bereichsname (z.B. 'Dusche', 'Wohnzimmer').",
             "- 'name': Gerätespezifischer Name, falls der Nutzer ein Gerät direkt benennt.",
-            "- 'domain': HA-Domain wie 'light', 'cover', usw.",
-            "- Weitere Slots nur, wenn sie sinnvoll sind (z.B. 'position' für Rollläden, 'brightness' für Licht).",
+            "- 'domain': HA-Domain wie 'light', 'cover', 'sensor', 'climate'.",
+            "- 'device_class': (for sensors) e.g. 'temperature', 'humidity'.",
             "",
             "If you really cannot map the command to any allowed intent, respond with:",
             '{"intent": null, "slots": {}}',
@@ -198,8 +215,6 @@ class KeywordIntentCapability(Capability):
             for ex in examples:
                 lines.append(ex)
 
-        # No explicit "output format" here – PromptExecutor will add that
-        # automatically based on SCHEMA.
         return "\n".join(lines)
 
     # -------------------------------------------------------------------------
@@ -211,7 +226,6 @@ class KeywordIntentCapability(Capability):
         text = user_input.text or ""
         domain = self._detect_domain(text)
 
-        # No clear domain → let Stage1 escalate to Stage2 or other mechanisms.
         if not domain:
             return {}
 
@@ -242,6 +256,10 @@ class KeywordIntentCapability(Capability):
         if not isinstance(slots, dict):
             _LOGGER.warning("[KeywordIntent] Invalid slots type from model: %r", slots)
             slots = {}
+
+        # Force domain injection if missing, to assist EntityResolver
+        if "domain" not in slots:
+             slots["domain"] = domain
 
         allowed = set((meta.get("intents") or {}).keys())
         if intent not in allowed:

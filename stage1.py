@@ -134,7 +134,7 @@ class Stage1Processor(BaseStage):
         """Unified logic for handling multiple candidates (filter -> plural -> disambiguate)."""
         key = getattr(user_input, "session_id", None) or user_input.conversation_id
         
-        # 1) Plural detection (do this first to support "alle lichter")
+        # 1) Plural detection
         pd = await self.use("plural_detection", user_input) or {}
         if pd.get("multiple_entities") is True:
             _LOGGER.debug("[Stage1] Plural confirmed → executing action for all %d entities.", len(candidates))
@@ -192,7 +192,7 @@ class Stage1Processor(BaseStage):
         self._pending[key] = {
             "candidates": entities_map, 
             "intent": intent_name, 
-            "params": params, # Store params so they are passed on resume
+            "params": params,
             "raw": user_input.text
         }
         _LOGGER.debug("[Stage1] Stored pending disambiguation context for %s", key)
@@ -220,7 +220,6 @@ class Stage1Processor(BaseStage):
                 return {"status": "error", "result": await error_response(user_input)}
 
             intent_name = (pending.get("intent") or "").strip()
-            # Pass through original params (e.g. brightness, position)
             params = pending.get("params", {}) 
 
             try:
@@ -237,7 +236,6 @@ class Stage1Processor(BaseStage):
 
                 conv_result = exec_data["result"]
                 
-                # Resume remaining commands if any
                 remaining = pending.get("remaining")
                 if remaining:
                     _LOGGER.debug("[Stage1] Resuming %d remaining commands.", len(remaining))
@@ -251,13 +249,39 @@ class Stage1Processor(BaseStage):
 
         # --- Handle multiple entities from Stage0 --------------------------------
         if isinstance(prev_result, Stage0Result) and len(prev_result.resolved_ids or []) > 1:
-            _LOGGER.debug("[Stage1] Multiple entities from Stage0 detected.")
-            # Use unified logic
-            return await self._process_candidates(
-                user_input, 
-                list(prev_result.resolved_ids), 
-                (prev_result.intent or "").strip()
-            )
+            candidates = list(prev_result.resolved_ids)
+            intent_name = (prev_result.intent or "").strip()
+            _LOGGER.debug("[Stage1] Multiple entities (%d) from Stage0. Intent=%s", len(candidates), intent_name)
+
+            # --- Refinement Check: Attempt to narrow domain via KeywordIntent ---
+            # If Stage0 result is broad (multiple items), cross-check with KeywordIntent 
+            # to see if a strict domain (e.g. 'sensor') was intended but missed by Stage0.
+            ki_data = await self.use("keyword_intent", user_input) or {}
+            strict_domain = ki_data.get("domain")
+            strict_intent = ki_data.get("intent")
+            
+            if strict_domain and strict_intent:
+                 _LOGGER.debug("[Stage1] KeywordIntent detected stricter domain='%s', intent='%s'.", strict_domain, strict_intent)
+                 
+                 # Re-resolve using the strict slots from KeywordIntent (which include 'domain')
+                 slots = ki_data.get("slots") or {}
+                 er_data = await self.use("entity_resolver", user_input, entities=slots) or {}
+                 refined_ids = er_data.get("resolved_ids") or []
+                 
+                 # If we found something valid with the stricter domain, prefer it!
+                 # This fixes "Temperature in Office" returning lights/covers (Stage0) vs just sensors (KeywordIntent).
+                 if refined_ids:
+                     _LOGGER.debug("[Stage1] Refined resolution found %d entities. Replacing Stage0 result.", len(refined_ids))
+                     candidates = refined_ids
+                     intent_name = strict_intent
+                     # We can also adopt the slots as params if needed, but currently _process_candidates 
+                     # mostly relies on IDs. If specific params (like temp=22) are needed, we should extract them.
+                     # For HassGetState/TurnOn/Off, IDs are usually enough.
+                 else:
+                     _LOGGER.debug("[Stage1] Refined resolution yielded no entities. Falling back to Stage0 candidates.")
+            
+            # Proceed with whatever candidates we have (original or refined)
+            return await self._process_candidates(user_input, candidates, intent_name)
 
         # --- Clarification: split into atomic commands -------------------------
         clar_data = await self.use("clarification", user_input)
@@ -284,7 +308,7 @@ class Stage1Processor(BaseStage):
                 er_data = await self.use("entity_resolver", user_input, entities=slots) or {}
                 entity_ids = er_data.get("resolved_ids") or []
 
-                # --- NEW: Area Alias Fallback ---
+                # --- Area Alias Fallback ---
                 if not entity_ids:
                     candidate_area = slots.get("area") or slots.get("name")
                     if candidate_area:
@@ -307,7 +331,6 @@ class Stage1Processor(BaseStage):
                 if not entity_ids:
                     return {"status": "escalate", "result": prev_result}
 
-                # Execute (handling single OR multiple results via unified logic)
                 params = {k: v for (k, v) in slots.items() if k not in ("name", "entity_id")}
                 return await self._process_candidates(user_input, entity_ids, intent_name, params)
 

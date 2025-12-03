@@ -13,6 +13,7 @@ LIGHT_KEYWORDS: Dict[str, str] = {
     "lampe": "lampen",
     "leuchte": "leuchten",
     "beleuchtung": "beleuchtungen",
+    "spot": "spots",
 }
 
 # Covers: used both for plural detection and keyword-based intent grouping

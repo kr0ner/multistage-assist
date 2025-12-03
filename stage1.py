@@ -13,7 +13,7 @@ from .capabilities.entity_resolver import EntityResolverCapability
 from .capabilities.keyword_intent import KeywordIntentCapability
 from .capabilities.area_alias import AreaAliasCapability
 from .capabilities.response_generator import ResponseGeneratorCapability
-from .capabilities.chat import ChatCapability  # <--- NEW
+from .capabilities.chat import ChatCapability
 from .conversation_utils import make_response, error_response, with_new_text
 from .stage_result import Stage0Result
 
@@ -35,7 +35,7 @@ class Stage1Processor(BaseStage):
         KeywordIntentCapability,
         AreaAliasCapability,
         ResponseGeneratorCapability,
-        ChatCapability  # <--- NEW
+        ChatCapability
     ]
 
     def __init__(self, hass, config):
@@ -288,6 +288,15 @@ class Stage1Processor(BaseStage):
 
         clar_data = await self.use("clarification", user_input)
 
+        # --- FIX: Handle Empty Clarification Result (Chat Fallback) ---
+        if not clar_data or (isinstance(clar_data, list) and not clar_data):
+            _LOGGER.debug("[Stage1] Clarification returned empty list -> falling back to Chat Capability.")
+            chat_res = await self.use("chat", user_input)
+            if chat_res:
+                return {"status": "handled", "result": chat_res}
+            return {"status": "escalate", "result": prev_result}
+        # -------------------------------------------------------------
+
         if isinstance(clar_data, list):
             original_norm = (user_input.text or "").strip().lower()
             atomic = [c for c in clar_data if isinstance(c, str) and c.strip()]
@@ -301,14 +310,11 @@ class Stage1Processor(BaseStage):
                 slots = ki_data.get("slots") or {}
 
                 if not intent_name:
-                    # --- NEW: CHAT FALLBACK ---
-                    # If keyword intent fails, it's likely a chat/question.
-                    _LOGGER.debug("[Stage1] No intent found. Falling back to Chat Capability.")
+                    _LOGGER.debug("[Stage1] KeywordIntent found no intent -> falling back to Chat Capability.")
                     chat_res = await self.use("chat", user_input)
                     if chat_res:
                         return {"status": "handled", "result": chat_res}
                     return {"status": "escalate", "result": prev_result}
-                    # --------------------------
 
                 er_data = await self.use("entity_resolver", user_input, entities=slots) or {}
                 entity_ids = er_data.get("resolved_ids") or []
@@ -328,10 +334,14 @@ class Stage1Processor(BaseStage):
                             slots = new_slots 
 
                 if not entity_ids:
-                    # --- NEW: CHAT FALLBACK ---
-                    # If intent found but no entities, maybe it was a general question about "lights"?
-                    # Or just return escalate. For now, let's chat if it feels conversational?
-                    # Safer to escalate to Stage2 if Stage1 fails to execute an *intent*.
+                    # Also fallback to chat if we understood intent but found NO entities (e.g. general question)
+                    # BUT ONLY if it wasn't a strict command.
+                    # Actually, if we found intent but no entities, it might be safer to escalate or say "I don't know that device".
+                    # Let's try chat as a Hail Mary.
+                    _LOGGER.debug("[Stage1] Intent found but no entities -> trying Chat.")
+                    chat_res = await self.use("chat", user_input)
+                    if chat_res:
+                        return {"status": "handled", "result": chat_res}
                     return {"status": "escalate", "result": prev_result}
 
                 params = {k: v for (k, v) in slots.items() if k not in ("name", "entity_id")}

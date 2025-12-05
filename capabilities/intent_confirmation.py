@@ -1,5 +1,6 @@
 import logging
 from typing import Any, Dict, List, Optional
+
 from .base import Capability
 
 _LOGGER = logging.getLogger(__name__)
@@ -7,119 +8,63 @@ _LOGGER = logging.getLogger(__name__)
 
 class IntentConfirmationCapability(Capability):
     """
-    Produce a short natural-language confirmation of what will be executed
-    for a given intent, entities, and parameters. Purely generative; no selection.
+    Generates a short, natural confirmation sentence using an LLM.
+    Replaces static "Okay" responses.
     """
 
     name = "intent_confirmation"
-    description = "Create a concise German confirmation message for an intended action."
+    description = "Generates a natural language confirmation for an action."
 
     PROMPT = {
-        "system": """
-You produce a short, natural confirmation of what will be executed. Write the final message in German (du-form).
-
-## Input
-- intent: internal intent name, e.g., "HassTurnOn", "HassTurnOff", "HassLightSet", "HassSetTemperature".
-- entities: ordered list of objects:
-  - "entity_id": string
-  - "name": human-friendly display name (German)
-- params: optional key/values (e.g., brightness, percentage, temperature, color, mode, duration, position, volume, scene, etc.)
-- language: "de" by default. If another language is provided, write the final message in that language.
-- style: "concise" by default – produce a single short but natural sentence.
-
-## Rules
-1) Always write the final confirmation in the requested language (default: German, du-form).
-2) Refer to targets by their display names:
-   - 1 target → mention it directly.
-   - 2 targets → join with “und”.
-   - >2 targets → comma-separated; last with “und”.
-3) Derive meaning generically from `intent` and `params` (no domain hardcoding):
-   - on/off → “einschalten”/“ausschalten”.
-   - brightness/percentage/position/volume → “auf <value>%”.
-   - temperature → “auf <value>°C”.
-   - color → “auf <color>” (if present).
-   - mode/scene → “auf <mode/scene>”.
-   - duration/time → “für <duration>” or “um <time>” if applicable.
-   - If nothing fits → brief generic confirmation (e.g., “Okay, ich führe das aus.”).
-4) No explanations, no JSON in prose, just one sentence.
-5) If `entities` is empty → state that there are no suitable targets.
-6) Keep it brief, friendly, and natural.
-
-## Examples (German outputs)
-Input:
-{
-  "intent": "HassTurnOn",
-  "entities": [{"entity_id":"light.bad_spiegel","name":"Spiegellicht"}],
-  "params": {},
-  "language": "de",
-  "style": "concise"
-}
-Output:
-{"message":"Alles klar, ich schalte Spiegellicht ein."}
-
-Input:
-{
-  "intent": "HassLightSet",
-  "entities": [{"entity_id":"light.kueche","name":"Küche"},{"entity_id":"light.kueche_spots","name":"Küche Spots"}],
-  "params": {"brightness": 60, "color": "warmweiß"}
-}
-Output:
-{"message":"Okay, ich stelle Küche und Küche Spots auf 60 % warmweiß."}
-
-Input:
-{
-  "intent": "HassTurnOff",
-  "entities": [{"entity_id":"switch.buero_lampe","name":"Bürolampe"}],
-  "params": {}
-}
-Output:
-{"message":"Alles klar, ich schalte Bürolampe aus."}
-
-Input:
-{
-  "intent": "HassSetTemperature",
-  "entities": [{"entity_id":"climate.wohnzimmer","name":"Thermostat Wohnzimmer"}],
-  "params": {"temperature": 21.5}
-}
-Output:
-{"message":"Alles klar, ich stelle Thermostat Wohnzimmer auf 21,5 °C."}
-
-Input:
-{
-  "intent": "Any",
-  "entities": [],
-  "params": {}
-}
-Output:
-{"message":"Hm, ich habe dafür gerade keine passenden Ziele."}
+        "system": """You are a smart home assistant.
+Generate a VERY SHORT, natural German confirmation for the action described.
+Do not say "Okay" or "Erledigt". Just describe the new state.
+Example: "Das Licht im Bad ist an." or "Heizung ist auf 22 Grad."
+Input JSON: {"intent": "...", "devices": ["..."], "params": {...}}
+Output JSON: {"response": "string"}
 """,
         "schema": {
-            "type": "object",
             "properties": {
-                "message": {"type": "string"}
-            }
+                "response": {"type": "string"}
+            },
+            "required": ["response"]
         }
     }
 
     async def run(
         self,
         user_input,
-        *,
-        intent: str,
-        entities: List[Dict[str, str]],
-        params: Optional[Dict[str, Any]] = None,
-        language: str = "de",
-        style: str = "concise",
-        **_: Any,
+        intent_name: str,
+        entity_ids: List[str],
+        params: Dict[str, Any] = None,
+        **_: Any
     ) -> Dict[str, Any]:
-        return await self._safe_prompt(
-            self.PROMPT,
-            {
-                "intent": intent,
-                "entities": entities,
-                "params": params or {},
-                "language": language,
-                "style": style,
-            },
-            temperature=0.5,
-        )
+        
+        # 1. Resolve Friendly Names
+        names = []
+        for eid in entity_ids:
+            st = self.hass.states.get(eid)
+            if st:
+                names.append(st.attributes.get("friendly_name") or eid)
+            else:
+                names.append(eid)
+        
+        # 2. Filter Parameters (Feed only what matters for speech)
+        ignored_keys = {"domain", "service", "entity_id", "area_id"}
+        relevant_params = {k: v for k, v in (params or {}).items() if k not in ignored_keys}
+
+        payload = {
+            "intent": intent_name,
+            "devices": names,
+            "params": relevant_params
+        }
+
+        # 3. Generate
+        data = await self._safe_prompt(self.PROMPT, payload)
+        
+        message = "Aktion ausgeführt."
+        if isinstance(data, dict):
+            message = data.get("response", message)
+
+        _LOGGER.debug("[IntentConfirmation] Generated: '%s'", message)
+        return {"message": message}

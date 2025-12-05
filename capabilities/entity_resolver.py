@@ -24,7 +24,6 @@ from .base import Capability
 
 _LOGGER = logging.getLogger(__name__)
 
-# Map device classes to typical units for fallback matching
 DEVICE_CLASS_UNITS = {
     "temperature": {UnitOfTemperature.CELSIUS, UnitOfTemperature.FAHRENHEIT, UnitOfTemperature.KELVIN},
     "power": {UnitOfPower.WATT, UnitOfPower.KILO_WATT},
@@ -35,10 +34,11 @@ DEVICE_CLASS_UNITS = {
     "pressure": {"hPa", "mbar", "bar", "psi"},
 }
 
-# ---------- non-blocking lazy import for rapidfuzz.fuzz ----------
+# List of generic terms to ignore if found in 'name' slot
+GENERIC_NAMES = {"licht", "lichter", "lampe", "lampen", "leuchte", "leuchten", "gerät", "geräte", "ding", "alles", "alle", "etwas"}
+
 _fuzz = None
 async def _get_fuzz():
-    """Lazy-load rapidfuzz.fuzz on a worker thread to avoid blocking the event loop."""
     global _fuzz
     if _fuzz is not None:
         return _fuzz
@@ -50,14 +50,6 @@ async def _get_fuzz():
 
 
 class EntityResolverCapability(Capability):
-    """
-    Resolve entity_ids from NLU slots and ENRICH with:
-      - area + floor + domain + device_class lookup
-      - exact friendly/object_id match
-      - fuzzy match within domain (optionally restricted to area)
-      - "All entities of domain" fallback
-    """
-
     name = "entity_resolver"
     description = "Resolve entities from NLU slots; enrich with area/floor + fuzzy matching."
 
@@ -66,7 +58,6 @@ class EntityResolverCapability(Capability):
     _FUZZ_MAX_ADD = 4
 
     def _all_entities(self) -> Dict[str, Any]:
-        """Collect all known entities (registry + state machine)."""
         ent_reg = er.async_get(self.hass)
         all_entities: Dict[str, Any] = {
             e.entity_id: e for e in ent_reg.entities.values() if not e.disabled_by
@@ -80,13 +71,18 @@ class EntityResolverCapability(Capability):
         hass: HomeAssistant = self.hass
         slots = entities or {}
 
-        # Extract slots
         domain = self._first_str(slots, "domain", "domain_name")
         target_device_class = self._first_str(slots, "device_class")
         thing_name = self._first_str(slots, "name", "device", "entity", "label")
         raw_entity_id = self._first_str(slots, "entity_id")
         area_hint = self._first_str(slots, "area", "room")
         floor_hint = self._first_str(slots, "floor", "level")
+
+        # --- FIX: Ignore generic names ---
+        if thing_name and thing_name.lower().strip() in GENERIC_NAMES:
+            _LOGGER.debug("[EntityResolver] Ignoring generic name '%s'. Treating as empty name.", thing_name)
+            thing_name = None
+        # ---------------------------------
 
         _LOGGER.debug(
             "[EntityResolver] Incoming slots: domain=%r, name=%r, area=%r, floor=%r",
@@ -96,32 +92,27 @@ class EntityResolverCapability(Capability):
         resolved: List[str] = []
         seen: Set[str] = set()
 
-        # 0) Direct entity_id (verbatim)
         if raw_entity_id and self._state_exists(raw_entity_id):
             resolved.append(raw_entity_id)
             seen.add(raw_entity_id)
 
-        # 1) Resolve Area & Floor contexts
         area_obj = self._find_area(area_hint) if area_hint else None
         floor_obj = self._find_floor(floor_hint) if floor_hint else None
 
-        # 2) Area-based Lookup
+        # Area-based Lookup
         area_entities: List[str] = []
         if area_obj:
             area_entities = self._entities_in_area(area_obj, domain)
-            # If no name provided, we default to ALL entities in this area (matching domain)
+            # If no specific name, get all domain entities in area
             if not thing_name:
                 for eid in area_entities:
                     if eid not in seen:
                         resolved.append(eid)
                         seen.add(eid)
 
-        # 3) Name-based Lookup (Exact & Fuzzy)
+        # Name-based Lookup
         if thing_name:
-            # Prepare candidates (all or restricted to area)
             all_entities = self._all_entities()
-            
-            # Exact
             exact = self._collect_by_name_exact(hass, thing_name, domain, all_entities)
             if area_entities:
                 exact = [e for e in exact if e in set(area_entities)]
@@ -131,7 +122,6 @@ class EntityResolverCapability(Capability):
                     resolved.append(eid)
                     seen.add(eid)
 
-            # Fuzzy (only if exact didn't yield much or we want variety)
             fuzz_mod = await _get_fuzz()
             allowed = set(area_entities) if area_entities else None
             fuzzy_added = self._collect_by_name_fuzzy(hass, thing_name, domain, fuzz_mod, all_entities, allowed=allowed)
@@ -140,8 +130,7 @@ class EntityResolverCapability(Capability):
                     resolved.append(eid)
                     seen.add(eid)
 
-        # 4) "All Domain" Fallback (CRITICAL FOR "ALLE LICHTER")
-        # If no name and no area were specified, but we have a domain (e.g. "Schalte alle Lichter aus")
+        # "All Domain" Fallback
         if not thing_name and not area_hint and domain:
             _LOGGER.debug("[EntityResolver] No name/area specified. Fetching ALL entities for domain '%s'", domain)
             all_domain_entities = self._collect_all_domain_entities(domain)
@@ -150,24 +139,23 @@ class EntityResolverCapability(Capability):
                     resolved.append(eid)
                     seen.add(eid)
 
-        # 5) Filter by Floor
+        # Filter by Floor
         if floor_obj:
             _LOGGER.debug("[EntityResolver] Filtering %d candidates by floor '%s'", len(resolved), floor_obj.name)
             resolved = [eid for eid in resolved if self._is_entity_on_floor(eid, floor_obj.floor_id)]
 
-        # 6) Filter by Device Class / Unit
+        # Filter by Device Class
         if target_device_class:
             resolved = [eid for eid in resolved if self._match_device_class_or_unit(eid, target_device_class)]
 
-        # 7) Filter Exposure
+        # Filter Exposure
         pre_count = len(resolved)
         resolved = [eid for eid in resolved if async_should_expose(hass, CONVERSATION_DOMAIN, eid)]
         
         _LOGGER.debug("[EntityResolver] Final Result: %d entities (pre-filter: %d)", len(resolved), pre_count)
         return {"resolved_ids": resolved}
 
-    # ----------- Helpers -----------
-
+    # ----------- Helpers (Identical to previous versions) -----------
     @staticmethod
     def _first_str(d: Dict[str, Any], *keys: str) -> Optional[str]:
         for k in keys:
@@ -180,44 +168,30 @@ class EntityResolverCapability(Capability):
         return self.hass.states.get(entity_id) is not None
 
     def _collect_all_domain_entities(self, domain: str) -> List[str]:
-        """Return all entities belonging to a domain."""
-        return [
-            state.entity_id 
-            for state in self.hass.states.async_all() 
-            if state.entity_id.startswith(f"{domain}.")
-        ]
+        return [state.entity_id for state in self.hass.states.async_all() if state.entity_id.startswith(f"{domain}.")]
 
-    # ---- Floor Logic ----
     def _find_floor(self, floor_name: str):
         if not floor_name: return None
         floor_reg = fr.async_get(self.hass)
         needle = self._canon(floor_name)
         for floor in floor_reg.async_list_floors():
-            if self._canon(floor.name) == needle:
-                return floor
+            if self._canon(floor.name) == needle: return floor
         return None
 
     def _is_entity_on_floor(self, entity_id: str, floor_id: str) -> bool:
-        """Check if entity is on the given floor (via area->floor link)."""
         ent_reg = er.async_get(self.hass)
         dev_reg = dr.async_get(self.hass)
         area_reg = ar.async_get(self.hass)
-
         entry = ent_reg.async_get(entity_id)
         area_id = None
-
         if entry:
             area_id = entry.area_id
             if not area_id and entry.device_id:
                 dev = dev_reg.async_get(entry.device_id)
                 if dev: area_id = dev.area_id
-
-        if not area_id:
-            return False
-
+        if not area_id: return False
         area = area_reg.async_get_area(area_id)
-        if area and area.floor_id == floor_id:
-            return True
+        if area and area.floor_id == floor_id: return True
         return False
 
     def _match_device_class_or_unit(self, entity_id: str, target_class: str) -> bool:
@@ -226,13 +200,10 @@ class EntityResolverCapability(Capability):
         domain = entity_id.split(".", 1)[0].lower()
         if target_class == domain: return True
         if target_class == "light" and domain in ("light", "switch", "input_boolean"): return True
-
         state = self.hass.states.get(entity_id)
         if not state: return False
-        
         dc = state.attributes.get("device_class")
         if dc and dc.lower() == target_class: return True
-        
         unit = state.attributes.get("unit_of_measurement")
         expected_units = DEVICE_CLASS_UNITS.get(target_class)
         if unit and expected_units and unit in expected_units: return True

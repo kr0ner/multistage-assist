@@ -1,20 +1,23 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from homeassistant.components import conversation
-from homeassistant.helpers import intent as ha_intent
 from .base_stage import BaseStage
+
+# Capabilities
 from .capabilities.clarification import ClarificationCapability
 from .capabilities.disambiguation import DisambiguationCapability
 from .capabilities.disambiguation_select import DisambiguationSelectCapability
 from .capabilities.plural_detection import PluralDetectionCapability
-from .capabilities.intent_confirmation import IntentConfirmationCapability
+from .capabilities.intent_confirmation import IntentConfirmationCapability  # <--- Keep
 from .capabilities.intent_executor import IntentExecutorCapability
 from .capabilities.entity_resolver import EntityResolverCapability
 from .capabilities.keyword_intent import KeywordIntentCapability
 from .capabilities.area_alias import AreaAliasCapability
-from .capabilities.response_generator import ResponseGeneratorCapability
-# ChatCapability removed (Stage 2)
-from .conversation_utils import make_response, error_response, with_new_text
+# from .capabilities.response_generator import ResponseGeneratorCapability <--- REMOVE
+from .capabilities.memory import MemoryCapability
+from .capabilities.intent_resolution import IntentResolutionCapability
+
+from .conversation_utils import make_response, error_response, with_new_text, filter_candidates_by_state
 from .stage_result import Stage0Result
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,47 +32,32 @@ class Stage1Processor(BaseStage):
         DisambiguationCapability,
         DisambiguationSelectCapability,
         PluralDetectionCapability,
-        IntentConfirmationCapability,
+        IntentConfirmationCapability, # <--- Keep
         IntentExecutorCapability,
+        # ResponseGeneratorCapability, <--- REMOVE
+        MemoryCapability,
+        IntentResolutionCapability,
         EntityResolverCapability,
         KeywordIntentCapability,
-        AreaAliasCapability,
-        ResponseGeneratorCapability
+        AreaAliasCapability
     ]
 
     def __init__(self, hass, config):
         super().__init__(hass, config)
         self._pending: Dict[str, Dict[str, Any]] = {}
 
-    def _filter_candidates_by_state(self, entity_ids: List[str], intent_name: str) -> List[str]:
-        if intent_name not in ("HassTurnOn", "HassTurnOff"):
-            return entity_ids
+    async def _add_confirmation_if_needed(self, user_input, result, intent_name, entity_ids, params=None):
+        """Helper to inject natural speech if missing."""
+        if not result or not result.response:
+            return
 
-        filtered = []
-        for eid in entity_ids:
-            state_obj = self.hass.states.get(eid)
-            if not state_obj or state_obj.state in ("unavailable", "unknown"):
-                continue
-            state = state_obj.state
-            domain = eid.split(".", 1)[0]
-            
-            keep = False
-            if intent_name == "HassTurnOff":
-                if domain == "cover": keep = (state != "closed")
-                else: keep = (state != "off")
-            elif intent_name == "HassTurnOn":
-                if domain == "cover": keep = (state != "open")
-                else: keep = (state != "on")
-            
-            if keep: filtered.append(eid)
-        return filtered
-
-    async def _add_confirmation_if_needed(self, user_input, result, intent_name, entity_ids):
-        if not result or not result.response: return
         speech = result.response.speech.get("plain", {}).get("speech", "") if result.response.speech else ""
-        if not speech or speech.strip() == "Okay":
-            resp_gen = self.get("response_generator")
-            gen_data = await resp_gen.run(user_input, intent_name=intent_name, entity_ids=entity_ids)
+        
+        # If execution returned empty or generic "Okay", generate a nice sentence
+        if not speech or speech.strip() == "Okay.":
+            confirm_cap = self.get("intent_confirmation")
+            # Pass params so it knows "50%" or "red"
+            gen_data = await confirm_cap.run(user_input, intent_name=intent_name, entity_ids=entity_ids, params=params)
             msg = gen_data.get("message")
             if msg:
                 result.response.async_set_speech(msg)
@@ -83,12 +71,14 @@ class Stage1Processor(BaseStage):
                 plain = s.get("plain", {}).get("speech", "")
                 if plain:
                     texts.append(plain)
+        
         target_resp = getattr(target_result, "response", None)
         if target_resp:
             s = getattr(target_resp, "speech", {})
             target_text = s.get("plain", {}).get("speech", "")
             if target_text:
                 texts.append(target_text)
+            
             full_text = " ".join(texts)
             if full_text:
                 target_resp.async_set_speech(full_text)
@@ -101,175 +91,172 @@ class Stage1Processor(BaseStage):
         for i, cmd in enumerate(commands):
             _LOGGER.debug("[Stage1] Executing atomic command %d/%d: %s", i + 1, len(commands), cmd)
             sub_input = with_new_text(user_input, cmd)
+            
             result = await agent._run_pipeline(sub_input)
+            
             if key in self._pending:
                 remaining = commands[i+1:]
-                if remaining: self._pending[key]["remaining"] = remaining
-                if results: self._merge_speech(result, results)
+                if remaining:
+                    self._pending[key]["remaining"] = remaining
+                
+                if results:
+                    self._merge_speech(result, results)
                 return {"status": "handled", "result": result}
+            
             results.append(result)
 
         if not results:
              return {"status": "error", "result": await error_response(user_input, "Keine Befehle ausgeführt.")}
+        
         final = results[-1]
         self._merge_speech(final, results[:-1])
         return {"status": "handled", "result": final}
 
-    async def _process_candidates(self, user_input, candidates: List[str], intent_name: str, params: Dict[str, Any] = None):
+    async def _process_candidates(self, user_input, candidates, intent_name, params, learning_data=None):
         key = getattr(user_input, "session_id", None) or user_input.conversation_id
         
         if len(candidates) == 1:
-            try:
-                exec_data = await self.use("intent_executor", user_input, intent_name=intent_name, entity_ids=candidates, params=params, language=user_input.language or "de")
-                if not exec_data or "result" not in exec_data:
-                    return {"status": "error", "result": await error_response(user_input, "Fehler.")}
-                await self._add_confirmation_if_needed(user_input, exec_data["result"], intent_name, candidates)
-                return {"status": "handled", "result": exec_data["result"]}
-            except Exception as e:
-                _LOGGER.exception("[Stage1] execution failed: %s", e)
-                return {"status": "error", "result": await error_response(user_input, "Fehler.")}
+            return await self._execute_final(user_input, candidates, intent_name, params, learning_data=learning_data)
 
         pd = await self.use("plural_detection", user_input) or {}
         if pd.get("multiple_entities") is True:
-            try:
-                exec_data = await self.use("intent_executor", user_input, intent_name=intent_name, entity_ids=candidates, params=params, language=user_input.language or "de")
-                if not exec_data or "result" not in exec_data:
-                    return {"status": "error", "result": await error_response(user_input, "Fehler.")}
-                await self._add_confirmation_if_needed(user_input, exec_data["result"], intent_name, candidates)
-                return {"status": "handled", "result": exec_data["result"]}
-            except Exception as e:
-                _LOGGER.exception("[Stage1] Direct multi-target execution failed: %s", e)
-                return {"status": "error", "result": await error_response(user_input, "Fehler.")}
+             return await self._execute_final(user_input, candidates, intent_name, params, learning_data=learning_data)
 
-        filtered_ids = self._filter_candidates_by_state(candidates, intent_name)
-        final_candidates = filtered_ids if filtered_ids else candidates
+        filtered = filter_candidates_by_state(self.hass, candidates, intent_name)
+        final = filtered if filtered else candidates
         
-        if len(final_candidates) == 1:
-            try:
-                exec_data = await self.use("intent_executor", user_input, intent_name=intent_name, entity_ids=final_candidates, params=params, language=user_input.language or "de")
-                if not exec_data or "result" not in exec_data:
-                        return {"status": "error", "result": await error_response(user_input, "Fehler.")}
-                await self._add_confirmation_if_needed(user_input, exec_data["result"], intent_name, final_candidates)
-                return {"status": "handled", "result": exec_data["result"]}
-            except Exception as e:
-                _LOGGER.exception("[Stage1] execution failed: %s", e)
-                return {"status": "error", "result": await error_response(user_input, "Fehler.")}
+        if len(final) == 1:
+            return await self._execute_final(user_input, final, intent_name, params, learning_data=learning_data)
 
-        entities_map = {eid: self.hass.states.get(eid).attributes.get("friendly_name", eid) for eid in final_candidates}
-        data = await self.use("disambiguation", user_input, entities=entities_map)
-        msg = (data or {}).get("message") or "Welches Gerät meinst du?"
+        # Disambiguation
+        entities_map = {eid: self.hass.states.get(eid).attributes.get("friendly_name", eid) for eid in final}
+        msg_data = await self.use("disambiguation", user_input, entities=entities_map)
         self._pending[key] = {"candidates": entities_map, "intent": intent_name, "params": params, "raw": user_input.text}
-        return {"status": "handled", "result": await make_response(msg, user_input)}
+        return {"status": "handled", "result": await make_response(msg_data.get("message", "Welches Gerät?"), user_input)}
+
+    async def _execute_final(self, user_input, entity_ids, intent_name, params, remaining=None, learning_data=None):
+        exec_data = await self.use("intent_executor", user_input, intent_name=intent_name, entity_ids=entity_ids, params=params, language=user_input.language or "de")
+        
+        if not exec_data or "result" not in exec_data:
+            return {"status": "error", "result": await error_response(user_input, "Fehler.")}
+
+        result_obj = exec_data["result"]
+
+        # A. Inject Natural Confirmation
+        await self._add_confirmation_if_needed(user_input, result_obj, intent_name, entity_ids, params)
+
+        # B. Inject Learning Question
+        if learning_data:
+             key = getattr(user_input, "session_id", None) or user_input.conversation_id
+             original_speech = result_obj.response.speech.get("plain", {}).get("speech", "")
+             src, tgt = learning_data["source"], learning_data["target"]
+             new_speech = f"{original_speech} Übrigens, ich habe '{src}' als '{tgt}' interpretiert. Soll ich mir das merken?"
+             result_obj.response.async_set_speech(new_speech)
+             result_obj.continue_conversation = True
+             self._pending[key] = {"type": "learning_confirmation", "source": src, "target": tgt}
+
+        if remaining:
+             return await self._execute_sequence(user_input, remaining, previous_results=[result_obj])
+        
+        return {"status": "handled", "result": result_obj}
 
     async def run(self, user_input, prev_result=None):
         _LOGGER.debug("[Stage1] Input='%s', prev_result=%s", user_input.text, type(prev_result).__name__)
         key = getattr(user_input, "session_id", None) or user_input.conversation_id
 
-        # 1. Handle Pending
+        # 1. Handle Pending (Disambiguation / Learning)
         if key in self._pending:
-            pending = self._pending.pop(key, None)
-            if not pending: return {"status": "error", "result": await error_response(user_input)}
-            
-            candidates = [{"entity_id": eid, "name": name, "ordinal": i + 1} for i, (eid, name) in enumerate(pending["candidates"].items())]
-            selected = await self.use("disambiguation_select", user_input, candidates=candidates)
-            if not selected: return {"status": "error", "result": await error_response(user_input)}
+            return await self._handle_pending(key, user_input)
 
-            intent_name = (pending.get("intent") or "").strip()
-            params = pending.get("params", {}) 
-
-            try:
-                exec_data = await self.use("intent_executor", user_input, intent_name=intent_name, entity_ids=selected, params=params, language=user_input.language or "de")
-                if not exec_data or "result" not in exec_data:
-                    return {"status": "error", "result": await error_response(user_input, "Fehler.")}
-                await self._add_confirmation_if_needed(user_input, exec_data["result"], intent_name, selected)
-                conv_result = exec_data["result"]
-                remaining = pending.get("remaining")
-                if remaining:
-                    return await self._execute_sequence(user_input, remaining, previous_results=[conv_result])
-                return {"status": "handled", "result": conv_result}
-            except Exception as e:
-                _LOGGER.exception("[Stage1] Direct action execution failed: %s", e)
-                return {"status": "error", "result": await error_response(user_input, "Fehler.")}
-
-        # 2. Handle Stage0
+        # 2. Handle Stage0 Handoff (Refining NLU results)
         if isinstance(prev_result, Stage0Result) and len(prev_result.resolved_ids or []) > 1:
-            candidates = list(prev_result.resolved_ids)
-            intent_name = (prev_result.intent or "").strip()
-            
-            ki_data = await self.use("keyword_intent", user_input) or {}
-            strict_domain = ki_data.get("domain")
-            strict_intent = ki_data.get("intent")
-            
-            if strict_domain and strict_intent:
-                 slots = ki_data.get("slots") or {}
-                 er_data = await self.use("entity_resolver", user_input, entities=slots) or {}
-                 refined_ids = er_data.get("resolved_ids") or []
-                 if refined_ids:
-                     candidates = refined_ids
-                     intent_name = strict_intent
-            
-            return await self._process_candidates(user_input, candidates, intent_name)
+            return await self._handle_stage0_result(prev_result, user_input)
 
-        # 3. Clarification
+        # 3. Handle New Command
+        return await self._handle_new_command(user_input, prev_result)
+
+    # --- Sub-Handlers ---
+
+    async def _handle_pending(self, key: str, user_input) -> Dict[str, Any]:
+        pending = self._pending.pop(key, None)
+        if not pending: return {"status": "error", "result": await error_response(user_input)}
+
+        # Learning Confirmation
+        if pending.get("type") == "learning_confirmation":
+            if user_input.text.lower().strip() in ("ja", "ja bitte", "gerne", "okay", "mach das"):
+                await self.get("memory").learn_area_alias(pending["source"], pending["target"])
+                return {"status": "handled", "result": await make_response("Alles klar, gemerkt.", user_input)}
+            return {"status": "handled", "result": await make_response("Okay, nicht gemerkt.", user_input)}
+
+        # Disambiguation
+        candidates = [{"entity_id": eid, "name": name, "ordinal": i + 1} 
+                      for i, (eid, name) in enumerate(pending["candidates"].items())]
+        selected = await self.use("disambiguation_select", user_input, candidates=candidates)
+        
+        if not selected:
+            return {"status": "error", "result": await error_response(user_input)}
+
+        return await self._execute_final(
+            user_input, 
+            selected, 
+            pending.get("intent", ""), 
+            pending.get("params", {}),
+            pending.get("remaining")
+        )
+
+    async def _handle_stage0_result(self, prev_result: Stage0Result, user_input) -> Dict[str, Any]:
+        """Refine Stage0 results using IntentResolution."""
+        res_data = await self.use("intent_resolution", user_input)
+        
+        if res_data:
+            return await self._process_candidates(
+                user_input, 
+                res_data["entity_ids"], 
+                res_data["intent"], 
+                {k: v for k, v in res_data["slots"].items() if k not in ("name", "entity_id")},
+                res_data.get("learning_data")
+            )
+        
+        return await self._process_candidates(
+            user_input, 
+            list(prev_result.resolved_ids), 
+            (prev_result.intent or "").strip(),
+            {}
+        )
+
+    async def _handle_new_command(self, user_input, prev_result) -> Dict[str, Any]:
+        """Clarify and Execute."""
         clar_data = await self.use("clarification", user_input)
-
+        
+        # If Empty -> Chat
         if not clar_data or (isinstance(clar_data, list) and not clar_data):
-            _LOGGER.debug("[Stage1] Clarification empty -> escalating to Stage 2.")
             return {"status": "escalate", "result": prev_result}
 
         if isinstance(clar_data, list):
-            original_norm = (user_input.text or "").strip().lower()
+            norm = (user_input.text or "").strip().lower()
             atomic = [c for c in clar_data if isinstance(c, str) and c.strip()]
 
-            if len(atomic) == 1 and atomic[0].strip().lower() == original_norm:
-                if isinstance(prev_result, Stage0Result) and prev_result.intent and prev_result.type == "intent":
+            # 1. Exact Match Single Command -> Resolve & Execute
+            if len(atomic) == 1 and atomic[0].strip().lower() == norm:
+                if isinstance(prev_result, Stage0Result) and prev_result.intent:
+                     return {"status": "escalate", "result": prev_result}
+
+                res_data = await self.use("intent_resolution", user_input)
+                
+                if not res_data:
                     return {"status": "escalate", "result": prev_result}
 
-                ki_data = await self.use("keyword_intent", user_input) or {}
-                intent_name = ki_data.get("intent")
-                slots = ki_data.get("slots") or {}
+                params = {k: v for (k, v) in res_data["slots"].items() if k not in ("name", "entity_id")}
+                return await self._process_candidates(
+                    user_input, 
+                    res_data["entity_ids"], 
+                    res_data["intent"], 
+                    params, 
+                    res_data.get("learning_data")
+                )
 
-                if not intent_name:
-                    _LOGGER.debug("[Stage1] KeywordIntent failed -> escalating to Stage 2.")
-                    return {"status": "escalate", "result": prev_result}
-
-                er_data = await self.use("entity_resolver", user_input, entities=slots) or {}
-                entity_ids = er_data.get("resolved_ids") or []
-
-                # --- Handle Missing Entities + GLOBAL scope ---
-                if not entity_ids:
-                    candidate_area = slots.get("area") or slots.get("name")
-                    if candidate_area:
-                        alias_res = await self.use("area_alias", user_input, search_text=candidate_area)
-                        mapped_area = alias_res.get("area")
-                        
-                        if mapped_area == "GLOBAL":
-                            _LOGGER.debug("[Stage1] Global scope detected. Removing area constraint.")
-                            new_slots = slots.copy()
-                            new_slots.pop("area", None) # Remove area
-                            if new_slots.get("name") == candidate_area:
-                                new_slots.pop("name")
-                            er_data = await self.use("entity_resolver", user_input, entities=new_slots) or {}
-                            entity_ids = er_data.get("resolved_ids") or []
-                            slots = new_slots # Use these new slots
-                            
-                        elif mapped_area:
-                            new_slots = slots.copy()
-                            new_slots["area"] = mapped_area
-                            if new_slots.get("name") == candidate_area:
-                                new_slots.pop("name") 
-                            er_data = await self.use("entity_resolver", user_input, entities=new_slots) or {}
-                            entity_ids = er_data.get("resolved_ids") or []
-                            slots = new_slots 
-
-                if not entity_ids:
-                    _LOGGER.debug("[Stage1] Intent found but no entities -> escalating to Stage 2.")
-                    return {"status": "escalate", "result": prev_result}
-
-                params = {k: v for (k, v) in slots.items() if k not in ("name", "entity_id")}
-                return await self._process_candidates(user_input, entity_ids, intent_name, params)
-
-            if len(atomic) > 1 or (len(atomic) == 1 and atomic[0].strip().lower() != original_norm):
+            # 2. Multi Command OR Rephrased Single Command
+            if len(atomic) > 0:
                 return await self._execute_sequence(user_input, atomic)
 
         return {"status": "escalate", "result": prev_result}

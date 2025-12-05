@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from homeassistant.components import conversation
 from homeassistant.helpers import intent as ha_intent
 from .base_stage import BaseStage
@@ -13,6 +13,7 @@ from .capabilities.entity_resolver import EntityResolverCapability
 from .capabilities.keyword_intent import KeywordIntentCapability
 from .capabilities.area_alias import AreaAliasCapability
 from .capabilities.response_generator import ResponseGeneratorCapability
+# ChatCapability removed (Stage 2)
 from .conversation_utils import make_response, error_response, with_new_text
 from .stage_result import Stage0Result
 
@@ -41,7 +42,6 @@ class Stage1Processor(BaseStage):
         self._pending: Dict[str, Dict[str, Any]] = {}
 
     def _filter_candidates_by_state(self, entity_ids: List[str], intent_name: str) -> List[str]:
-        """Filter out entities that are already in the desired state."""
         if intent_name not in ("HassTurnOn", "HassTurnOff"):
             return entity_ids
 
@@ -50,27 +50,6 @@ class Stage1Processor(BaseStage):
             state_obj = self.hass.states.get(eid)
             if not state_obj or state_obj.state in ("unavailable", "unknown"):
                 continue
-
-            state = state_obj.state
-            domain = eid.split(".", 1)[0]
-            
-            if intent_name == "HassTurnOff":
-                if (domain == "cover" and state != "closed") or (domain != "cover" and state != "off"):
-                    filtered.append(eid)
-            elif intent_name == "HassTurnOn":
-                if (domain == "cover" and state != "open") or (domain != "cover" and state != "on"):
-                    filtered.append(eid)
-            
-            if is_relevant: # FIX: logic error in previous snippets, 'is_relevant' wasn't defined here but logic block was used.
-                # Actually, the 'if' blocks above should just append directly.
-                # Let's clean this up:
-                pass 
-        
-        # CORRECTED LOGIC:
-        final_list = []
-        for eid in entity_ids:
-            state_obj = self.hass.states.get(eid)
-            if not state_obj or state_obj.state in ("unavailable", "unknown"): continue
             state = state_obj.state
             domain = eid.split(".", 1)[0]
             
@@ -82,17 +61,12 @@ class Stage1Processor(BaseStage):
                 if domain == "cover": keep = (state != "open")
                 else: keep = (state != "on")
             
-            if keep: final_list.append(eid)
-            
-        return final_list
+            if keep: filtered.append(eid)
+        return filtered
 
     async def _add_confirmation_if_needed(self, user_input, result, intent_name, entity_ids):
-        """Helper to inject random speech if missing."""
-        if not result or not result.response:
-            return
-
+        if not result or not result.response: return
         speech = result.response.speech.get("plain", {}).get("speech", "") if result.response.speech else ""
-        
         if not speech or speech.strip() == "Okay":
             resp_gen = self.get("response_generator")
             gen_data = await resp_gen.run(user_input, intent_name=intent_name, entity_ids=entity_ids)
@@ -109,7 +83,6 @@ class Stage1Processor(BaseStage):
                 plain = s.get("plain", {}).get("speech", "")
                 if plain:
                     texts.append(plain)
-        
         target_resp = getattr(target_result, "response", None)
         if target_resp:
             s = getattr(target_resp, "speech", {})
@@ -128,24 +101,16 @@ class Stage1Processor(BaseStage):
         for i, cmd in enumerate(commands):
             _LOGGER.debug("[Stage1] Executing atomic command %d/%d: %s", i + 1, len(commands), cmd)
             sub_input = with_new_text(user_input, cmd)
-            
             result = await agent._run_pipeline(sub_input)
-            
             if key in self._pending:
-                _LOGGER.debug("[Stage1] Command '%s' triggered pending state.", cmd)
                 remaining = commands[i+1:]
-                if remaining:
-                    self._pending[key]["remaining"] = remaining
-                
-                if results:
-                    self._merge_speech(result, results)
+                if remaining: self._pending[key]["remaining"] = remaining
+                if results: self._merge_speech(result, results)
                 return {"status": "handled", "result": result}
-            
             results.append(result)
 
         if not results:
              return {"status": "error", "result": await error_response(user_input, "Keine Befehle ausgeführt.")}
-        
         final = results[-1]
         self._merge_speech(final, results[:-1])
         return {"status": "handled", "result": final}
@@ -153,7 +118,6 @@ class Stage1Processor(BaseStage):
     async def _process_candidates(self, user_input, candidates: List[str], intent_name: str, params: Dict[str, Any] = None):
         key = getattr(user_input, "session_id", None) or user_input.conversation_id
         
-        # Single Candidate Optimization
         if len(candidates) == 1:
             try:
                 exec_data = await self.use("intent_executor", user_input, intent_name=intent_name, entity_ids=candidates, params=params, language=user_input.language or "de")
@@ -165,7 +129,6 @@ class Stage1Processor(BaseStage):
                 _LOGGER.exception("[Stage1] execution failed: %s", e)
                 return {"status": "error", "result": await error_response(user_input, "Fehler.")}
 
-        # Plural Detection
         pd = await self.use("plural_detection", user_input) or {}
         if pd.get("multiple_entities") is True:
             try:
@@ -178,7 +141,6 @@ class Stage1Processor(BaseStage):
                 _LOGGER.exception("[Stage1] Direct multi-target execution failed: %s", e)
                 return {"status": "error", "result": await error_response(user_input, "Fehler.")}
 
-        # Filtering
         filtered_ids = self._filter_candidates_by_state(candidates, intent_name)
         final_candidates = filtered_ids if filtered_ids else candidates
         
@@ -193,7 +155,6 @@ class Stage1Processor(BaseStage):
                 _LOGGER.exception("[Stage1] execution failed: %s", e)
                 return {"status": "error", "result": await error_response(user_input, "Fehler.")}
 
-        # Disambiguation
         entities_map = {eid: self.hass.states.get(eid).attributes.get("friendly_name", eid) for eid in final_candidates}
         data = await self.use("disambiguation", user_input, entities=entities_map)
         msg = (data or {}).get("message") or "Welches Gerät meinst du?"
@@ -235,7 +196,6 @@ class Stage1Processor(BaseStage):
             candidates = list(prev_result.resolved_ids)
             intent_name = (prev_result.intent or "").strip()
             
-            # Try refine intent
             ki_data = await self.use("keyword_intent", user_input) or {}
             strict_domain = ki_data.get("domain")
             strict_intent = ki_data.get("intent")
@@ -253,7 +213,6 @@ class Stage1Processor(BaseStage):
         # 3. Clarification
         clar_data = await self.use("clarification", user_input)
 
-        # FIX: Empty -> Escalate to Stage 2 (Chat)
         if not clar_data or (isinstance(clar_data, list) and not clar_data):
             _LOGGER.debug("[Stage1] Clarification empty -> escalating to Stage 2.")
             return {"status": "escalate", "result": prev_result}
@@ -262,7 +221,6 @@ class Stage1Processor(BaseStage):
             original_norm = (user_input.text or "").strip().lower()
             atomic = [c for c in clar_data if isinstance(c, str) and c.strip()]
 
-            # Single atomic command -> Try Keyword Intent
             if len(atomic) == 1 and atomic[0].strip().lower() == original_norm:
                 if isinstance(prev_result, Stage0Result) and prev_result.intent and prev_result.type == "intent":
                     return {"status": "escalate", "result": prev_result}
@@ -271,7 +229,6 @@ class Stage1Processor(BaseStage):
                 intent_name = ki_data.get("intent")
                 slots = ki_data.get("slots") or {}
 
-                # No intent -> Escalate to Stage 2 (Chat)
                 if not intent_name:
                     _LOGGER.debug("[Stage1] KeywordIntent failed -> escalating to Stage 2.")
                     return {"status": "escalate", "result": prev_result}
@@ -279,21 +236,32 @@ class Stage1Processor(BaseStage):
                 er_data = await self.use("entity_resolver", user_input, entities=slots) or {}
                 entity_ids = er_data.get("resolved_ids") or []
 
+                # --- Handle Missing Entities + GLOBAL scope ---
                 if not entity_ids:
-                    # Area alias fallback
                     candidate_area = slots.get("area") or slots.get("name")
                     if candidate_area:
                         alias_res = await self.use("area_alias", user_input, search_text=candidate_area)
                         mapped_area = alias_res.get("area")
-                        if mapped_area:
+                        
+                        if mapped_area == "GLOBAL":
+                            _LOGGER.debug("[Stage1] Global scope detected. Removing area constraint.")
+                            new_slots = slots.copy()
+                            new_slots.pop("area", None) # Remove area
+                            if new_slots.get("name") == candidate_area:
+                                new_slots.pop("name")
+                            er_data = await self.use("entity_resolver", user_input, entities=new_slots) or {}
+                            entity_ids = er_data.get("resolved_ids") or []
+                            slots = new_slots # Use these new slots
+                            
+                        elif mapped_area:
                             new_slots = slots.copy()
                             new_slots["area"] = mapped_area
-                            if new_slots.get("name") == candidate_area: new_slots.pop("name") 
+                            if new_slots.get("name") == candidate_area:
+                                new_slots.pop("name") 
                             er_data = await self.use("entity_resolver", user_input, entities=new_slots) or {}
                             entity_ids = er_data.get("resolved_ids") or []
                             slots = new_slots 
 
-                # Still no entities -> Escalate to Stage 2 (Chat)
                 if not entity_ids:
                     _LOGGER.debug("[Stage1] Intent found but no entities -> escalating to Stage 2.")
                     return {"status": "escalate", "result": prev_result}
@@ -301,7 +269,6 @@ class Stage1Processor(BaseStage):
                 params = {k: v for (k, v) in slots.items() if k not in ("name", "entity_id")}
                 return await self._process_candidates(user_input, entity_ids, intent_name, params)
 
-            # Multi-command
             if len(atomic) > 1 or (len(atomic) == 1 and atomic[0].strip().lower() != original_norm):
                 return await self._execute_sequence(user_input, atomic)
 

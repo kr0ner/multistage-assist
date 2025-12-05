@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from homeassistant.helpers import intent as ha_intent
@@ -20,14 +21,45 @@ def _join_names(names: List[str]) -> str:
     return f"{', '.join(names[:-1])} und {names[-1]}"
 
 
+def _normalize_speech(text: str) -> str:
+    """Normalize text for German TTS (Piper)."""
+    if not text:
+        return ""
+    
+    # 1. Replace decimal dots with commas (e.g. 22.5 -> 22,5)
+    # Matches a digit, followed by a dot, followed by a digit
+    text = re.sub(r"(\d+)\.(\d+)", r"\1,\2", text)
+    
+    # 2. Expand common units
+    replacements = {
+        "°C": " Grad Celsius",
+        "°": " Grad",
+        "%": " Prozent",
+        "kWh": " Kilowattstunden",
+        "kW": " Kilowatt",
+        "W": " Watt",
+        "V": " Volt",
+        "A": " Ampere",
+        "lx": " Lux",
+        "lm": " Lumen",
+    }
+    
+    for symbol, spoken in replacements.items():
+        # Replace symbol if it's at end of string or followed by space/punctuation
+        # This prevents replacing "V" inside "Volumen"
+        text = re.sub(rf"{re.escape(symbol)}(?=$|\s|[.,!?])", spoken, text)
+        
+    return text.strip()
+
+
 class IntentExecutorCapability(Capability):
     """
-    Execute a known HA intent for one or more concrete entity_ids.
-    Does NOT provide generic fallback speech anymore; leaves that to ResponseGenerator.
+    Execute a known HA intent for one or more concrete entity_ids by calling
+    homeassistant.helpers.intent.async_handle directly.
     """
 
     name = "intent_executor"
-    description = "Execute a Home Assistant intent for specific targets."
+    description = "Execute a Home Assistant intent for specific targets and return a ConversationResult."
 
     # Keys that are used for resolving entities but should NOT be passed to execution
     RESOLUTION_KEYS = {"area", "room", "floor", "device_class"}
@@ -46,15 +78,24 @@ class IntentExecutorCapability(Capability):
         **_: Any,
     ) -> Dict[str, Any]:
         if not intent_name or not entity_ids:
-            _LOGGER.warning("[IntentExecutor] Missing intent/entities.")
+            _LOGGER.warning(
+                "[IntentExecutor] Missing intent_name or entity_ids (intent=%r, entities=%r)",
+                intent_name, entity_ids,
+            )
             return {}
 
         hass = self.hass
         params = params or {}
 
-        # 1. Validate entities
-        valid_ids = [eid for eid in entity_ids if hass.states.get(eid) and hass.states.get(eid).state not in ("unavailable", "unknown")]
-        
+        # 1. Validate entities (skip unavailable)
+        valid_ids = []
+        for eid in entity_ids:
+            st = hass.states.get(eid)
+            if st and st.state not in ("unavailable", "unknown"):
+                valid_ids.append(eid)
+            else:
+                _LOGGER.warning("[IntentExecutor] Skipping unavailable entity: %s", eid)
+
         if not valid_ids:
             return {}
 
@@ -62,15 +103,17 @@ class IntentExecutorCapability(Capability):
         results: List[tuple[str, ha_intent.IntentResponse]] = []
         
         for eid in valid_ids:
+            # Determine effective intent and params
             effective_intent = intent_name
             domain = eid.split(".", 1)[0]
             current_params = params.copy()
 
-            # Downgrade Climate intent for Sensors
+            # --- Logic for Sensors (Downgrade Climate intent) ---
             if intent_name == "HassClimateGetTemperature" and domain == "sensor":
+                _LOGGER.debug("[IntentExecutor] Downgrading %s to HassGetState for sensor %s", intent_name, eid)
                 effective_intent = "HassGetState"
 
-            # Relative Brightness Logic
+            # --- Logic for Relative Brightness (Light domain) ---
             if intent_name == "HassLightSet" and "brightness" in current_params:
                 val = current_params["brightness"]
                 if val in ("step_up", "step_down"):
@@ -90,17 +133,22 @@ class IntentExecutorCapability(Capability):
                     else:
                         current_params.pop("brightness")
 
-            # Prepare slots (exclude resolution keys)
+            # Prepare slots
             slots = {"name": {"value": eid}}
+            
             if "domain" not in current_params:
                 slots["domain"] = {"value": domain}
 
+            # Add processed params to slots, skipping resolution constraints
             for k, v in current_params.items():
                 if k in self.RESOLUTION_KEYS or k == "name":
                     continue
                 slots[k] = {"value": v}
 
-            _LOGGER.debug("[IntentExecutor] Executing %s on %s", effective_intent, eid)
+            _LOGGER.debug(
+                "[IntentExecutor] Executing intent '%s' on %s with slots=%s",
+                effective_intent, eid, slots,
+            )
 
             try:
                 resp = await ha_intent.async_handle(
@@ -114,33 +162,59 @@ class IntentExecutorCapability(Capability):
                 )
                 results.append((eid, resp))
             except Exception as e:
-                _LOGGER.warning("[IntentExecutor] Error on %s: %s", eid, e)
+                _LOGGER.warning("[IntentExecutor] execution failed for %s: %s", eid, e)
 
         if not results:
+            _LOGGER.warning("[IntentExecutor] No successful responses collected.")
             return {}
 
+        # Use the last response as the base for the result object
         final_resp = results[-1][1]
 
-        # 3. Custom Speech for Queries (Readouts)
-        # We only inject speech if it's a query intent. 
-        # For actions (TurnOn/Off), we leave it empty so Stage1 can use ResponseGenerator.
+        # 3. Custom Speech Generation for Queries
         if effective_intent in ("HassGetState", "HassClimateGetTemperature"):
-            current_speech = final_resp.speech.get("plain", {}).get("speech", "") if final_resp.speech else ""
+            current_speech = ""
+            if final_resp.speech:
+                current_speech = final_resp.speech.get("plain", {}).get("speech", "")
             
             if not current_speech or current_speech.strip() == "Okay":
                 parts = []
                 for eid, _ in results:
                     state_obj = hass.states.get(eid)
-                    if not state_obj: continue
+                    if not state_obj:
+                        continue
+                    
                     friendly = state_obj.attributes.get("friendly_name", eid)
                     val = state_obj.state
                     unit = state_obj.attributes.get("unit_of_measurement", "")
+                    
+                    # Normalize the value (dot to comma)
+                    if val.replace(".", "", 1).isdigit():
+                        val = val.replace(".", ",")
+                    
                     text_part = f"{friendly} ist {val}"
-                    if unit: text_part += f" {unit}"
+                    if unit:
+                        text_part += f" {unit}"
                     parts.append(text_part)
                 
                 if parts:
-                    final_resp.async_set_speech(_join_names(parts) + ".")
+                    raw_text = _join_names(parts) + "."
+                    # Normalize the full text (units, etc.)
+                    speech_text = _normalize_speech(raw_text)
+                    
+                    final_resp.async_set_speech(speech_text)
+                    _LOGGER.debug("[IntentExecutor] Injected normalized speech: %s", speech_text)
+
+        # 4. General Fallback
+        def _has_plain_speech(r: ha_intent.IntentResponse) -> bool:
+            s = getattr(r, "speech", None)
+            if not isinstance(s, dict):
+                return False
+            plain = s.get("plain") or {}
+            return bool(plain.get("speech"))
+
+        if not _has_plain_speech(final_resp):
+            final_resp.async_set_speech("Okay.")
 
         conv_result = ConversationResult(
             response=final_resp,

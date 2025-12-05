@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import aiohttp
+import json
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ class OllamaClient:
         system_prompt: str,
         prompt: str,
         temperature: float = 0.25,
+        num_ctx: int = 800,
     ) -> str:
         """Send a chat request to Ollama."""
         url = f"{self.base_url}/api/chat"
@@ -45,12 +47,14 @@ class OllamaClient:
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
-            "options": {"num_ctx": 1024, "temperature": temperature},
+            "options": {
+                "num_ctx": num_ctx, 
+                "temperature": temperature
+            },
         }
 
         # 🔎 Log full payload for debugging
         try:
-            import json
             _LOGGER.debug(
                 "Querying Ollama at %s with payload:\n%s",
                 url,

@@ -1,14 +1,12 @@
 import logging
 from typing import Any, Dict, Optional, List
-
 from .base import Capability
 from custom_components.multistage_assist.conversation_utils import (
     LIGHT_KEYWORDS, COVER_KEYWORDS, SENSOR_KEYWORDS, CLIMATE_KEYWORDS,
-    SWITCH_KEYWORDS, FAN_KEYWORDS, MEDIA_KEYWORDS
+    SWITCH_KEYWORDS, FAN_KEYWORDS, MEDIA_KEYWORDS, TIMER_KEYWORDS
 )
 
 _LOGGER = logging.getLogger(__name__)
-
 
 class KeywordIntentCapability(Capability):
     """Derive intent/domain from keywords."""
@@ -22,61 +20,21 @@ class KeywordIntentCapability(Capability):
         "media_player": list(MEDIA_KEYWORDS.values()) + list(MEDIA_KEYWORDS.keys()),
         "sensor": list(SENSOR_KEYWORDS.values()) + list(SENSOR_KEYWORDS.keys()) + ["grad", "warm", "kalt", "wieviel"],
         "climate": list(CLIMATE_KEYWORDS.values()) + list(CLIMATE_KEYWORDS.keys()),
-        "timer": ["timer", "wecker", "countdown", "uhr", "stoppuhr"],
+        "timer": TIMER_KEYWORDS,
     }
 
     INTENT_DATA = {
-        "light": {
-            "intents": ["HassTurnOn", "HassTurnOff", "HassLightSet", "HassGetState"],
-            "rules": "brightness: 'step_up'/'step_down' if no number. 0-100 otherwise."
-        },
-        "cover": {
-            "intents": ["HassTurnOn", "HassTurnOff", "HassSetPosition", "HassGetState"],
-            "rules": ""
-        },
-        "switch": {
-            "intents": ["HassTurnOn", "HassTurnOff", "HassGetState"],
-            "rules": ""
-        },
-        "fan": {
-            "intents": ["HassTurnOn", "HassTurnOff", "HassGetState"],
-            "rules": ""
-        },
-        "media_player": {
-            "intents": ["HassTurnOn", "HassTurnOff", "HassGetState"], # Can extend with VolumeSet later
-            "rules": ""
-        },
-        "sensor": {
-            "intents": ["HassGetState"],
-            "rules": """
-- 'device_class': REQUIRED if the user asks for a specific measurement.
-  - "Temperatur", "warm", "kalt" -> device_class: "temperature"
-  - "Feuchtigkeit", "Luftfeuchte" -> device_class: "humidity"
-  - "Leistung", "Watt", "Verbrauch" -> device_class: "power"
-  - "Energie", "kWh" -> device_class: "energy"
-  - "Batterie", "Ladung" -> device_class: "battery"
-- 'name': Leave EMPTY if 'device_class' is set (unless a specific device name is given).
-            """
-        },
-        "climate": {
-            "intents": ["HassClimateSetTemperature", "HassTurnOn", "HassTurnOff", "HassGetState"],
-            "rules": ""
-        },
-        "timer": {
-            "intents": ["HassTimerSet"],
-            "rules": """
-- 'duration': The duration. Return as integer SECONDS if possible, or text (e.g. "5 Minuten").
-- 'name': The target device name (e.g. "Daniel's Handy").
-            """
-        }
+        "light": {"intents": ["HassTurnOn", "HassTurnOff", "HassLightSet", "HassGetState"], "rules": "brightness: 'step_up'/'step_down' if no number."},
+        "cover": {"intents": ["HassTurnOn", "HassTurnOff", "HassSetPosition", "HassGetState"], "rules": ""},
+        "switch": {"intents": ["HassTurnOn", "HassTurnOff", "HassGetState"], "rules": ""},
+        "fan": {"intents": ["HassTurnOn", "HassTurnOff", "HassGetState"], "rules": ""},
+        "media_player": {"intents": ["HassTurnOn", "HassTurnOff", "HassGetState"], "rules": ""},
+        "sensor": {"intents": ["HassGetState"], "rules": "- device_class: required (temperature, humidity, power, energy, battery).\n- name: EMPTY unless specific."},
+        "climate": {"intents": ["HassClimateSetTemperature", "HassTurnOn", "HassTurnOff", "HassGetState"], "rules": ""},
+        "timer": {"intents": ["HassTimerSet"], "rules": "- duration: seconds or text.\n- name: target device."},
     }
 
-    SCHEMA = {
-        "properties": {
-            "intent": {"type": ["string", "null"]},
-            "slots": {"type": "object"},
-        },
-    }
+    SCHEMA = {"properties": {"intent": {"type": ["string", "null"]}, "slots": {"type": "object"}}}
 
     def _detect_domain(self, text: str) -> Optional[str]:
         t = text.lower()
@@ -84,12 +42,7 @@ class KeywordIntentCapability(Capability):
         if len(matches) == 1: return matches[0]
         if "climate" in matches and "sensor" in matches: return "climate"
         if "timer" in matches: return "timer"
-        
-        # If ambiguous (e.g. "Schalte die Steckdose und das Licht an"), return first or handle logic.
-        # For now, strict 1 domain policy for atomic commands.
-        if matches: return matches[0]
-        
-        return None
+        return matches[0] if matches else None
 
     async def run(self, user_input, **_: Any) -> Dict[str, Any]:
         text = user_input.text
@@ -97,23 +50,16 @@ class KeywordIntentCapability(Capability):
         if not domain: return {}
 
         meta = self.INTENT_DATA.get(domain) or {}
-        
         system = f"""Select Home Assistant intent for domain '{domain}'.
 Allowed: {', '.join(meta.get('intents', []))}
-Slots: area, name, domain, floor, device_class (for sensors), duration (for timer).
+Slots: area, name, domain, floor, device_class, duration.
 Rules: {meta.get('rules', '')}
-
-IMPORTANT:
-- Only fill 'name' if a SPECIFIC device is named (e.g. 'Deckenlampe', 'Spots').
-- If the user says generic words like 'Licht', 'Lampe', 'Gerät', 'Sensor', leave 'name' EMPTY (null).
-
-Return JSON: {{"intent": "...", "slots": {{...}}}}
-"""
-        data = await self._safe_prompt({"system": system, "schema": self.SCHEMA}, {"user_input": text})
+IMPORTANT: Only fill 'name' if specific device named. For generic terms, leave 'name' EMPTY.
+Return JSON: {{"intent": "...", "slots": {{...}}}}"""
         
+        data = await self._safe_prompt({"system": system, "schema": self.SCHEMA}, {"user_input": text})
         if not isinstance(data, dict) or not data.get("intent"): return {}
         
         slots = data.get("slots") or {}
         if "domain" not in slots: slots["domain"] = domain
-        
         return {"domain": domain, "intent": data["intent"], "slots": slots}

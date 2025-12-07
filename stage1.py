@@ -11,11 +11,12 @@ from .capabilities.plural_detection import PluralDetectionCapability
 from .capabilities.intent_confirmation import IntentConfirmationCapability
 from .capabilities.intent_executor import IntentExecutorCapability
 from .capabilities.entity_resolver import EntityResolverCapability
-from .capabilities.keyword_intent import KeywordIntentCapability
+from .capabilities.keyword_intent import KeywordIntentCapability  # <--- Ensure this is imported
 from .capabilities.area_alias import AreaAliasCapability
 from .capabilities.memory import MemoryCapability
 from .capabilities.intent_resolution import IntentResolutionCapability
-from .capabilities.timer import TimerCapability  # <--- RESTORED
+from .capabilities.timer import TimerCapability
+from .capabilities.command_processor import CommandProcessorCapability
 
 from .conversation_utils import make_response, error_response, with_new_text, filter_candidates_by_state
 from .stage_result import Stage0Result
@@ -35,11 +36,12 @@ class Stage1Processor(BaseStage):
         IntentConfirmationCapability,
         IntentExecutorCapability,
         EntityResolverCapability,
-        KeywordIntentCapability,
+        KeywordIntentCapability,  # <--- MUST BE HERE
         AreaAliasCapability,
         MemoryCapability,
         IntentResolutionCapability,
-        TimerCapability # <--- RESTORED
+        TimerCapability,
+        CommandProcessorCapability
     ]
 
     def __init__(self, hass, config):
@@ -67,16 +69,16 @@ class Stage1Processor(BaseStage):
         pending = self._pending.pop(key, None)
         if not pending: return {"status": "error", "result": await error_response(user_input)}
 
+        ptype = pending.get("type")
+
         # Timer Follow-up
-        if pending.get("type") == "timer":
-            timer_cap = self.get("timer")
-            res = await timer_cap.continue_flow(user_input, pending)
-            if res.get("pending_data"):
-                self._pending[key] = res["pending_data"]
-            return res
+        if ptype == "timer":
+            timer = self.get("timer")
+            res = await timer.continue_flow(user_input, pending)
+            return self._handle_processor_result(key, res)
 
         # Learning Confirmation
-        if pending.get("type") == "learning_confirmation":
+        if ptype == "learning_confirmation":
             if user_input.text.lower().strip() in ("ja", "ja bitte", "gerne", "okay", "mach das"):
                 memory = self.get("memory")
                 if pending.get("learning_type") == "entity":
@@ -87,40 +89,32 @@ class Stage1Processor(BaseStage):
             return {"status": "handled", "result": await make_response("Okay, nicht gemerkt.", user_input)}
 
         # Disambiguation
-        candidates = [{"entity_id": eid, "name": name, "ordinal": i + 1} 
-                      for i, (eid, name) in enumerate(pending["candidates"].items())]
-        selected = await self.use("disambiguation_select", user_input, candidates=candidates)
-        
-        if not selected:
-            return {"status": "error", "result": await error_response(user_input)}
+        if ptype == "disambiguation":
+            processor = self.get("command_processor")
+            res = await processor.continue_disambiguation(user_input, pending)
+            
+            if res.get("status") == "handled" and pending.get("remaining"):
+                 return await self._continue_sequence(user_input, res["result"], pending["remaining"])
+                 
+            return self._handle_processor_result(key, res)
 
-        return await self._execute_final(
-            user_input, 
-            selected, 
-            pending.get("intent", ""), 
-            pending.get("params", {}),
-            pending.get("remaining"),
-            pending.get("learning_data")
-        )
+        return {"status": "error", "result": await error_response(user_input)}
 
     async def _handle_stage0_result(self, prev_result: Stage0Result, user_input) -> Dict[str, Any]:
-        """Refine Stage0 results using IntentResolution."""
         res_data = await self.use("intent_resolution", user_input)
-        if res_data:
-            return await self._process_candidates(
-                user_input, 
-                res_data["entity_ids"], 
-                res_data["intent"], 
-                {k: v for k, v in res_data["slots"].items() if k not in ("name", "entity_id")},
-                res_data.get("learning_data")
-            )
         
-        return await self._process_candidates(
-            user_input, 
-            list(prev_result.resolved_ids), 
-            (prev_result.intent or "").strip(),
-            {}
-        )
+        candidates = list(prev_result.resolved_ids)
+        intent_name = (prev_result.intent or "").strip()
+        params = {}
+
+        if res_data:
+             candidates = res_data["entity_ids"]
+             intent_name = res_data["intent"]
+             params = {k: v for k, v in res_data["slots"].items() if k not in ("name", "entity_id")}
+
+        processor = self.get("command_processor")
+        res = await processor.process(user_input, candidates, intent_name, params, res_data.get("learning_data") if res_data else None)
+        return self._handle_processor_result(getattr(user_input, "session_id", None) or user_input.conversation_id, res)
 
     async def _handle_new_command(self, user_input, prev_result) -> Dict[str, Any]:
         clar_data = await self.use("clarification", user_input)
@@ -137,35 +131,35 @@ class Stage1Processor(BaseStage):
                 if isinstance(prev_result, Stage0Result) and prev_result.intent:
                      return {"status": "escalate", "result": prev_result}
 
-                # Try Keyword Intent specifically for Timer/Special domains first
+                # Try Keyword Intent specifically for Timer first
+                # Note: We must use self.use() which calls get() internally. 
+                # If keyword_intent is missing in capabilities list, this crashes.
                 ki_data = await self.use("keyword_intent", user_input) or {}
                 intent_name = ki_data.get("intent")
                 slots = ki_data.get("slots") or {}
 
-                # --- TIMER INTERCEPT ---
+                # Timer Intercept
                 if intent_name == "HassTimerSet":
-                     timer_cap = self.get("timer")
-                     res = await timer_cap.run(user_input, intent_name, slots)
-                     if res.get("pending_data"):
-                         key = getattr(user_input, "session_id", None) or user_input.conversation_id
-                         self._pending[key] = res["pending_data"]
-                     if res.get("status"):
-                         return res
-                # -----------------------
+                     return self._handle_processor_result(
+                        getattr(user_input, "session_id", None) or user_input.conversation_id,
+                        await self.get("timer").run(user_input, intent_name, slots)
+                    )
 
-                # General Intent Resolution
+                # Resolution
                 res_data = await self.use("intent_resolution", user_input)
                 if not res_data:
                     return {"status": "escalate", "result": prev_result}
 
-                params = {k: v for (k, v) in res_data["slots"].items() if k not in ("name", "entity_id")}
-                return await self._process_candidates(
+                # Processing
+                processor = self.get("command_processor")
+                res = await processor.process(
                     user_input, 
                     res_data["entity_ids"], 
                     res_data["intent"], 
-                    params, 
+                    {k: v for k, v in res_data["slots"].items() if k not in ("name", "entity_id")},
                     res_data.get("learning_data")
                 )
+                return self._handle_processor_result(getattr(user_input, "session_id", None) or user_input.conversation_id, res)
 
             # Multi Command
             if len(atomic) > 0:
@@ -173,95 +167,16 @@ class Stage1Processor(BaseStage):
 
         return {"status": "escalate", "result": prev_result}
 
-    # --- Execution Helpers ---
+    def _handle_processor_result(self, key, res: Dict[str, Any]) -> Dict[str, Any]:
+        if res.get("pending_data"):
+            self._pending[key] = res["pending_data"]
+        return res
 
-    async def _process_candidates(self, user_input, candidates, intent_name, params, learning_data=None):
-        key = getattr(user_input, "session_id", None) or user_input.conversation_id
-        
-        if len(candidates) == 1:
-            return await self._execute_final(user_input, candidates, intent_name, params, learning_data=learning_data)
-
-        pd = await self.use("plural_detection", user_input) or {}
-        if pd.get("multiple_entities") is True:
-             return await self._execute_final(user_input, candidates, intent_name, params, learning_data=learning_data)
-
-        filtered = filter_candidates_by_state(self.hass, candidates, intent_name)
-        final = filtered if filtered else candidates
-        
-        if len(final) == 1:
-            return await self._execute_final(user_input, final, intent_name, params, learning_data=learning_data)
-
-        entities_map = {eid: self.hass.states.get(eid).attributes.get("friendly_name", eid) for eid in final}
-        msg_data = await self.use("disambiguation", user_input, entities=entities_map)
-        
-        self._pending[key] = {
-            "candidates": entities_map, 
-            "intent": intent_name, 
-            "params": params, 
-            "raw": user_input.text,
-            "learning_data": learning_data
-        }
-        return {"status": "handled", "result": await make_response(msg_data.get("message", "Welches Gerät?"), user_input)}
-
-    async def _execute_final(self, user_input, entity_ids, intent_name, params, remaining=None, learning_data=None):
-        exec_data = await self.use("intent_executor", user_input, intent_name=intent_name, entity_ids=entity_ids, params=params, language=user_input.language or "de")
-        
-        if not exec_data or "result" not in exec_data:
-            return {"status": "error", "result": await error_response(user_input, "Fehler.")}
-
-        result_obj = exec_data["result"]
-        await self._add_confirmation_if_needed(user_input, result_obj, intent_name, entity_ids, params)
-
-        if learning_data:
-             key = getattr(user_input, "session_id", None) or user_input.conversation_id
-             original_speech = result_obj.response.speech.get("plain", {}).get("speech", "")
-             src, tgt = learning_data["source"], learning_data["target"]
-             t_type = "Gerät" if learning_data.get("type") == "entity" else "Bereich"
-             new_speech = f"{original_speech} Übrigens, ich habe '{src}' als {t_type} '{tgt}' interpretiert. Soll ich mir das merken?"
-             result_obj.response.async_set_speech(new_speech)
-             result_obj.continue_conversation = True
-             self._pending[key] = {
-                 "type": "learning_confirmation", 
-                 "learning_type": learning_data.get("type", "area"), 
-                 "source": src, 
-                 "target": tgt
-             }
-
-        if remaining:
-             return await self._execute_sequence(user_input, remaining, previous_results=[result_obj])
-        
-        return {"status": "handled", "result": result_obj}
-
-    async def _execute_sequence(self, user_input, commands, previous_results=None):
-        results = list(previous_results) if previous_results else []
-        agent = getattr(self, "agent", None)
-        key = getattr(user_input, "session_id", None) or user_input.conversation_id
-
-        for i, cmd in enumerate(commands):
-            res = await agent._run_pipeline(with_new_text(user_input, cmd))
-            if key in self._pending:
-                remaining = commands[i+1:]
-                if remaining: self._pending[key]["remaining"] = remaining
-                if results: self._merge_speech(res, results)
-                return {"status": "handled", "result": res}
-            results.append(res)
-        
-        final = results[-1]
-        self._merge_speech(final, results[:-1])
-        return {"status": "handled", "result": final}
-
-    async def _add_confirmation_if_needed(self, user_input, result, intent_name, entity_ids, params=None):
-        if not result or not result.response: return
-        speech = result.response.speech.get("plain", {}).get("speech", "") if result.response.speech else ""
-        if not speech or speech.strip() == "Okay.":
-            confirm_cap = self.get("intent_confirmation")
-            gen_data = await confirm_cap.run(user_input, intent_name=intent_name, entity_ids=entity_ids, params=params)
-            msg = gen_data.get("message")
-            if msg: result.response.async_set_speech(msg)
-
+    # ... (Keep _merge_speech) ...
     def _merge_speech(self, target_result, source_results):
         texts = []
         for r in source_results:
+            if not r: continue
             resp = getattr(r, "response", None)
             if resp:
                 s = getattr(resp, "speech", {})
@@ -274,3 +189,27 @@ class Stage1Processor(BaseStage):
             if target_text: texts.append(target_text)
             full_text = " ".join(texts)
             if full_text: target_resp.async_set_speech(full_text)
+
+    async def _execute_sequence(self, user_input, commands: List[str]) -> Dict[str, Any]:
+        return await self._continue_sequence(user_input, None, commands)
+
+    async def _continue_sequence(self, user_input, prev_res, commands: List[str]) -> Dict[str, Any]:
+        results = [prev_res] if prev_res else []
+        agent = getattr(self, "agent", None)
+        key = getattr(user_input, "session_id", None) or user_input.conversation_id
+
+        for i, cmd in enumerate(commands):
+            _LOGGER.debug("[Stage1] Sequence %d/%d: %s", i+1, len(commands), cmd)
+            res = await agent._run_pipeline(with_new_text(user_input, cmd))
+            
+            if key in self._pending:
+                remaining = commands[i+1:]
+                self._pending[key]["remaining"] = remaining
+                if results: self._merge_speech(res, results)
+                return {"status": "handled", "result": res}
+            
+            results.append(res)
+        
+        final = results[-1]
+        self._merge_speech(final, results[:-1])
+        return {"status": "handled", "result": final}

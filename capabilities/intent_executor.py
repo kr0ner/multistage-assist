@@ -45,6 +45,9 @@ class IntentExecutorCapability(Capability):
 
         results: List[tuple[str, ha_intent.IntentResponse]] = []
         
+        # Store what we actually executed for feedback
+        final_executed_params = params.copy()
+
         for eid in valid_ids:
             # Determine effective intent
             effective_intent = intent_name
@@ -70,6 +73,8 @@ class IntentExecutorCapability(Capability):
                             new_pct = max(0, cur_pct - self.BRIGHTNESS_STEP)
                         
                         current_params["brightness"] = new_pct
+                        # Update final params to reflect reality
+                        final_executed_params["brightness"] = new_pct
                     else:
                         current_params.pop("brightness")
 
@@ -83,7 +88,7 @@ class IntentExecutorCapability(Capability):
                     continue
                 slots[k] = {"value": v}
 
-            _LOGGER.debug("[IntentExecutor] Executing %s on %s", effective_intent, eid)
+            _LOGGER.debug("[IntentExecutor] Executing %s on %s with %s", effective_intent, eid, current_params)
 
             try:
                 resp = await ha_intent.async_handle(
@@ -118,7 +123,6 @@ class IntentExecutorCapability(Capability):
                     val = state_obj.state
                     unit = state_obj.attributes.get("unit_of_measurement", "")
                     
-                    # Normalize numbers for joining (optional)
                     if val.replace(".", "", 1).isdigit():
                         val = val.replace(".", ",")
 
@@ -131,7 +135,6 @@ class IntentExecutorCapability(Capability):
                     speech_text = normalize_speech_for_tts(raw_text)
                     final_resp.async_set_speech(speech_text)
 
-        # Ensure minimal speech
         def _has_speech(r):
             s = getattr(r, "speech", None)
             return isinstance(s, dict) and bool(s.get("plain", {}).get("speech"))
@@ -144,5 +147,6 @@ class IntentExecutorCapability(Capability):
                 response=final_resp,
                 conversation_id=user_input.conversation_id,
                 continue_conversation=False,
-            )
+            ),
+            "executed_params": final_executed_params # <--- Return this!
         }

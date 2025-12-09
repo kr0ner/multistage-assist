@@ -12,6 +12,7 @@ _LOGGER = logging.getLogger(__name__)
 class IntentResolutionCapability(Capability):
     """
     Orchestrates the resolution of a single command string into an Intent + Entities.
+    Combines KeywordIntent, EntityResolver, AreaAlias, and Memory logic.
     """
 
     name = "intent_resolution"
@@ -87,15 +88,16 @@ JSON: {"entity_id": <string or null>}
         learning_data = None
         new_slots = slots.copy()
 
-        # 1. Resolve FLOOR (New)
+        # 1. Resolve FLOOR
         if floor_slot:
             mapped_floor, is_new_floor = await self._resolve_alias(user_input, floor_slot, "floor")
             if mapped_floor:
                 new_slots["floor"] = mapped_floor
-                if is_new_floor:
+                # Don't learn if target is substring of source (e.g. "im Erdgeschoss" -> "Erdgeschoss")
+                if is_new_floor and mapped_floor.lower() not in floor_slot.lower():
                     learning_data = {"type": "floor", "source": floor_slot, "target": mapped_floor}
         
-        # 2. Resolve AREA (If Floor didn't already trigger learning)
+        # 2. Resolve AREA
         if area_slot and not learning_data:
             mapped_area, is_new_area = await self._resolve_alias(user_input, area_slot, "area")
             if mapped_area:
@@ -106,8 +108,10 @@ JSON: {"entity_id": <string or null>}
                     new_slots["area"] = mapped_area
                     if new_slots.get("name") == area_slot: new_slots.pop("name")
                 
+                # Don't learn if target is substring of source (e.g. "im Büro" -> "Büro")
                 if is_new_area and mapped_area != "GLOBAL":
-                    learning_data = {"type": "area", "source": area_slot, "target": mapped_area}
+                    if mapped_area.lower() not in area_slot.lower():
+                        learning_data = {"type": "area", "source": area_slot, "target": mapped_area}
 
         # 3. Check Entity Memory (Fast Path)
         if name_slot:
@@ -115,15 +119,13 @@ JSON: {"entity_id": <string or null>}
             if known_eid and self.hass.states.get(known_eid):
                  entity_ids = [known_eid]
 
-        # 4. Standard Resolution (with potentially updated Area/Floor)
+        # 4. Standard Resolution
         if not entity_ids:
             er_data = await self.resolver_cap.run(user_input, entities=new_slots)
             entity_ids = er_data.get("resolved_ids") or []
 
-        # 5. Entity Alias Fallback (LLM Match in Area)
+        # 5. Entity Alias Fallback
         if not entity_ids and name_slot and new_slots.get("area"):
-             # ... (Keep existing "Spiegellicht" logic) ...
-             # Re-using the logic from previous step
              target_area = new_slots["area"]
              domain = new_slots.get("domain")
              area_candidates = self.resolver_cap._entities_in_area_by_name(target_area, domain)

@@ -27,7 +27,7 @@ class KeywordIntentCapability(Capability):
     _TEMP_RULE = """
 - 'HassTemporaryControl': Use this if a DURATION is specified (e.g. "für 10 Minuten").
   - 'duration': The duration string (e.g. "10 Minuten").
-  - 'command': "on" (an/ein/auf) or "off" (aus/zu).
+  - 'command': "on" or "off".
   - 'area': Extract the room name! (e.g. "im Bad").
 """
 

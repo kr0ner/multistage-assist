@@ -122,9 +122,6 @@ class Stage1Processor(BaseStage):
             atomic = [c for c in clar_data if isinstance(c, str) and c.strip()]
 
             if len(atomic) == 1 and atomic[0].strip().lower() == norm:
-                if isinstance(prev_result, Stage0Result) and prev_result.intent:
-                     return {"status": "escalate", "result": prev_result}
-
                 ki_data = await self.use("keyword_intent", user_input) or {}
                 intent_name = ki_data.get("intent")
                 slots = ki_data.get("slots") or {}

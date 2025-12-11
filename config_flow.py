@@ -53,15 +53,18 @@ class MultiStageAssistOptionsFlowHandler(config_entries.OptionsFlow):
     """Options flow for editing config (Reconfiguration)."""
 
     def __init__(self, config_entry):
-        self.config_entry = config_entry
+        """Initialize options flow."""
+        # FIX: Do not set self.config_entry here, it is a read-only property in base class.
+        # We can just ignore the passed config_entry as the base class property will 
+        # resolve it correctly via self.handler later.
+        pass
 
     async def async_step_init(self, user_input=None):
         """Manage the options."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        # Merge data and options so current values pre-fill the form correctly
-        # Options take precedence over initial data
+        # Use self.config_entry property (provided by base class)
         current_config = {**self.config_entry.data, **self.config_entry.options}
 
         schema = vol.Schema(

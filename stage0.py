@@ -17,13 +17,14 @@ _LOGGER = logging.getLogger(__name__)
 
 class Stage0Processor(BaseStage):
     """Stage 0: Dry-run NLU and early entity resolution (no LLM)."""
+
     name = "stage0"
 
     # Mapping specific HA intents to implied domains/device_classes
     INTENT_IMPLICATIONS = {
         "HassClimateGetTemperature": {"device_class": "temperature"},
-        "HassTurnOn": {}, 
-        "HassTurnOff": {}, 
+        "HassTurnOn": {},
+        "HassTurnOff": {},
         "HassLightSet": {"domain": "light"},
     }
 
@@ -77,21 +78,35 @@ class Stage0Processor(BaseStage):
         _LOGGER.debug("[Stage0] NLU matched intent='%s'", intent_name)
 
         norm_entities = self._normalize_entities(getattr(match, "entities", None))
-        
+
         # Inject implied constraints based on intent
         implications = self.INTENT_IMPLICATIONS.get(intent_name, {})
         if implications:
-            _LOGGER.debug("[Stage0] Injecting implied constraints for %s: %s", intent_name, implications)
+            _LOGGER.debug(
+                "[Stage0] Injecting implied constraints for %s: %s",
+                intent_name,
+                implications,
+            )
             norm_entities.update(implications)
 
         if norm_entities:
-            _LOGGER.debug("[Stage0] NLU extracted entities (raw) keys=%s", list(norm_entities.keys()))
+            _LOGGER.debug(
+                "[Stage0] NLU extracted entities (raw) keys=%s",
+                list(norm_entities.keys()),
+            )
+        print(f"DEBUG: Stage0 entities for resolver: {norm_entities}")
 
         # Resolve entities
         resolver = EntityResolverCapability(self.hass, self.config)
+        print(f"DEBUG: Stage0 resolver: {resolver}")
         resolved = await resolver.run(user_input, entities=norm_entities)
+        print(f"DEBUG: Stage0 resolver result: {resolved}")
         resolved_ids = (resolved or {}).get("resolved_ids", [])
-        _LOGGER.debug("[Stage0] Entity resolver returned %d id(s): %s", len(resolved_ids), resolved_ids)
+        _LOGGER.debug(
+            "[Stage0] Entity resolver returned %d id(s): %s",
+            len(resolved_ids),
+            resolved_ids,
+        )
 
         # Prepare Stage0Result once
         result = Stage0Result(
@@ -128,32 +143,51 @@ class Stage0Processor(BaseStage):
                     intent_name,
                     resolved_ids[0],
                 )
-                
+
                 # Filter params to exclude resolution-only keys
-                resolution_keys = {"area", "room", "floor", "name", "entity", "device", "label", "domain", "device_class", "entity_id"}
-                execution_params = {k: v for k, v in norm_entities.items() if k not in resolution_keys}
-                
+                resolution_keys = {
+                    "area",
+                    "room",
+                    "floor",
+                    "name",
+                    "entity",
+                    "device",
+                    "label",
+                    "domain",
+                    "device_class",
+                    "entity_id",
+                }
+                execution_params = {
+                    k: v for k, v in norm_entities.items() if k not in resolution_keys
+                }
+
                 executor = IntentExecutorCapability(self.hass, self.config)
                 exec_data = await executor.run(
                     user_input,
                     intent_name=intent_name,
                     entity_ids=resolved_ids,
-                    params=execution_params, 
+                    params=execution_params,
                     language=user_input.language or "de",
                 )
 
                 if exec_data and exec_data.get("result"):
-                    _LOGGER.debug("[Stage0] Intent executed successfully via capability.")
+                    _LOGGER.debug(
+                        "[Stage0] Intent executed successfully via capability."
+                    )
                     return {"status": "handled", "result": exec_data["result"]}
 
-                _LOGGER.warning("[Stage0] Intent execution returned no result → escalate.")
+                _LOGGER.warning(
+                    "[Stage0] Intent execution returned no result → escalate."
+                )
                 return {"status": "escalate", "result": result}
 
             except Exception as err:
                 _LOGGER.exception("[Stage0] Intent execution crashed: %s", err)
                 return {
                     "status": "error",
-                    "result": await error_response(user_input, f"Interner Fehler beim Ausführen: {err}"),
+                    "result": await error_response(
+                        user_input, f"Interner Fehler beim Ausführen: {err}"
+                    ),
                 }
 
         _LOGGER.debug(

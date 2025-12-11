@@ -40,6 +40,10 @@ SENSOR_KEYWORDS: Dict[str, str] = {
 CLIMATE_KEYWORDS: Dict[str, str] = {
     "heizung": "heizungen", "thermostat": "thermostate", "klimaanlage": "klimaanlagen",
 }
+VACUUM_KEYWORDS: List[str] = [
+    "saugen", "sauge", "staubsaugen", "staubsauge", "wischen", "wische", "putzen",
+    "putze", "reinigen", "reinige", "roboter", "staubsauger",
+]
 TIMER_KEYWORDS: List[str] = ["timer", "wecker", "countdown", "uhr", "stoppuhr"]
 
 OTHER_ENTITY_PLURALS: Dict[str, str] = {
@@ -48,7 +52,8 @@ OTHER_ENTITY_PLURALS: Dict[str, str] = {
 
 _ENTITY_PLURALS: Dict[str, str] = {
     **LIGHT_KEYWORDS, **COVER_KEYWORDS, **SWITCH_KEYWORDS, **FAN_KEYWORDS,
-    **MEDIA_KEYWORDS, **SENSOR_KEYWORDS, **CLIMATE_KEYWORDS, **OTHER_ENTITY_PLURALS,
+    **MEDIA_KEYWORDS, **SENSOR_KEYWORDS, **CLIMATE_KEYWORDS, 
+    **OTHER_ENTITY_PLURALS,
 }
 
 # Map device classes to typical units

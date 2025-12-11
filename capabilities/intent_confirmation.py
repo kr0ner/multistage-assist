@@ -5,26 +5,29 @@ from .base import Capability
 
 _LOGGER = logging.getLogger(__name__)
 
+
 class IntentConfirmationCapability(Capability):
-    """Generates a short, natural confirmation sentence."""
+    """
+    Generates a short, natural confirmation sentence using an LLM.
+    Dynamically builds the prompt based on the executed intent.
+    """
+
     name = "intent_confirmation"
     description = "Generates a natural language confirmation for an action."
 
     INTENT_DESCRIPTIONS = {
-        "HassTurnOn": "The device(s) were turned ON (eingeschaltet/aktiviert/geöffnet).",
-        "HassTurnOff": "The device(s) were turned OFF (ausgeschaltet/deaktiviert/geschlossen).",
-        "HassLightSet": "Light settings (brightness/color) were adjusted.",
-        "HassSetPosition": "Cover/Blind position was set to a specific value.",
+        "HassTurnOn": "The device(s) were turned ON.",
+        "HassTurnOff": "The device(s) were turned OFF.",
+        "HassLightSet": "Light settings were adjusted.",
+        "HassSetPosition": "Cover/Blind position was set.",
         "HassClimateSetTemperature": "Thermostat target temperature was changed.",
         "HassTimerSet": "A timer was successfully set.",
         "HassGetState": "A state or measurement was queried.",
-        "HassTemporaryControl": "The device was switched on/off TEMPORARILY for a specific duration.",
+        "HassTemporaryControl": "The device was switched on/off TEMPORARILY.",
+        "HassVacuumStart": "Vacuum/Mop was started.",
     }
 
-    SCHEMA = {
-        "properties": {"response": {"type": "string"}},
-        "required": ["response"]
-    }
+    SCHEMA = {"properties": {"response": {"type": "string"}}, "required": ["response"]}
 
     async def run(
         self,
@@ -32,12 +35,13 @@ class IntentConfirmationCapability(Capability):
         intent_name: str,
         entity_ids: List[str],
         params: Dict[str, Any] = None,
-        **_: Any
+        **_: Any,
     ) -> Dict[str, Any]:
-        
+
         names = []
         domains = []
         states = []
+
         for eid in entity_ids:
             st = self.hass.states.get(eid)
             if st:
@@ -48,12 +52,31 @@ class IntentConfirmationCapability(Capability):
                 names.append(eid)
                 domains.append(eid.split(".")[0] if "." in eid else "")
                 states.append("unknown")
-        
-        ignored_keys = {"domain", "service", "entity_id", "area_id"}
-        relevant_params = {k: v for k, v in (params or {}).items() if k not in ignored_keys}
 
-        action_desc = self.INTENT_DESCRIPTIONS.get(intent_name, "An action was performed.")
-        
+        ignored_keys = {"domain", "service", "entity_id", "area_id"}
+        relevant_params = {
+            k: v for k, v in (params or {}).items() if k not in ignored_keys
+        }
+
+        action_desc = self.INTENT_DESCRIPTIONS.get(
+            intent_name, "An action was performed."
+        )
+
+        # Build base rules
+        base_rules = """1. **Identify the Device:** Use 'domains' + 'devices' (e.g. domain='light', name='Küche' -> "Das Licht in der Küche").
+2. **Be Specific:** Mention duration if available (e.g. "für 10 Minuten").
+3. **Use Present Tense:** - CORRECT: "Licht ist an.", "Licht ist für 5 Minuten an.", "Rollladen ist zu."
+   - WRONG: "Licht wurde angeschaltet.", "Rollladen wurde geschlossen.\""""
+
+        # Add brightness guidance only for HassLightSet
+        if intent_name == "HassLightSet":
+            base_rules += """
+4. **Brightness Changes:** 
+   - If brightness increased: "Das Licht im [Raum] ist jetzt heller."
+   - If brightness decreased: "Das Licht im [Raum] ist jetzt dunkler."
+   - If specific percentage: "Das Licht im [Raum] ist auf [X]% gesetzt."
+   - Avoid technical phrases like "für 1 Schritt runter\""""
+
         system = f"""You are a smart home assistant.
 Generate a VERY SHORT, natural German confirmation (du-form).
 
@@ -61,9 +84,7 @@ Generate a VERY SHORT, natural German confirmation (du-form).
 Action: {action_desc}
 
 ## Rules
-1. **Identify the Device:** Use 'domains' + 'devices' (e.g. domain='light', name='Küche' -> "Das Licht in der Küche").
-2. **Be Specific:** Mention duration if available (e.g. "für 10 Minuten").
-3. **Be Concise:** No "Okay". Just the facts.
+{base_rules}
 
 Return JSON: {{"response": "string"}}
 """
@@ -73,11 +94,17 @@ Return JSON: {{"response": "string"}}
             "devices": names,
             "domains": domains,
             "states": states,
-            "params": relevant_params
+            "params": relevant_params,
         }
 
-        data = await self._safe_prompt({"system": system, "schema": self.SCHEMA}, payload)
-        message = data.get("response", "Aktion ausgeführt.") if isinstance(data, dict) else "Aktion ausgeführt."
-        
+        data = await self._safe_prompt(
+            {"system": system, "schema": self.SCHEMA}, payload
+        )
+        message = (
+            data.get("response", "Aktion ausgeführt.")
+            if isinstance(data, dict)
+            else "Aktion ausgeführt."
+        )
+
         _LOGGER.debug("[IntentConfirmation] Generated: '%s'", message)
         return {"message": message}

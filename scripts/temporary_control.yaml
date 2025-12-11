@@ -1,0 +1,28 @@
+temporary_control:
+  alias: "Temporary Control (Generic)"
+  icon: mdi:clock-start
+  mode: parallel
+  max: 10
+  fields:
+    target_entity:
+      description: The entity to control
+      example: light.kitchen
+    minutes:
+      description: Duration in minutes
+      example: 5
+    seconds:
+      description: Duration in seconds
+      example: 30
+    command:
+      description: The initial action (on or off)
+      example: "on"
+  sequence:
+    - action: homeassistant.turn_{{ command }}
+      target:
+        entity_id: "{{ target_entity }}"
+    - delay:
+        minutes: "{{ minutes | default(0) }}"
+        seconds: "{{ seconds | default(0) }}"
+    - action: homeassistant.turn_{{ 'off' if command == 'on' else 'on' }}
+      target:
+        entity_id: "{{ target_entity }}"

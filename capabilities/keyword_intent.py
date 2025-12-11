@@ -1,9 +1,10 @@
 import logging
 from typing import Any, Dict, Optional, List
+
 from .base import Capability
 from custom_components.multistage_assist.conversation_utils import (
     LIGHT_KEYWORDS, COVER_KEYWORDS, SENSOR_KEYWORDS, CLIMATE_KEYWORDS,
-    SWITCH_KEYWORDS, FAN_KEYWORDS, MEDIA_KEYWORDS, TIMER_KEYWORDS
+    SWITCH_KEYWORDS, FAN_KEYWORDS, MEDIA_KEYWORDS, TIMER_KEYWORDS, VACUUM_KEYWORDS
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -21,14 +22,14 @@ class KeywordIntentCapability(Capability):
         "sensor": list(SENSOR_KEYWORDS.values()) + list(SENSOR_KEYWORDS.keys()) + ["grad", "warm", "kalt", "wieviel"],
         "climate": list(CLIMATE_KEYWORDS.values()) + list(CLIMATE_KEYWORDS.keys()),
         "timer": TIMER_KEYWORDS,
+        "vacuum": VACUUM_KEYWORDS,
     }
 
     # Common rule for temp control
     _TEMP_RULE = """
 - 'HassTemporaryControl': Use this if a DURATION is specified (e.g. "für 10 Minuten").
   - 'duration': The duration string (e.g. "10 Minuten").
-  - 'command': "on" or "off".
-  - 'area': Extract the room name! (e.g. "im Bad").
+  - 'command': "on" (an/ein/auf) or "off" (aus/zu).
 """
 
     INTENT_DATA = {
@@ -49,20 +50,12 @@ class KeywordIntentCapability(Capability):
             "rules": _TEMP_RULE
         },
         "media_player": {
-            "intents": ["HassTurnOn", "HassTurnOff", "HassGetState"], 
+            "intents": ["HassTurnOn", "HassTurnOff", "HassGetState"],
             "rules": ""
         },
         "sensor": {
             "intents": ["HassGetState"],
-            "rules": """
-- 'device_class': REQUIRED if the user asks for a specific measurement.
-  - "Temperatur" -> device_class: "temperature"
-  - "Feuchtigkeit" -> device_class: "humidity"
-  - "Leistung" -> device_class: "power"
-  - "Energie" -> device_class: "energy"
-  - "Batterie" -> device_class: "battery"
-- 'name': Leave EMPTY if 'device_class' is set (unless a specific device name is given).
-            """
+            "rules": "- device_class: required (temperature, humidity, power, energy, battery).\n- name: EMPTY unless specific."
         },
         "climate": {
             "intents": ["HassClimateSetTemperature", "HassTurnOn", "HassTurnOff", "HassGetState"],
@@ -70,19 +63,15 @@ class KeywordIntentCapability(Capability):
         },
         "timer": {
             "intents": ["HassTimerSet"],
-            "rules": """
-- 'duration': The duration. Return as integer SECONDS if possible, or text (e.g. "5 Minuten").
-- 'name': The target device name (e.g. "Daniel's Handy").
-            """
+            "rules": "- duration: seconds or text.\n- name: target device."
+        },
+        "vacuum": {
+            "intents": ["HassVacuumStart"],
+            "rules": "- 'mode': 'mop' if wischen/nass else 'vacuum'.\n- 'area': Room name.\n- 'floor': Floor name.\n- 'scope': 'GLOBAL' if whole house."
         }
     }
 
-    SCHEMA = {
-        "properties": {
-            "intent": {"type": ["string", "null"]},
-            "slots": {"type": "object"},
-        },
-    }
+    SCHEMA = {"properties": {"intent": {"type": ["string", "null"]}, "slots": {"type": "object"}}}
 
     def _detect_domain(self, text: str) -> Optional[str]:
         t = text.lower()
@@ -90,7 +79,7 @@ class KeywordIntentCapability(Capability):
         if len(matches) == 1: return matches[0]
         if "climate" in matches and "sensor" in matches: return "climate"
         if "timer" in matches: return "timer"
-        
+        if "vacuum" in matches: return "vacuum"
         if matches: return matches[0]
         return None
 
@@ -103,12 +92,12 @@ class KeywordIntentCapability(Capability):
         
         system = f"""Select Home Assistant intent for domain '{domain}'.
 Allowed: {', '.join(meta.get('intents', []))}
-Slots: area, name, domain, floor, device_class, duration, command.
+Slots: area, name, domain, floor, device_class, duration, command, mode, scope.
 Rules: {meta.get('rules', '')}
 
 IMPORTANT:
-- Only fill 'name' if a SPECIFIC device is named (e.g. 'Deckenlampe', 'Spots').
-- If the user says generic words like 'Licht', 'Lampe', 'Gerät', 'Sensor', leave 'name' EMPTY (null).
+- Only fill 'name' if a SPECIFIC device is named.
+- If generic words (Licht, Lampe), leave 'name' EMPTY.
 
 Return JSON: {{"intent": "...", "slots": {{...}}}}
 """

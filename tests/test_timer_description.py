@@ -98,3 +98,72 @@ async def test_timer_with_description_end_to_end(hass):
         "android.intent.extra.alarm.MESSAGE:" in intent_extras
     ), f"Expected description in intent extras: {intent_extras}"
 
+
+@pytest.mark.asyncio
+async def test_timer_description_preserved_in_multiturn():
+    """Test that timer description is preserved in pending_data during multi-turn flow.
+    
+    When user says "Pizza Timer für 15 Minuten" and we ask for device,
+    the description "Pizza" should be stored in pending_data and used
+    in continue_flow without calling the LLM again.
+    """
+    from multistage_assist.capabilities.timer import TimerCapability
+    
+    hass = MagicMock()
+    config = {"stage1_ip": "test", "stage1_port": 11434, "stage1_model": "test"}
+    
+    # Mock multiple mobile services so it asks for device
+    hass.services.async_services = MagicMock(return_value={
+        "notify": {
+            "mobile_app_phone1": {"description": "Phone 1"},
+            "mobile_app_phone2": {"description": "Phone 2"},
+        }
+    })
+    
+    timer_cap = TimerCapability(hass, config)
+    
+    # Mock the LLM call to extract description
+    timer_cap._safe_prompt = AsyncMock(return_value={"description": "Pizza"})
+    
+    # First turn - should extract description and ask for device
+    user_input1 = MagicMock()
+    user_input1.text = "Pizza Timer für 15 Minuten"
+    user_input1.language = "de"
+    
+    result1 = await timer_cap.run(
+        user_input=user_input1,
+        intent_name="HassTimerSet",
+        slots={"duration": "15 Minuten"},
+    )
+    
+    # Should have pending_data asking for device
+    assert "pending_data" in result1
+    pending = result1["pending_data"]
+    assert pending["step"] == "ask_device"
+    
+    # CRITICAL: Description should be stored in pending_data
+    assert "description" in pending, "description should be stored in pending_data"
+    assert pending["description"] == "Pizza", f"Expected 'Pizza', got: {pending['description']}"
+    
+    # Reset mock to track if LLM is called again
+    timer_cap._safe_prompt.reset_mock()
+    
+    # Mock service call for execution
+    hass.services.async_call = AsyncMock()
+    
+    # Second turn - user selects device
+    user_input2 = MagicMock()
+    user_input2.text = "Phone 1"
+    user_input2.language = "de"
+    
+    result2 = await timer_cap.continue_flow(user_input2, pending)
+    
+    # LLM should NOT be called again for description
+    # (it might be called for device matching, but not for description extraction)
+    for call in timer_cap._safe_prompt.call_args_list:
+        prompt = call[0][0] if call[0] else {}
+        if isinstance(prompt, dict) and "description" in str(prompt.get("schema", {})):
+            pytest.fail("LLM was called again to extract description - should use cached value")
+    
+    # Timer should have been set
+    assert hass.services.async_call.called, "Timer service should have been called"

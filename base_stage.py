@@ -11,7 +11,7 @@ class BaseStage:
     name = "base"
     capabilities: List[Type[Capability]] = []
 
-    def __init__(self, hass, config):
+    def __init__(self, hass: Any, config: Dict[str, Any]) -> None:
         self.hass = hass
         self.config = config
         self.capabilities_map: Dict[str, Capability] = {
@@ -28,7 +28,12 @@ class BaseStage:
 
     async def use(self, name: str, user_input, **kwargs) -> Any:
         cap = self.get(name)
-        _LOGGER.debug("[%s] Using capability '%s' with kwargs=%s", self.name, name, list(kwargs.keys()))
+        _LOGGER.debug(
+            "[%s] Using capability '%s' with kwargs=%s",
+            self.name,
+            name,
+            list(kwargs.keys()),
+        )
         result = await cap.run(user_input, **kwargs)
         _LOGGER.debug("[%s] Capability '%s' returned: %s", self.name, name, result)
         return result

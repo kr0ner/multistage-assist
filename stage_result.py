@@ -30,7 +30,7 @@ class Stage0Result:
             **self.extra,
         }
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             f"<Stage0Result type={self.type!r} intent={self.intent!r} "
             f"resolved={len(self.resolved_ids)}>"

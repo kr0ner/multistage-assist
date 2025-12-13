@@ -2,12 +2,21 @@ import json
 import enum
 import logging
 from typing import Any
-from .ollama_client import OllamaClient
-from .const import (
-    CONF_STAGE1_IP,
-    CONF_STAGE1_PORT,
-    CONF_STAGE1_MODEL,
-)
+
+try:
+    from .ollama_client import OllamaClient
+    from .const import (
+        CONF_STAGE1_IP,
+        CONF_STAGE1_PORT,
+        CONF_STAGE1_MODEL,
+    )
+except (ImportError, ValueError):
+    from ollama_client import OllamaClient
+    from const import (
+        CONF_STAGE1_IP,
+        CONF_STAGE1_PORT,
+        CONF_STAGE1_MODEL,
+    )
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,9 +27,14 @@ class Stage(enum.Enum):
 
 DEFAULT_ESCALATION_PATH: list[Stage] = [Stage.STAGE1]
 
+
 def _get_stage_config(config: dict, stage: Stage) -> tuple[str, int, str]:
     if stage == Stage.STAGE1:
-        return (config[CONF_STAGE1_IP], config[CONF_STAGE1_PORT], config[CONF_STAGE1_MODEL])
+        return (
+            config[CONF_STAGE1_IP],
+            config[CONF_STAGE1_PORT],
+            config[CONF_STAGE1_MODEL],
+        )
     # Stage 2 logic is now handled by GoogleGeminiClient, not here.
     raise ValueError(f"Unknown stage: {stage}")
 
@@ -61,7 +75,11 @@ class PromptExecutor:
                     context.update(result)
                 return result
 
-            _LOGGER.info("Stage %s produced output but did not satisfy schema. Got=%s", stage.name, result)
+            _LOGGER.info(
+                "Stage %s produced output but did not satisfy schema. Got=%s",
+                stage.name,
+                result,
+            )
 
         return [] if (schema and schema.get("type") == "array") else {}
 
@@ -202,9 +220,9 @@ class PromptExecutor:
             )
             # tolerant JSON block extraction
             if "[" in resp_text and "]" in resp_text:
-                cleaned = resp_text[resp_text.find("["): resp_text.rfind("]") + 1]
+                cleaned = resp_text[resp_text.find("[") : resp_text.rfind("]") + 1]
             elif "{" in resp_text and "}" in resp_text:
-                cleaned = resp_text[resp_text.find("{"): resp_text.rfind("}") + 1]
+                cleaned = resp_text[resp_text.find("{") : resp_text.rfind("}") + 1]
             else:
                 cleaned = resp_text.strip()
             _LOGGER.debug("Stage %s cleaned response: %s", stage.name, cleaned)

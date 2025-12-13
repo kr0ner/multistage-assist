@@ -30,7 +30,12 @@ class Capability:
         temperature: float = 0.0,
     ) -> Optional[Dict[str, Any]]:
         """Convenience helper to run the shared PromptExecutor."""
-        from ..prompt_executor import PromptExecutor
+        try:
+            # Try relative import first (for integration tests)
+            from ..prompt_executor import PromptExecutor
+        except (ImportError, ValueError):
+            # Fall back to absolute import (for unit tests)
+            from prompt_executor import PromptExecutor
 
         executor = PromptExecutor(self.config)
         try:
@@ -64,6 +69,8 @@ class Capability:
         )
 
     # Optional helpers that subclasses can override
-    async def prepare_context(self, user_input: conversation.ConversationInput) -> Dict[str, Any]:
+    async def prepare_context(
+        self, user_input: conversation.ConversationInput
+    ) -> Dict[str, Any]:
         """Extract structured context for the capability."""
         return {}

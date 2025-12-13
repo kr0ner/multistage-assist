@@ -1,5 +1,4 @@
 import asyncio
-import importlib
 import logging
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -21,6 +20,7 @@ from homeassistant.const import (
 )
 
 from .base import Capability
+from ..utils.fuzzy_utils import get_fuzz
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,21 +52,6 @@ GENERIC_NAMES = {
     "alle",
     "etwas",
 }
-
-_fuzz = None
-
-
-async def _get_fuzz():
-    global _fuzz
-    if _fuzz is not None:
-        return _fuzz
-    loop = asyncio.get_running_loop()
-
-    def _load():
-        return importlib.import_module("rapidfuzz.fuzz")
-
-    _fuzz = await loop.run_in_executor(None, _load)
-    return _fuzz
 
 
 class EntityResolverCapability(Capability):
@@ -166,10 +151,10 @@ class EntityResolverCapability(Capability):
                     resolved.append(eid)
                     seen.add(eid)
 
-            fuzz_mod = await _get_fuzz()
+            fuzz = await get_fuzz()
             allowed = set(area_entities) if area_entities else None
             fuzzy_added = self._collect_by_name_fuzzy(
-                hass, thing_name, domain, fuzz_mod, all_entities, allowed=allowed
+                hass, thing_name, domain, fuzz, all_entities, allowed=allowed
             )
             for eid in fuzzy_added:
                 if eid not in seen:

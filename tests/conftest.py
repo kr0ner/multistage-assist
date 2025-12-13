@@ -1,7 +1,14 @@
-import sys
 import os
+import sys
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
+import logging
+
+_LOGGER = logging.getLogger(__name__)
+
+# --- PRE-IMPORT MOCKING ---
+# We need to mock Home Assistant modules before they're imported anywhere.
+# This ensures our tests work even if HA is not installed.
 
 # Add the parent directory to sys.path to allow importing the integration as a package
 # This assumes the current working directory is the integration root
@@ -338,6 +345,40 @@ def hass():
     # Mock State Machine
     states = {}
     hass.states.get = lambda entity_id: states.get(entity_id)
+    # Track service calls for test assertions
+    service_calls = []
+
+    async def async_call_with_tracking(domain, service, service_data=None, **kwargs):
+        """Track service calls for test verification."""
+        call_data = {
+            "domain": domain,
+            "service": service,
+            "service_data": service_data or {},
+        }
+        service_calls.append(call_data)
+        _LOGGER.debug(
+            "[Test] Service called: %s.%s with data: %s", domain, service, service_data
+        )
+
+        # Update state if it's a state-changing service
+        if service_data and "entity_id" in service_data:
+            eid = service_data["entity_id"]
+            if service in ("turn_on", "open"):
+                if eid in states:
+                    states[eid] = MockState(eid, "on", states[eid].attributes)
+            elif service in ("turn_off", "close"):
+                if eid in states:
+                    states[eid] = MockState(eid, "off", states[eid].attributes)
+            elif service == "set_brightness" and "brightness" in service_data:
+                if eid in states:
+                    attrs = (
+                        dict(states[eid].attributes) if states[eid].attributes else {}
+                    )
+                    attrs["brightness"] = service_data["brightness"]
+                    states[eid] = MockState(eid, "on", attrs)
+
+    hass.services.async_call = async_call_with_tracking
+    hass.service_calls = service_calls  # Expose for test assertions
     hass.states.async_all = lambda: list(states.values())
     hass.states.set = lambda entity_id, state, attributes=None: states.update(
         {

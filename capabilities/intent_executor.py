@@ -21,9 +21,44 @@ class IntentExecutorCapability(Capability):
     name = "intent_executor"
     description = "Execute a Home Assistant intent for specific targets."
 
-    RESOLUTION_KEYS = {"area", "room", "floor", "device_class"}
-    BRIGHTNESS_STEP = 20
-    SCRIPT_ENTITY_ID = "script.temporary_control_generic"
+    RESOLUTION_KEYS = {"area", "floor", "name", "entity_id"}
+    BRIGHTNESS_STEP = 10
+    TIMEBOX_SCRIPT_ENTITY_ID = "script.timebox_entity_state"
+
+    def _extract_duration(self, params: Dict[str, Any]) -> tuple[int, int]:
+        """Extract minutes and seconds from params. Returns (minutes, seconds)."""
+        duration_raw = params.get("duration")
+        if duration_raw:
+            seconds = parse_duration_string(duration_raw)
+            return (seconds // 60, seconds % 60)
+        return (0, 0)
+
+    async def _call_timebox_script(
+        self,
+        entity_id: str,
+        minutes: int,
+        seconds: int,
+        value: int = None,
+        action: str = None,
+    ):
+        """Call timebox_entity_state script with value or action."""
+        _LOGGER.debug(
+            "[IntentExecutor] Calling timebox script for %s: value=%s, action=%s, duration=%dm%ds",
+            entity_id,
+            value,
+            action,
+            minutes,
+            seconds,
+        )
+        data = {"target_entity": entity_id, "minutes": minutes, "seconds": seconds}
+        if value is not None:
+            data["value"] = value
+        if action is not None:
+            data["action"] = action
+
+        await self.hass.services.async_call(
+            "script", "timebox_entity_state", data, blocking=False
+        )
 
     async def run(
         self,
@@ -54,14 +89,45 @@ class IntentExecutorCapability(Capability):
         if not valid_ids:
             return {}
 
-        # --- SAFETY: PREVENT MASS TEMP CONTROL ---
-        if intent_name == "HassTemporaryControl" and len(valid_ids) > 5:
-            _LOGGER.warning(
-                "[IntentExecutor] Aborting Temporary Control: Too many targets (%d).",
-                len(valid_ids),
-            )
-            return {}
-        # -----------------------------------------
+        # --- STATE FILTERING for HassGetState queries ---
+        if intent_name == "HassGetState" and "state" in params:
+            requested_state = params.get("state", "").lower()
+            if requested_state:
+                # Filter to entities matching the requested state
+                valid_ids = [
+                    eid
+                    for eid in valid_ids
+                    if hass.states.get(eid).state.lower() == requested_state
+                ]
+                _LOGGER.debug(
+                    "[IntentExecutor] Filtered to %d entities with state='%s'",
+                    len(valid_ids),
+                    requested_state,
+                )
+
+                # Try yes/no response capability
+                yes_no_cap = self.get("yes_no_response")
+                if yes_no_cap:
+                    response_text = await yes_no_cap.run(
+                        user_input,
+                        domain=params.get("domain", ""),
+                        state=requested_state,
+                        entity_ids=valid_ids,
+                    )
+
+                    if response_text:
+                        # Yes/no question detected - return boolean answer
+                        resp = ha_intent.IntentResponse(language=language)
+                        resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
+                        resp.async_set_speech(response_text)
+                        return {"result": resp}
+
+                # Not a yes/no question or no capability - check if empty
+                if not valid_ids:
+                    resp = ha_intent.IntentResponse(language=language)
+                    resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
+                    resp.async_set_speech("Es gibt keine passenden Geräte.")
+                    return {"result": resp}
 
         results: List[tuple[str, ha_intent.IntentResponse]] = []
         final_executed_params = params.copy()
@@ -75,9 +141,37 @@ class IntentExecutorCapability(Capability):
             if intent_name == "HassClimateGetTemperature" and domain == "sensor":
                 effective_intent = "HassGetState"
 
-            # --- 2. LIGHT LOGIC ---
+            # --- 2. TIMEBOX: HassTurnOn/Off with duration ---
+            minutes, seconds = self._extract_duration(current_params)
+            if (intent_name == "HassTurnOn" or intent_name == "HassTurnOff") and (
+                minutes > 0 or seconds > 0
+            ):
+                action = "on" if intent_name == "HassTurnOn" else "off"
+                await self._call_timebox_script(eid, minutes, seconds, action=action)
+
+                # Create fake response
+                resp = ha_intent.IntentResponse(language=language)
+                resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
+                results.append((eid, resp))
+                continue
+
+            # --- 3. LIGHT LOGIC ---
             if intent_name == "HassLightSet" and "brightness" in current_params:
                 val = current_params["brightness"]
+
+                # Timebox: if duration specified
+                minutes, seconds = self._extract_duration(current_params)
+                if (minutes > 0 or seconds > 0) and isinstance(val, int):
+                    # Call timebox with brightness value
+                    await self._call_timebox_script(eid, minutes, seconds, value=val)
+
+                    # Create fake response
+                    resp = ha_intent.IntentResponse(language=language)
+                    resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
+                    results.append((eid, resp))
+                    continue
+
+                # Step up/down logic (no timebox for relative adjustments)
                 if val in ("step_up", "step_down"):
                     state_obj = hass.states.get(eid)
                     if state_obj:
@@ -96,77 +190,33 @@ class IntentExecutorCapability(Capability):
                     else:
                         current_params.pop("brightness")
 
-            # --- 3. TEMPORARY CONTROL LOGIC ---
-            if intent_name == "HassTemporaryControl":
-                # Verify script
-                if not hass.states.get(self.SCRIPT_ENTITY_ID):
-                    _LOGGER.error("Script %s not found!", self.SCRIPT_ENTITY_ID)
-                    continue
+            # --- 4. TIMEBOX: Cover/Fan/Climate intents ---
+            minutes, seconds = self._extract_duration(current_params)
+            if minutes > 0 or seconds > 0:
+                value_param = None
+                value = None
 
-                duration_raw = current_params.get("duration")
-                raw_command = current_params.get("command", "on")
-                command = "on"
-                if raw_command.lower() in ("aus", "off", "false", "0", "zu"):
-                    command = "off"
+                # Determine which parameter contains the value
+                if "position" in current_params:  # Cover
+                    value_param = "position"
+                    value = current_params["position"]
+                elif "percentage" in current_params:  # Fan
+                    value_param = "percentage"
+                    value = current_params["percentage"]
+                elif "temperature" in current_params:  # Climate
+                    value_param = "temperature"
+                    value = current_params["temperature"]
 
-                seconds = parse_duration_string(duration_raw)
-                if seconds < 1:
-                    seconds = 10
-
-                _LOGGER.debug(
-                    "[IntentExecutor] Running script for %s: %s for %d seconds",
-                    eid,
-                    command,
-                    seconds,
-                )
-                # Execute
-                try:
-                    import asyncio
-
-                    service_domain = "script"
-                    service_name = "temporary_control_generic"
-                    service_data = {
-                        "target_entity": eid,
-                        "seconds": seconds,
-                        "command": command,
-                    }
-                    call_context = Context()
-
-                    print(
-                        f"DEBUG: Calling async_call with {service_domain}, {service_name}, {service_data}"
-                    )
-                    print(
-                        f"DEBUG: async_call type: {type(self.hass.services.async_call)}"
-                    )
-                    print(
-                        f"DEBUG: async_call is_coroutine: {asyncio.iscoroutinefunction(self.hass.services.async_call)}"
+                # If we found a value to timebox
+                if value is not None and isinstance(value, (int, float)):
+                    await self._call_timebox_script(
+                        eid, minutes, seconds, value=int(value)
                     )
 
-                    # Force return value to be awaitable if it's a mock and not configured correctly
-                    # But it should be AsyncMock.
-
-                    ret = self.hass.services.async_call(
-                        service_domain,
-                        service_name,
-                        service_data,
-                        blocking=False,  # Non-blocking so we don't wait for the delay
-                        context=call_context,
-                    )
-                    print(f"DEBUG: async_call returned: {ret}, type: {type(ret)}")
-
-                    if asyncio.iscoroutine(ret) or hasattr(ret, "__await__"):
-                        await ret
-                    else:
-                        print("DEBUG: Return value is not awaitable!")
-                        print(f"DEBUG: async_call returned: {ret}, type: {type(ret)}")
-
-                    # Fake a response for feedback
+                    # Create fake response
                     resp = ha_intent.IntentResponse(language=language)
                     resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
                     results.append((eid, resp))
-                    continue
-                except Exception as e:
-                    _LOGGER.error("Failed to call temporary control script: %s", e)
                     continue
 
             # Slots
@@ -218,6 +268,18 @@ class IntentExecutorCapability(Capability):
                     friendly = state_obj.attributes.get("friendly_name", eid)
                     val = state_obj.state
                     unit = state_obj.attributes.get("unit_of_measurement", "")
+
+                    # Translate common English states to German
+                    if language == "de":
+                        state_translations = {
+                            "off": "aus",
+                            "on": "an",
+                            "open": "offen",
+                            "closed": "geschlossen",
+                            "locked": "verschlossen",
+                            "unlocked": "aufgeschlossen",
+                        }
+                        val = state_translations.get(val.lower(), val)
 
                     if val.replace(".", "", 1).isdigit():
                         val = val.replace(".", ",")

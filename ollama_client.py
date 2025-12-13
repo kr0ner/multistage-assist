@@ -47,10 +47,7 @@ class OllamaClient:
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
-            "options": {
-                "num_ctx": num_ctx, 
-                "temperature": temperature
-            },
+            "options": {"num_ctx": num_ctx, "temperature": temperature},
         }
 
         # 🔎 Log full payload for debugging

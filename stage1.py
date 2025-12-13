@@ -9,6 +9,7 @@ from .capabilities.disambiguation import DisambiguationCapability
 from .capabilities.disambiguation_select import DisambiguationSelectCapability
 from .capabilities.plural_detection import PluralDetectionCapability
 from .capabilities.intent_confirmation import IntentConfirmationCapability
+from .capabilities.yes_no_response import YesNoResponseCapability
 from .capabilities.intent_executor import IntentExecutorCapability
 from .capabilities.entity_resolver import EntityResolverCapability
 from .capabilities.keyword_intent import KeywordIntentCapability
@@ -49,6 +50,7 @@ class Stage1Processor(BaseStage):
         TimerCapability,
         CommandProcessorCapability,
         VacuumCapability,
+        YesNoResponseCapability,  # Added YesNoResponseCapability
     ]
 
     def __init__(self, hass, config):
@@ -63,6 +65,43 @@ class Stage1Processor(BaseStage):
 
         if self.has("intent_resolution"):
             self.get("intent_resolution").set_memory(memory)
+
+    async def _normalize_area_aliases(self, user_input):
+        """
+        Preprocess user input to normalize common area aliases using memory.
+        E.g., "bad" → "Badezimmer", "ezi" → "Esszimmer"
+
+        This reduces unnecessary disambiguation by using correct area names early.
+        """
+        text = user_input.text
+        words = text.lower().split()
+
+        # Check each word for area aliases
+        for word in words:
+            # Strip common punctuation
+            clean_word = word.strip(".,!?")
+            if not clean_word:
+                continue
+
+            # Look up in memory
+            memory_cap = self.get("memory")
+            normalized = await memory_cap.get_area_alias(clean_word)
+            if normalized:
+                # Case-insensitive replacement
+                _LOGGER.debug(
+                    "[Stage1] Early normalization: '%s' → '%s'", clean_word, normalized
+                )
+                # Replace in text (preserve case for first letter if capitalized)
+                import re
+
+                pattern = re.compile(re.escape(clean_word), re.IGNORECASE)
+                text = pattern.sub(normalized, text, count=1)
+
+        # Return modified input if changed
+        if text != user_input.text:
+            _LOGGER.debug("[Stage1] Normalized text: %s → %s", user_input.text, text)
+            return with_new_text(user_input, text)
+        return user_input
 
     async def run(self, user_input, prev_result=None):
         _LOGGER.debug("[Stage1] Input='%s'", user_input.text)
@@ -149,14 +188,24 @@ class Stage1Processor(BaseStage):
         return {"status": "error", "result": await error_response(user_input)}
 
     async def _handle_new_command(self, user_input, prev_result) -> Dict[str, Any]:
-        clar_data = await self.use("clarification", user_input)
+        """
+        Process a completely new command through the full capability chain.
+        """
+        # --- Early Area Normalization (Optimization) ---
+        # Normalize common area aliases BEFORE clarification to reduce disambiguation
+        # E.g., "bad" → "Badezimmer" before LLM processing
+        normalized_input = await self._normalize_area_aliases(user_input)
 
-        if not clar_data or (isinstance(clar_data, list) and not clar_data):
+        # --- Capability Chain ---
+        # 1. Clarification (split multi-commands, rephrase)
+        clarified = await self.use("clarification", normalized_input)
+
+        if not clarified or (isinstance(clarified, list) and not clarified):
             return {"status": "escalate", "result": prev_result}
 
-        if isinstance(clar_data, list):
+        if isinstance(clarified, list):
             norm = (user_input.text or "").strip().lower()
-            atomic = [c for c in clar_data if isinstance(c, str) and c.strip()]
+            atomic = [c for c in clarified if isinstance(c, str) and c.strip()]
 
             if len(atomic) == 1 and atomic[0].strip().lower() == norm:
                 ki_data = await self.use("keyword_intent", user_input) or {}
@@ -189,6 +238,38 @@ class Stage1Processor(BaseStage):
                 if intent_name == "HassVacuumStart":
                     return await self.get("vacuum").run(user_input, intent_name, slots)
                 # ------------------------
+
+                # --- TEMPORARY CONTROL INTERCEPT ---
+                # HassTemporaryControl needs resolution then passes to command_processor
+                # which handles the timebox script execution
+                if intent_name == "HassTemporaryControl":
+                    _LOGGER.debug(
+                        "[Stage1] HassTemporaryControl detected with duration=%s",
+                        slots.get("duration"),
+                    )
+                    # Resolve entities first
+                    res_data = await self.use("intent_resolution", user_input)
+                    if not res_data:
+                        return {"status": "escalate", "result": prev_result}
+
+                    processor = self.get("command_processor")
+                    res = await processor.process(
+                        user_input,
+                        res_data["entity_ids"],
+                        intent_name,  # Pass HassTemporaryControl
+                        {
+                            k: v
+                            for k, v in res_data["slots"].items()
+                            if k not in ("name", "entity_id")
+                        },
+                        res_data.get("learning_data"),
+                    )
+                    return self._handle_processor_result(
+                        getattr(user_input, "session_id", None)
+                        or user_input.conversation_id,
+                        res,
+                    )
+                # ------------------------------------
 
                 res_data = await self.use("intent_resolution", user_input)
                 if not res_data:

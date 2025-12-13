@@ -215,57 +215,93 @@ class Stage1Processor(BaseStage):
             norm = (user_input.text or "").strip().lower()
             atomic = [c for c in clarified if isinstance(c, str) and c.strip()]
 
-            if len(atomic) == 1 and atomic[0].strip().lower() == norm:
-                ki_data = await self.use("keyword_intent", user_input) or {}
-                intent_name = ki_data.get("intent")
-                slots = ki_data.get("slots") or {}
+            # Single command optimization: if clarification returns a single command
+            # that's very similar to input, skip the sequence recursion
+            if len(atomic) == 1:
+                clarified_norm = atomic[0].strip().lower()
+                
+                # Exact match or very similar (allows minor normalization)
+                is_unchanged = (
+                    clarified_norm == norm
+                    or norm in clarified_norm  # Input is contained in output
+                    or clarified_norm.replace(".", "").strip() == norm.replace(".", "").strip()
+                )
+                
+                if is_unchanged:
+                    ki_data = await self.use("keyword_intent", user_input) or {}
+                    intent_name = ki_data.get("intent")
+                    slots = ki_data.get("slots") or {}
 
-                # --- TIMER INTERCEPT ---
-                if intent_name == "HassTimerSet":
-                    target_name = slots.get("name")
-                    if target_name:
-                        memory = self.get("memory")
-                        known_id = await memory.get_entity_alias(target_name)
-                        if known_id:
-                            _LOGGER.debug(
-                                "[Stage1] Memory hit for timer device: %s -> %s",
-                                target_name,
-                                known_id,
-                            )
-                            slots["device_id"] = known_id
+                    # --- TIMER INTERCEPT ---
+                    if intent_name == "HassTimerSet":
+                        target_name = slots.get("name")
+                        if target_name:
+                            memory = self.get("memory")
+                            known_id = await memory.get_entity_alias(target_name)
+                            if known_id:
+                                _LOGGER.debug(
+                                    "[Stage1] Memory hit for timer device: %s -> %s",
+                                    target_name,
+                                    known_id,
+                                )
+                                slots["device_id"] = known_id
 
-                    res = await self.get("timer").run(user_input, intent_name, slots)
-                    return self._handle_processor_result(
-                        getattr(user_input, "session_id", None)
-                        or user_input.conversation_id,
-                        res,
-                    )
-                # -----------------------
+                        res = await self.get("timer").run(user_input, intent_name, slots)
+                        return self._handle_processor_result(
+                            getattr(user_input, "session_id", None)
+                            or user_input.conversation_id,
+                            res,
+                        )
+                    # -----------------------
 
-                # --- VACUUM INTERCEPT ---
-                if intent_name == "HassVacuumStart":
-                    return await self.get("vacuum").run(user_input, intent_name, slots)
-                # ------------------------
+                    # --- VACUUM INTERCEPT ---
+                    if intent_name == "HassVacuumStart":
+                        return await self.get("vacuum").run(user_input, intent_name, slots)
+                    # ------------------------
 
-                # --- CALENDAR INTERCEPT ---
-                if intent_name in ("HassCalendarCreate", "HassCreateEvent", "HassCalendarAdd"):
-                    res = await self.get("calendar").run(user_input, intent_name, slots)
-                    return self._handle_processor_result(
-                        getattr(user_input, "session_id", None)
-                        or user_input.conversation_id,
-                        res,
-                    )
-                # --------------------------
+                    # --- CALENDAR INTERCEPT ---
+                    if intent_name in ("HassCalendarCreate", "HassCreateEvent", "HassCalendarAdd"):
+                        res = await self.get("calendar").run(user_input, intent_name, slots)
+                        return self._handle_processor_result(
+                            getattr(user_input, "session_id", None)
+                            or user_input.conversation_id,
+                            res,
+                        )
+                    # --------------------------
 
-                # --- TEMPORARY CONTROL INTERCEPT ---
-                # HassTemporaryControl needs resolution then passes to command_processor
-                # which handles the timebox script execution
-                if intent_name == "HassTemporaryControl":
-                    _LOGGER.debug(
-                        "[Stage1] HassTemporaryControl detected with duration=%s",
-                        slots.get("duration"),
-                    )
-                    # Resolve entities first (pass ki_data to avoid duplicate LLM call)
+                    # --- TEMPORARY CONTROL INTERCEPT ---
+                    # HassTemporaryControl needs resolution then passes to command_processor
+                    # which handles the timebox script execution
+                    if intent_name == "HassTemporaryControl":
+                        _LOGGER.debug(
+                            "[Stage1] HassTemporaryControl detected with duration=%s",
+                            slots.get("duration"),
+                        )
+                        # Resolve entities first (pass ki_data to avoid duplicate LLM call)
+                        res_data = await self.get("intent_resolution").run(user_input, ki_data=ki_data)
+                        if not res_data:
+                            return {"status": "escalate", "result": prev_result}
+
+                        processor = self.get("command_processor")
+                        res = await processor.process(
+                            user_input,
+                            res_data["entity_ids"],
+                            intent_name,  # Pass HassTemporaryControl
+                            {
+                                k: v
+                                for k, v in res_data["slots"].items()
+                                if k not in ("name", "entity_id")
+                            },
+                            res_data.get("learning_data"),
+                        )
+                        return self._handle_processor_result(
+                            getattr(user_input, "session_id", None)
+                            or user_input.conversation_id,
+                            res,
+                        )
+                    # ------------------------------------
+
+                    # Pass ki_data to intent_resolution to avoid duplicate LLM call
                     res_data = await self.get("intent_resolution").run(user_input, ki_data=ki_data)
                     if not res_data:
                         return {"status": "escalate", "result": prev_result}
@@ -274,7 +310,7 @@ class Stage1Processor(BaseStage):
                     res = await processor.process(
                         user_input,
                         res_data["entity_ids"],
-                        intent_name,  # Pass HassTemporaryControl
+                        res_data["intent"],
                         {
                             k: v
                             for k, v in res_data["slots"].items()
@@ -287,31 +323,8 @@ class Stage1Processor(BaseStage):
                         or user_input.conversation_id,
                         res,
                     )
-                # ------------------------------------
 
-                # Pass ki_data to intent_resolution to avoid duplicate LLM call
-                res_data = await self.get("intent_resolution").run(user_input, ki_data=ki_data)
-                if not res_data:
-                    return {"status": "escalate", "result": prev_result}
-
-                processor = self.get("command_processor")
-                res = await processor.process(
-                    user_input,
-                    res_data["entity_ids"],
-                    res_data["intent"],
-                    {
-                        k: v
-                        for k, v in res_data["slots"].items()
-                        if k not in ("name", "entity_id")
-                    },
-                    res_data.get("learning_data"),
-                )
-                return self._handle_processor_result(
-                    getattr(user_input, "session_id", None)
-                    or user_input.conversation_id,
-                    res,
-                )
-
+            # Clarification changed the input or multiple commands - use sequence executor
             if len(atomic) > 0:
                 return await self._execute_sequence(user_input, atomic)
 

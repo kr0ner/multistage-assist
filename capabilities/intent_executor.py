@@ -40,8 +40,11 @@ class IntentExecutorCapability(Capability):
         seconds: int,
         value: int = None,
         action: str = None,
-    ):
-        """Call timebox_entity_state script with value or action."""
+    ) -> bool:
+        """Call timebox_entity_state script with value or action.
+        
+        Returns True on success, False on failure.
+        """
         _LOGGER.debug(
             "[IntentExecutor] Calling timebox script for %s: value=%s, action=%s, duration=%dm%ds",
             entity_id,
@@ -56,9 +59,16 @@ class IntentExecutorCapability(Capability):
         if action is not None:
             data["action"] = action
 
-        await self.hass.services.async_call(
-            "script", "timebox_entity_state", data, blocking=False
-        )
+        try:
+            await self.hass.services.async_call(
+                "script", "timebox_entity_state", data, blocking=True
+            )
+            return True
+        except Exception as e:
+            _LOGGER.error(
+                "[IntentExecutor] Timebox script failed for %s: %s", entity_id, e
+            )
+            return False
 
     async def run(
         self,
@@ -131,6 +141,7 @@ class IntentExecutorCapability(Capability):
 
         results: List[tuple[str, ha_intent.IntentResponse]] = []
         final_executed_params = params.copy()
+        timebox_failures: List[str] = []  # Track failed timebox calls
 
         for eid in valid_ids:
             effective_intent = intent_name
@@ -141,13 +152,38 @@ class IntentExecutorCapability(Capability):
             if intent_name == "HassClimateGetTemperature" and domain == "sensor":
                 effective_intent = "HassGetState"
 
-            # --- 2. TIMEBOX: HassTurnOn/Off with duration ---
+            # --- 2. TIMEBOX: HassTemporaryControl or HassTurnOn/Off with duration ---
             minutes, seconds = self._extract_duration(current_params)
-            if (intent_name == "HassTurnOn" or intent_name == "HassTurnOff") and (
+            
+            # Handle HassTemporaryControl (convert to timebox)
+            if intent_name == "HassTemporaryControl":
+                command = current_params.get("command", "on")
+                action = "on" if command in ("on", "an", "ein", "auf") else "off"
+                
+                if minutes > 0 or seconds > 0:
+                    success = await self._call_timebox_script(eid, minutes, seconds, action=action)
+                    if not success:
+                        timebox_failures.append(eid)
+                    _LOGGER.debug(
+                        "[IntentExecutor] Timebox %s on %s for %dm%ds (success=%s)",
+                        action, eid, minutes, seconds, success
+                    )
+                    resp = ha_intent.IntentResponse(language=language)
+                    resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
+                    results.append((eid, resp))
+                    continue
+                else:
+                    # No duration - convert to regular on/off
+                    effective_intent = "HassTurnOn" if action == "on" else "HassTurnOff"
+            
+            # Handle HassTurnOn/Off with duration (legacy path)
+            elif (intent_name == "HassTurnOn" or intent_name == "HassTurnOff") and (
                 minutes > 0 or seconds > 0
             ):
                 action = "on" if intent_name == "HassTurnOn" else "off"
-                await self._call_timebox_script(eid, minutes, seconds, action=action)
+                success = await self._call_timebox_script(eid, minutes, seconds, action=action)
+                if not success:
+                    timebox_failures.append(eid)
 
                 # Create fake response
                 resp = ha_intent.IntentResponse(language=language)
@@ -254,6 +290,24 @@ class IntentExecutorCapability(Capability):
 
         if not results:
             return {}
+
+        # If ALL timebox calls failed, return error
+        if timebox_failures and len(timebox_failures) == len(valid_ids):
+            _LOGGER.error(
+                "[IntentExecutor] All timebox calls failed for: %s", timebox_failures
+            )
+            resp = ha_intent.IntentResponse(language=language)
+            resp.response_type = ha_intent.IntentResponseType.ERROR
+            resp.async_set_speech("Fehler beim Ausführen der zeitlichen Steuerung.")
+            return {
+                "result": ConversationResult(
+                    response=resp,
+                    conversation_id=user_input.conversation_id,
+                    continue_conversation=False,
+                ),
+                "executed_params": final_executed_params,
+                "error": True,
+            }
 
         final_resp = results[-1][1]
 

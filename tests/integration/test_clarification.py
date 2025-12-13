@@ -175,6 +175,14 @@ def clarification_capability(hass):
             "Timer für 10 Minuten und Licht aus",
             ["Starte Timer für 10 Minuten", "Schalte Licht aus"],
         ),
+        # === Multi-floor cover commands (same action for multiple floors) ===
+        (
+            "Fahre alle Rolläden im Untergeschoss und Obergeschoss herunter",
+            [
+                "Fahre alle Rolläden im Untergeschoss herunter",
+                "Fahre alle Rolläden im Obergeschoss herunter",
+            ],
+        ),
         # === Floor-based ===
         (
             "Alle Lichter im Erdgeschoss an und ersten Stock aus",

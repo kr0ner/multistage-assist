@@ -169,6 +169,7 @@ IMPORTANT:
 - Only fill 'name' if a SPECIFIC device is named.
 - If generic words (Licht, Lampe), leave 'name' EMPTY.
 - For HassGetState: use 'state' slot for queries like "which lights are ON" → {{"state": "on"}}
+- **FLOOR vs AREA**: Use 'floor' slot for floor/level names (Erdgeschoss, Obergeschoss, Untergeschoss, Keller, EG, OG, UG, erster Stock, zweiter Stock). Use 'area' for rooms (Küche, Bad, Büro).
 """
         data = await self._safe_prompt(
             {"system": system, "schema": self.SCHEMA}, {"user_input": text}

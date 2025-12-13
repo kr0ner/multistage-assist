@@ -25,6 +25,8 @@ CRITICAL RULES:
 4. Use specific device names if given.
 5. **PRESERVE** time/duration constraints (e.g., "für 5 Minuten", "für 1 Stunde").
 6. **SPLIT** opposite actions (an/aus, auf/zu, heller/dunkler) in different locations into separate commands.
+7. **MULTI-AREA COMMANDS**: If "und" connects AREAS/FLOORS with the same action, split into separate commands for each area.
+8. **NEVER INVENT** durations or constraints that are not in the original input!
 
 Examples:
 Input: "Licht im Bad an und Rollo runter"
@@ -47,6 +49,12 @@ Output: ["Mache das Licht in der Küche an", "Mache das Licht im Flur aus"]
 
 Input: "Stelle die Heizung im Wohnzimmer auf 22 Grad und im Schlafzimmer auf 18 Grad"
 Output: ["Stelle die Heizung im Wohnzimmer auf 22 Grad", "Stelle die Heizung im Schlafzimmer auf 18 Grad"]
+
+Input: "Fahre alle Rolläden im Untergeschoss und Obergeschoss herunter"
+Output: ["Fahre alle Rolläden im Untergeschoss herunter", "Fahre alle Rolläden im Obergeschoss herunter"]
+
+Input: "Alle Lichter im Erdgeschoss und ersten Stock aus"
+Output: ["Schalte alle Lichter im Erdgeschoss aus", "Schalte alle Lichter im ersten Stock aus"]
 """,
         "schema": {
             "type": "array",
@@ -70,6 +78,18 @@ Output: ["Stelle die Heizung im Wohnzimmer auf 22 Grad", "Stelle die Heizung im 
         # Implicit phrases that ALWAYS need LLM transformation
         implicit_phrases = ["zu dunkel", "zu hell", "zu kalt", "zu warm", "zu laut", "zu leise"]
         needs_rephrasing = any(phrase in text_lower for phrase in implicit_phrases)
+        
+        # Calendar and timer commands should NEVER be split (unless they have compound separators)
+        # The LLM confuses time ranges like "15 Uhr bis 18 Uhr" as two separate events
+        calendar_keywords = ["termin", "kalender", "event", "eintrag"]
+        timer_keywords = ["timer", "wecker", "erinnerung"]
+        is_calendar_or_timer = any(kw in text_lower for kw in calendar_keywords + timer_keywords)
+        
+        # Only bypass for calendar/timer if there's NO compound separator (und/and)
+        # "Timer für 10 Minuten und Licht aus" should still be split
+        if is_calendar_or_timer and not has_separator:
+            _LOGGER.debug("[Clarification] Calendar/timer command without separator, bypassing LLM")
+            return [text]
 
         # For short commands without separators AND no implicit phrases, bypass LLM
         # Conservative threshold - single commands rarely need rephrasing

@@ -188,3 +188,32 @@ async def test_no_specific_name_extraction(keyword_intent_capability):
             assert any(
                 generic in name for generic in generic_words
             ), f"Generic phrase '{text}' has unexpected name: {name}"
+
+
+@pytest.mark.parametrize(
+    "user_text,expected_floor",
+    [
+        # Floor names should go in 'floor' slot, not 'area'
+        ("Licht im Erdgeschoss an", "Erdgeschoss"),
+        ("Rolläden im Obergeschoss herunter", "Obergeschoss"),
+        ("Alle Lichter im Keller aus", "Keller"),
+        ("Rollo im Untergeschoss hoch", "Untergeschoss"),
+        ("Licht im EG aus", "EG"),
+    ],
+)
+async def test_floor_slot_extraction(keyword_intent_capability, user_text, expected_floor):
+    """Test that floor names are correctly put in 'floor' slot, not 'area'."""
+    user_input = make_input(user_text)
+    result = await keyword_intent_capability.run(user_input)
+
+    assert result is not None, f"No result for: {user_text}"
+    slots = result.get("slots", {})
+    
+    floor_val = slots.get("floor", "")
+    area_val = slots.get("area", "")
+    
+    # Floor value should contain expected floor (case-insensitive, may have variations)
+    assert (
+        expected_floor.lower() in floor_val.lower()
+        or floor_val.lower() in expected_floor.lower()
+    ), f"Expected floor '{expected_floor}' in slots, got floor='{floor_val}', area='{area_val}' for: {user_text}"

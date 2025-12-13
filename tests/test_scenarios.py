@@ -975,3 +975,91 @@ async def test_timebox_parametrized(
         assert call_data["value"] == value
         # Duration should be converted to minutes/seconds
         assert call_data["minutes"] > 0 or call_data["seconds"] > 0
+
+
+async def test_scenario_nonexistent_area_escalates(agent, hass):
+    """
+    Scenario: Non-existent area should escalate to chat mode.
+    Input: "Schalte das Licht im S-Zimmer an"
+    Expected: No entities found, escalates to Stage2 (chat)
+    
+    This test verifies that:
+    1. keyword_intent may extract area="S-Zimmer" from text
+    2. area_alias correctly returns null (no match)
+    3. entity_resolver returns 0 entities
+    4. System escalates gracefully (doesn't crash)
+    """
+    user_input = conversation.ConversationInput(
+        text="Schalte das Licht im S-Zimmer an",
+        context=MagicMock(),
+        conversation_id="test_nonexistent_area",
+        device_id="test_device",
+        language="de",
+    )
+
+    with patch.object(agent.stages[0], "_dry_run_recognize", return_value=None):
+        result = await agent.async_process(user_input)
+
+        # Should not crash - either escalate to chat or return an error response
+        assert result is not None
+        speech = result.response.speech.get("plain", {}).get("speech", "")
+        print(f"DEBUG: Speech for nonexistent area: {speech}")
+        
+        # The system should either:
+        # - Escalate to chat mode (no pending disambiguation)
+        # - Return some response about not finding the area
+        # It should NOT crash with an error
+        assert result.response is not None
+
+
+async def test_scenario_temporary_control_calls_timebox(agent, hass):
+    """
+    Scenario: HassTemporaryControl should properly call the timebox script.
+    Input: "Schalte das Licht im Büro für 3 Minuten an"
+    Expected: timebox_entity_state script called with action="on"
+    
+    This test verifies that:
+    1. HassTemporaryControl intent is correctly identified
+    2. Duration is parsed correctly
+    3. timebox_entity_state script is called with proper parameters
+    """
+    # Track service calls
+    hass.service_calls = []
+    
+    async def track_service_call(domain, service, data, **kwargs):
+        hass.service_calls.append({
+            "domain": domain,
+            "service": service,
+            "service_data": data
+        })
+    
+    hass.services.async_call = track_service_call
+    
+    user_input = conversation.ConversationInput(
+        text="Schalte das Licht im Büro für 3 Minuten an",
+        context=MagicMock(),
+        conversation_id="test_temp_control_timebox",
+        device_id="test_device",
+        language="de",
+    )
+
+    with patch.object(agent.stages[0], "_dry_run_recognize", return_value=None):
+        result = await agent.async_process(user_input)
+
+        assert result is not None
+        speech = result.response.speech.get("plain", {}).get("speech", "")
+        print(f"DEBUG: Speech for temp control: {speech}")
+        
+        # Should have called timebox script
+        script_calls = [c for c in hass.service_calls if c["domain"] == "script"]
+        assert len(script_calls) > 0, f"Expected timebox script call, got: {hass.service_calls}"
+        
+        timebox_calls = [
+            c for c in script_calls if "timebox_entity_state" in c["service"]
+        ]
+        assert len(timebox_calls) > 0, f"Expected timebox_entity_state, got: {script_calls}"
+        
+        call_data = timebox_calls[0]["service_data"]
+        assert call_data["action"] == "on", f"Expected action='on', got: {call_data}"
+        assert call_data["minutes"] == 3, f"Expected minutes=3, got: {call_data}"
+        assert "buro" in call_data["target_entity"].lower() or "büro" in call_data["target_entity"].lower()

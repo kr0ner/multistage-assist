@@ -265,8 +265,8 @@ class Stage1Processor(BaseStage):
                         "[Stage1] HassTemporaryControl detected with duration=%s",
                         slots.get("duration"),
                     )
-                    # Resolve entities first
-                    res_data = await self.use("intent_resolution", user_input)
+                    # Resolve entities first (pass ki_data to avoid duplicate LLM call)
+                    res_data = await self.get("intent_resolution").run(user_input, ki_data=ki_data)
                     if not res_data:
                         return {"status": "escalate", "result": prev_result}
 
@@ -289,7 +289,8 @@ class Stage1Processor(BaseStage):
                     )
                 # ------------------------------------
 
-                res_data = await self.use("intent_resolution", user_input)
+                # Pass ki_data to intent_resolution to avoid duplicate LLM call
+                res_data = await self.get("intent_resolution").run(user_input, ki_data=ki_data)
                 if not res_data:
                     return {"status": "escalate", "result": prev_result}
 

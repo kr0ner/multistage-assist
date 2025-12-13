@@ -22,7 +22,7 @@ class IntentExecutorCapability(Capability):
     description = "Execute a Home Assistant intent for specific targets."
 
     RESOLUTION_KEYS = {"area", "floor", "name", "entity_id"}
-    BRIGHTNESS_STEP = 10
+    BRIGHTNESS_STEP = 20  # Percentage to change for step_up/step_down
     TIMEBOX_SCRIPT_ENTITY_ID = "script.timebox_entity_state"
 
     def _extract_duration(self, params: Dict[str, Any]) -> tuple[int, int]:
@@ -156,10 +156,13 @@ class IntentExecutorCapability(Capability):
                 continue
 
             # --- 3. LIGHT LOGIC ---
-            if intent_name == "HassLightSet" and "brightness" in current_params:
-                val = current_params["brightness"]
+            # Handle brightness from either 'brightness' or 'command' slot
+            brightness_val = current_params.get("brightness") or current_params.get("command")
+            
+            if intent_name == "HassLightSet" and brightness_val:
+                val = brightness_val
 
-                # Timebox: if duration specified
+                # Timebox: if duration specified and absolute brightness
                 minutes, seconds = self._extract_duration(current_params)
                 if (minutes > 0 or seconds > 0) and isinstance(val, int):
                     # Call timebox with brightness value
@@ -171,7 +174,7 @@ class IntentExecutorCapability(Capability):
                     results.append((eid, resp))
                     continue
 
-                # Step up/down logic (no timebox for relative adjustments)
+                # Step up/down logic (relative brightness adjustments)
                 if val in ("step_up", "step_down"):
                     state_obj = hass.states.get(eid)
                     if state_obj:
@@ -187,8 +190,13 @@ class IntentExecutorCapability(Capability):
 
                         current_params["brightness"] = new_pct
                         final_executed_params["brightness"] = new_pct
+                        _LOGGER.debug(
+                            "[IntentExecutor] %s on %s: %d%% -> %d%%",
+                            val, eid, cur_pct, new_pct
+                        )
                     else:
-                        current_params.pop("brightness")
+                        current_params.pop("brightness", None)
+                        current_params.pop("command", None)
 
             # --- 4. TIMEBOX: Cover/Fan/Climate intents ---
             minutes, seconds = self._extract_duration(current_params)

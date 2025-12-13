@@ -141,12 +141,13 @@ EXAMPLES:
             return matches[0]
         if "climate" in matches and "sensor" in matches:
             return "climate"
+        # Calendar before timer - calendar keywords are more specific
+        if "calendar" in matches:
+            return "calendar"
         if "timer" in matches:
             return "timer"
         if "vacuum" in matches:
             return "vacuum"
-        if "calendar" in matches:
-            return "calendar"
         if matches:
             return matches[0]
         return None

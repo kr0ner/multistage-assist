@@ -81,8 +81,8 @@ TIMER_KEYWORDS: List[str] = [
     "timer",
     "wecker",
     "countdown",
-    "uhr",
     "stoppuhr",
+    # Note: "uhr" removed - too generic, conflicts with time expressions like "15:00 Uhr"
 ]
 
 CALENDAR_KEYWORDS: List[str] = [

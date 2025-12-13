@@ -84,8 +84,11 @@ JSON: {"entity_id": <string or null>}
 
         return None, False
 
-    async def run(self, user_input, **_: Any) -> Dict[str, Any]:
-        ki_data = await self.keyword_cap.run(user_input)
+    async def run(self, user_input, ki_data: Dict[str, Any] = None, **_: Any) -> Dict[str, Any]:
+        # Use provided ki_data or compute it (avoids duplicate LLM call)
+        if ki_data is None:
+            ki_data = await self.keyword_cap.run(user_input)
+        
         intent_name = ki_data.get("intent")
         slots = ki_data.get("slots") or {}
         # IMPORTANT: keyword_intent returns domain at top level, not in slots

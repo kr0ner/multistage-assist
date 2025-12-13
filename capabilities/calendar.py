@@ -80,14 +80,44 @@ Examples:
         # Merge with any slots from NLU
         if slots.get("summary"):
             event_data["summary"] = slots["summary"]
-        if slots.get("date"):
-            event_data["start_date"] = slots["date"]
-        if slots.get("time"):
-            event_data["start_time"] = slots["time"]
         if slots.get("location"):
             event_data["location"] = slots["location"]
         if slots.get("calendar"):
             event_data["calendar_id"] = slots["calendar"]
+        
+        # Handle date/time combination from slots
+        slot_date = slots.get("date", "")  # e.g., "morgen"
+        slot_time = slots.get("time", "")  # e.g., "15 Uhr" or "15 Uhr bis 18 Uhr"
+        slot_duration = slots.get("duration", "")  # e.g., "3 Stunden"
+        
+        if slot_date and slot_time:
+            # Combine date and time
+            # Extract start time
+            time_match = re.search(r'(\d{1,2})(?:[:\.](\d{2}))?\s*[Uu]hr', slot_time)
+            if time_match:
+                hour = int(time_match.group(1))
+                minute = int(time_match.group(2) or 0)
+                # Store combined datetime (will be resolved later)
+                event_data["start_date_time"] = f"{slot_date} {hour:02d}:{minute:02d}"
+                
+                # Check for end time "bis X Uhr"
+                end_match = re.search(r'bis\s+(\d{1,2})(?:[:\.](\d{2}))?\s*[Uu]hr', slot_time)
+                if end_match:
+                    end_hour = int(end_match.group(1))
+                    end_minute = int(end_match.group(2) or 0)
+                    event_data["end_date_time"] = f"{slot_date} {end_hour:02d}:{end_minute:02d}"
+            else:
+                # No time extracted, use date only
+                event_data["start_date"] = slot_date
+        elif slot_date and not slot_time:
+            # Date only, no time - all-day event
+            event_data["start_date"] = slot_date
+        
+        # Parse duration from slots (e.g., "3 Stunden" -> 180 minutes)
+        if slot_duration and not event_data.get("duration_minutes"):
+            duration_minutes = self._parse_duration(slot_duration)
+            if duration_minutes:
+                event_data["duration_minutes"] = duration_minutes
             
         return await self._process_request(user_input, event_data)
     
@@ -247,21 +277,47 @@ Examples:
                     },
                 }
         
-        # 4. Calculate end time if not specified
+        # 4. Resolve relative dates (morgen, übermorgen, heute, etc.)
+        event_data = self._resolve_relative_dates(event_data)
+        
+        # 5. Validate date formats - if still invalid after resolution, ask again
+        if not self._validate_dates(event_data):
+            _LOGGER.debug("[Calendar] Date validation failed after resolution: %s", event_data)
+            return {
+                "status": "handled",
+                "result": await make_response(
+                    "Bitte gib ein konkretes Datum an, z.B. 'am 14. Dezember' oder 'am Montag um 15 Uhr'.",
+                    user_input,
+                ),
+                "pending_data": {
+                    "type": "calendar",
+                    "step": "ask_datetime",
+                    "event_data": {k: v for k, v in event_data.items() 
+                                  if k not in ("start_date", "end_date", "start_date_time", "end_date_time")},
+                },
+            }
+        
+        # 5. Calculate end time if not specified
         if not event_data.get("end_date") and not event_data.get("end_date_time"):
             if event_data.get("start_date_time"):
                 # Timed event - add duration (default 1 hour)
                 duration = event_data.get("duration_minutes", 60)
-                start = datetime.strptime(event_data["start_date_time"], "%Y-%m-%d %H:%M")
-                end = start + timedelta(minutes=duration)
-                event_data["end_date_time"] = end.strftime("%Y-%m-%d %H:%M")
+                try:
+                    start = datetime.strptime(event_data["start_date_time"], "%Y-%m-%d %H:%M")
+                    end = start + timedelta(minutes=duration)
+                    event_data["end_date_time"] = end.strftime("%Y-%m-%d %H:%M")
+                except ValueError:
+                    pass  # Will be caught by validation
             elif event_data.get("start_date"):
                 # All-day event - end date is day after
-                start = datetime.strptime(event_data["start_date"], "%Y-%m-%d")
-                end = start + timedelta(days=1)
-                event_data["end_date"] = end.strftime("%Y-%m-%d")
+                try:
+                    start = datetime.strptime(event_data["start_date"], "%Y-%m-%d")
+                    end = start + timedelta(days=1)
+                    event_data["end_date"] = end.strftime("%Y-%m-%d")
+                except ValueError:
+                    pass  # Will be caught by validation
         
-        # 5. Show confirmation before creating
+        # 6. Show confirmation before creating
         summary = self._build_confirmation_text(event_data)
         return {
             "status": "handled",
@@ -276,20 +332,231 @@ Examples:
             },
         }
     
+    def _resolve_relative_dates(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve relative date terms to actual dates.
+        
+        Converts German terms like 'morgen', 'übermorgen', 'heute', weekdays etc.
+        to actual YYYY-MM-DD format.
+        """
+        today = datetime.now()
+        
+        # Relative date mappings (days from today)
+        # IMPORTANT: Order by length (longest first) to avoid "morgen" matching "übermorgen"
+        relative_days = [
+            ("in drei tagen", 3),
+            ("in 3 tagen", 3),
+            ("übermorgen", 2),
+            ("morgen", 1),
+            ("heute", 0),
+        ]
+        
+        # German weekday names to weekday number (0=Monday, 6=Sunday)
+        weekdays = {
+            "montag": 0,
+            "dienstag": 1,
+            "mittwoch": 2,
+            "donnerstag": 3,
+            "freitag": 4,
+            "samstag": 5,
+            "sonntag": 6,
+        }
+        
+        def resolve_date(value: str) -> Optional[str]:
+            """Resolve a single date value to YYYY-MM-DD format."""
+            if not value or not isinstance(value, str):
+                return value
+            
+            val_lower = value.lower().strip()
+            
+            # Already in correct format?
+            try:
+                datetime.strptime(value, "%Y-%m-%d")
+                return value  # Already valid
+            except ValueError:
+                pass
+            
+            # Check relative days (list of tuples, longest first)
+            for term, days in relative_days:
+                if term in val_lower:
+                    target = today + timedelta(days=days)
+                    return target.strftime("%Y-%m-%d")
+            
+            # Check weekdays (next occurrence)
+            for day_name, day_num in weekdays.items():
+                if day_name in val_lower:
+                    # Find next occurrence of this weekday
+                    days_ahead = day_num - today.weekday()
+                    if days_ahead <= 0:  # Target day already happened this week
+                        days_ahead += 7
+                    target = today + timedelta(days=days_ahead)
+                    return target.strftime("%Y-%m-%d")
+            
+            # Check for "in einer woche" patterns
+            if "in einer woche" in val_lower or "heute in einer woche" in val_lower:
+                target = today + timedelta(days=7)
+                return target.strftime("%Y-%m-%d")
+            
+            # Couldn't resolve - return as-is
+            return value
+        
+        def resolve_datetime(value: str) -> Optional[str]:
+            """Resolve a datetime value, preserving time if present."""
+            if not value or not isinstance(value, str):
+                return value
+            
+            # Already in correct format?
+            try:
+                datetime.strptime(value, "%Y-%m-%d %H:%M")
+                return value
+            except ValueError:
+                pass
+            
+            # Try to extract time from the value
+            time_match = re.search(r'(\d{1,2})[:\.](\d{2})', value)
+            if time_match:
+                hour, minute = time_match.groups()
+                time_str = f"{int(hour):02d}:{int(minute):02d}"
+            else:
+                # Check for "um X Uhr" pattern
+                uhr_match = re.search(r'(\d{1,2})\s*uhr', value.lower())
+                if uhr_match:
+                    hour = int(uhr_match.group(1))
+                    time_str = f"{hour:02d}:00"
+                else:
+                    time_str = None
+            
+            # Resolve date part
+            date_part = resolve_date(value)
+            
+            if date_part and time_str:
+                # Check if date_part is valid YYYY-MM-DD
+                try:
+                    datetime.strptime(date_part, "%Y-%m-%d")
+                    return f"{date_part} {time_str}"
+                except ValueError:
+                    pass
+            
+            return value
+        
+        # Make a copy to avoid modifying original
+        result = dict(event_data)
+        
+        # Resolve each date field
+        if result.get("start_date"):
+            result["start_date"] = resolve_date(result["start_date"])
+        
+        if result.get("end_date"):
+            result["end_date"] = resolve_date(result["end_date"])
+        
+        if result.get("start_date_time"):
+            result["start_date_time"] = resolve_datetime(result["start_date_time"])
+        
+        if result.get("end_date_time"):
+            result["end_date_time"] = resolve_datetime(result["end_date_time"])
+        
+        _LOGGER.debug("[Calendar] Resolved dates: %s -> %s", event_data, result)
+        return result
+    
+    def _parse_duration(self, duration_str: str) -> Optional[int]:
+        """Parse duration string to minutes.
+        
+        Examples:
+            "3 Stunden" -> 180
+            "30 Minuten" -> 30
+            "1,5 Stunden" -> 90
+            "2 Stunden 30 Minuten" -> 150
+        """
+        if not duration_str:
+            return None
+        
+        total_minutes = 0
+        text = duration_str.lower()
+        
+        # Match hours (X Stunden, X,5 Stunden, etc.)
+        hours_match = re.search(r'(\d+(?:[,\.]\d+)?)\s*(?:stunde|stunden|std|h)', text)
+        if hours_match:
+            hours = float(hours_match.group(1).replace(',', '.'))
+            total_minutes += int(hours * 60)
+        
+        # Match minutes
+        minutes_match = re.search(r'(\d+)\s*(?:minute|minuten|min|m)', text)
+        if minutes_match:
+            total_minutes += int(minutes_match.group(1))
+        
+        return total_minutes if total_minutes > 0 else None
+    
+    def _validate_dates(self, event_data: Dict[str, Any]) -> bool:
+        """Validate that date fields are in parseable format.
+        
+        Returns True if dates are valid or not present.
+        Returns False if dates are present but unparseable.
+        """
+        # Check start_date_time format (YYYY-MM-DD HH:MM)
+        if event_data.get("start_date_time"):
+            try:
+                datetime.strptime(event_data["start_date_time"], "%Y-%m-%d %H:%M")
+            except ValueError:
+                _LOGGER.debug(
+                    "[Calendar] Invalid start_date_time format: %s",
+                    event_data["start_date_time"]
+                )
+                return False
+        
+        # Check start_date format (YYYY-MM-DD)
+        if event_data.get("start_date"):
+            try:
+                datetime.strptime(event_data["start_date"], "%Y-%m-%d")
+            except ValueError:
+                _LOGGER.debug(
+                    "[Calendar] Invalid start_date format: %s",
+                    event_data["start_date"]
+                )
+                return False
+        
+        # Check end_date_time format
+        if event_data.get("end_date_time"):
+            try:
+                datetime.strptime(event_data["end_date_time"], "%Y-%m-%d %H:%M")
+            except ValueError:
+                _LOGGER.debug(
+                    "[Calendar] Invalid end_date_time format: %s",
+                    event_data["end_date_time"]
+                )
+                return False
+        
+        # Check end_date format
+        if event_data.get("end_date"):
+            try:
+                datetime.strptime(event_data["end_date"], "%Y-%m-%d")
+            except ValueError:
+                _LOGGER.debug(
+                    "[Calendar] Invalid end_date format: %s",
+                    event_data["end_date"]
+                )
+                return False
+        
+        return True
+    
     def _build_confirmation_text(self, event_data: Dict[str, Any]) -> str:
         """Build a human-readable confirmation text."""
         lines = []
         lines.append(f"📅 **{event_data.get('summary', 'Termin')}**")
         
         if event_data.get("start_date_time"):
-            dt = datetime.strptime(event_data["start_date_time"], "%Y-%m-%d %H:%M")
-            lines.append(f"🕐 {dt.strftime('%d.%m.%Y um %H:%M Uhr')}")
-            if event_data.get("end_date_time"):
-                end_dt = datetime.strptime(event_data["end_date_time"], "%Y-%m-%d %H:%M")
-                lines.append(f"   bis {end_dt.strftime('%H:%M Uhr')}")
+            try:
+                dt = datetime.strptime(event_data["start_date_time"], "%Y-%m-%d %H:%M")
+                lines.append(f"🕐 {dt.strftime('%d.%m.%Y um %H:%M Uhr')}")
+                if event_data.get("end_date_time"):
+                    end_dt = datetime.strptime(event_data["end_date_time"], "%Y-%m-%d %H:%M")
+                    lines.append(f"   bis {end_dt.strftime('%H:%M Uhr')}")
+            except ValueError:
+                lines.append(f"🕐 {event_data['start_date_time']}")
         elif event_data.get("start_date"):
-            dt = datetime.strptime(event_data["start_date"], "%Y-%m-%d")
-            lines.append(f"📆 {dt.strftime('%d.%m.%Y')} (ganztägig)")
+            try:
+                dt = datetime.strptime(event_data["start_date"], "%Y-%m-%d")
+                lines.append(f"📆 {dt.strftime('%d.%m.%Y')} (ganztägig)")
+            except ValueError:
+                lines.append(f"📆 {event_data['start_date']} (ganztägig)")
             
         if event_data.get("location"):
             lines.append(f"📍 {event_data['location']}")

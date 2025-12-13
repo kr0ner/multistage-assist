@@ -71,10 +71,10 @@ Output: ["Stelle die Heizung im Wohnzimmer auf 22 Grad", "Stelle die Heizung im 
         implicit_phrases = ["zu dunkel", "zu hell", "zu kalt", "zu warm", "zu laut", "zu leise"]
         needs_rephrasing = any(phrase in text_lower for phrase in implicit_phrases)
 
-        # For very short commands without separators AND no implicit phrases, bypass LLM
-        # Conservative threshold to avoid breaking complex rephrasing
+        # For short commands without separators AND no implicit phrases, bypass LLM
+        # Conservative threshold - single commands rarely need rephrasing
         word_count = len(text.split())
-        is_very_simple = word_count <= 5 and not has_separator and not needs_rephrasing
+        is_very_simple = word_count <= 8 and not has_separator and not needs_rephrasing
 
         if is_very_simple:
             _LOGGER.debug(

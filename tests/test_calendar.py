@@ -212,3 +212,118 @@ class TestCalendarCapability:
         assert "14.12.2023" in text
         assert "10:00" in text
         assert "Praxis Dr. Müller" in text
+    
+    @pytest.mark.asyncio
+    async def test_morgen_resolves_to_actual_date(self, calendar_capability, hass):
+        """Test that 'morgen' is resolved to an actual date, not rejected."""
+        hass.states.async_entity_ids.return_value = ["calendar.main"]
+        main_state = MagicMock()
+        main_state.attributes = {"friendly_name": "Main Calendar"}
+        hass.states.get = lambda x: main_state if x == "calendar.main" else None
+        
+        user_input = make_input("Termin morgen")
+        
+        # Mock LLM returning 'morgen' instead of actual date
+        event_data = {
+            "summary": "Test",
+            "start_date": "morgen",
+        }
+        
+        with patch.object(calendar_capability, "_extract_event_details", return_value=event_data):
+            result = await calendar_capability.run(user_input)
+        
+        # Should proceed to confirmation (date was resolved), not ask again
+        assert result.get("status") == "handled"
+        assert result.get("pending_data", {}).get("step") == "confirm"
+        # The resolved date should be in event_data
+        resolved_data = result.get("pending_data", {}).get("event_data", {})
+        assert resolved_data.get("start_date") != "morgen"
+        # Should be in YYYY-MM-DD format
+        from datetime import datetime, timedelta
+        expected_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+        assert resolved_data.get("start_date") == expected_date
+    
+    @pytest.mark.asyncio
+    async def test_resolve_relative_dates_heute(self, calendar_capability):
+        """Test that 'heute' resolves to today's date."""
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        
+        result = calendar_capability._resolve_relative_dates({"start_date": "heute"})
+        assert result["start_date"] == today
+    
+    @pytest.mark.asyncio
+    async def test_resolve_relative_dates_morgen(self, calendar_capability):
+        """Test that 'morgen' resolves to tomorrow's date."""
+        from datetime import datetime, timedelta
+        tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+        
+        result = calendar_capability._resolve_relative_dates({"start_date": "morgen"})
+        assert result["start_date"] == tomorrow
+    
+    @pytest.mark.asyncio
+    async def test_resolve_relative_dates_uebermorgen(self, calendar_capability):
+        """Test that 'übermorgen' resolves to day after tomorrow."""
+        from datetime import datetime, timedelta
+        day_after = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
+        
+        result = calendar_capability._resolve_relative_dates({"start_date": "übermorgen"})
+        assert result["start_date"] == day_after
+    
+    @pytest.mark.asyncio
+    async def test_resolve_relative_dates_preserves_valid(self, calendar_capability):
+        """Test that already valid dates are preserved."""
+        result = calendar_capability._resolve_relative_dates({"start_date": "2023-12-25"})
+        assert result["start_date"] == "2023-12-25"
+    
+    @pytest.mark.asyncio
+    async def test_validate_dates_with_valid_format(self, calendar_capability):
+        """Test _validate_dates with valid date formats."""
+        valid_data = {
+            "summary": "Test",
+            "start_date_time": "2023-12-14 10:00",
+            "end_date_time": "2023-12-14 11:00",
+        }
+        assert calendar_capability._validate_dates(valid_data) is True
+        
+        valid_all_day = {
+            "summary": "Test",
+            "start_date": "2023-12-14",
+            "end_date": "2023-12-15",
+        }
+        assert calendar_capability._validate_dates(valid_all_day) is True
+    
+    @pytest.mark.asyncio
+    async def test_validate_dates_with_invalid_format(self, calendar_capability):
+        """Test _validate_dates with invalid date formats."""
+        invalid_data = {
+            "summary": "Test",
+            "start_date": "something unparseable",
+        }
+        assert calendar_capability._validate_dates(invalid_data) is False
+        
+        invalid_time = {
+            "summary": "Test",
+            "start_date_time": "tomorrow at 10",
+        }
+        assert calendar_capability._validate_dates(invalid_time) is False
+    
+    @pytest.mark.asyncio
+    async def test_parse_duration_hours(self, calendar_capability):
+        """Test _parse_duration with hours."""
+        assert calendar_capability._parse_duration("3 Stunden") == 180
+        assert calendar_capability._parse_duration("1 Stunde") == 60
+        assert calendar_capability._parse_duration("2 std") == 120
+    
+    @pytest.mark.asyncio
+    async def test_parse_duration_minutes(self, calendar_capability):
+        """Test _parse_duration with minutes."""
+        assert calendar_capability._parse_duration("30 Minuten") == 30
+        assert calendar_capability._parse_duration("45 min") == 45
+    
+    @pytest.mark.asyncio
+    async def test_parse_duration_combined(self, calendar_capability):
+        """Test _parse_duration with hours and minutes."""
+        assert calendar_capability._parse_duration("2 Stunden 30 Minuten") == 150
+        assert calendar_capability._parse_duration("1,5 Stunden") == 90
+

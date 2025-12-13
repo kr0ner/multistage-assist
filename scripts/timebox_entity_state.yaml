@@ -18,10 +18,16 @@ fields:
   seconds:
     description: Duration in seconds
     example: 0
+  scene_id:
+    description: Scene ID for snapshot (lowercase, avoids ULID uppercase issue)
+    example: snapshot_a8f7b3c2e1d4f609
 sequence:
+  - variables:
+      # Use passed scene_id or fall back to lowercase context.id
+      snapshot_id: "{{ scene_id | default('snapshot_' ~ context.id | lower) }}"
   - action: scene.create
     data:
-      scene_id: snapshot_{{ context.id }}
+      scene_id: "{{ snapshot_id }}"
       snapshot_entities:
         - "{{ target_entity }}"
   - choose:
@@ -82,5 +88,5 @@ sequence:
       seconds: "{{ seconds | default(0) }}"
   - action: scene.turn_on
     target:
-      entity_id: scene.snapshot_{{ context.id }}
+      entity_id: "scene.{{ snapshot_id }}"
 description: ""

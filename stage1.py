@@ -1,5 +1,6 @@
 import logging
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Optional
 from homeassistant.components import conversation
 from .base_stage import BaseStage
 
@@ -232,6 +233,16 @@ class Stage1Processor(BaseStage):
                     intent_name = ki_data.get("intent")
                     slots = ki_data.get("slots") or {}
 
+                    # --- FALLBACK: No domain detected, try entity name matching ---
+                    if not intent_name:
+                        _LOGGER.debug(
+                            "[Stage1] No domain detected, trying entity name fallback for: '%s'",
+                            user_input.text
+                        )
+                        fallback_result = await self._try_entity_name_fallback(user_input)
+                        if fallback_result:
+                            return fallback_result
+
                     # --- TIMER INTERCEPT ---
                     if intent_name == "HassTimerSet":
                         target_name = slots.get("name")
@@ -440,4 +451,118 @@ class Stage1Processor(BaseStage):
         )
         return self._handle_processor_result(
             getattr(user_input, "session_id", None) or user_input.conversation_id, res
+        )
+
+    async def _try_entity_name_fallback(self, user_input) -> Optional[Dict[str, Any]]:
+        """
+        Fallback when no domain is detected: try to find entities whose name
+        matches the input text using fuzzy matching.
+        
+        This helps with commands like "Türklingel aus" where "Türklingel" might
+        match an automation entity name but isn't in our keyword list.
+        """
+        from .utils.fuzzy_utils import fuzzy_match
+        from homeassistant.helpers import entity_registry as er
+        
+        text = user_input.text.lower().strip()
+        
+        # Determine the command intent from common words
+        text_lower = f" {text} "
+        if any(word in text_lower for word in [" an ", " ein ", " auf ", " aktivier", " start", " öffne"]):
+            intent = "HassTurnOn"
+            command = "on"
+        elif any(word in text_lower for word in [" aus ", " ab ", " deaktivier", " stopp", " schließe"]):
+            intent = "HassTurnOff"
+            command = "off"
+        else:
+            # Can't determine intent
+            return None
+        
+        # Check for duration (HassTemporaryControl)
+        duration = None
+        duration_match = re.search(r'für\s+(\d+)\s*(minuten?|sekunden?|stunden?)', text, re.IGNORECASE)
+        if duration_match:
+            duration = duration_match.group(0)
+            intent = "HassTemporaryControl"
+        
+        # Get all entities and try fuzzy matching
+        ent_reg = er.async_get(self.hass)
+        candidates = []
+        
+        for entity in ent_reg.entities.values():
+            if entity.disabled:
+                continue
+            
+            # Check friendly name
+            state = self.hass.states.get(entity.entity_id)
+            if state:
+                friendly_name = state.attributes.get("friendly_name", "")
+                if friendly_name:
+                    candidates.append({
+                        "id": entity.entity_id,
+                        "name": friendly_name.lower(),
+                        "domain": entity.domain
+                    })
+            
+            # Also check entity_id object_id part
+            obj_id = entity.entity_id.split(".", 1)[-1].replace("_", " ")
+            candidates.append({
+                "id": entity.entity_id,
+                "name": obj_id.lower(),
+                "domain": entity.domain
+            })
+        
+        # Extract potential entity name from text (remove common command words)
+        name_part = text
+        for word in ["schalte", "mache", "aktiviere", "deaktiviere", "stelle", 
+                     "an", "aus", "ein", "ab", "auf", "zu", "die", "den", "das", "der",
+                     "bitte", "mal", "für", "minuten", "minute", "sekunden", "sekunde", "stunden", "stunde"]:
+            name_part = re.sub(rf'\b{re.escape(word)}\b', '', name_part, flags=re.IGNORECASE)
+        
+        # Remove duration numbers
+        name_part = re.sub(r'\d+', '', name_part)
+        name_part = ' '.join(name_part.split()).strip()
+        
+        if not name_part or len(name_part) < 3:
+            return None
+        
+        _LOGGER.debug("[Stage1] Fallback: searching for entity matching '%s'", name_part)
+        
+        # Fuzzy match
+        best_match = None
+        best_score = 0
+        
+        for candidate in candidates:
+            score = fuzzy_match(name_part, candidate["name"])
+            if score > best_score and score >= 80:
+                best_score = score
+                best_match = candidate
+        
+        if not best_match:
+            _LOGGER.debug("[Stage1] Fallback: no entity match found for '%s'", name_part)
+            return None
+        
+        _LOGGER.info(
+            "[Stage1] Fallback matched entity: '%s' -> %s (score: %d)",
+            name_part, best_match["id"], best_score
+        )
+        
+        # Build params
+        params = {"command": command}
+        if duration:
+            params["duration"] = duration
+        
+        # Execute via command processor
+        processor = self.get("command_processor")
+        res = await processor.process(
+            user_input,
+            [best_match["id"]],
+            intent,
+            params,
+            {"alias": name_part, "entity_id": best_match["id"]},  # learning data
+        )
+        
+        return self._handle_processor_result(
+            getattr(user_input, "session_id", None) or user_input.conversation_id,
+            res,
         )

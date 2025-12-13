@@ -45,15 +45,26 @@ class IntentExecutorCapability(Capability):
         
         Returns True on success, False on failure.
         """
+        import uuid
+        
+        # Generate a lowercase scene_id to avoid HA slug validation issues
+        scene_id = f"snapshot_{uuid.uuid4().hex[:16]}"
+        
         _LOGGER.debug(
-            "[IntentExecutor] Calling timebox script for %s: value=%s, action=%s, duration=%dm%ds",
+            "[IntentExecutor] Calling timebox script for %s: value=%s, action=%s, duration=%dm%ds, scene_id=%s",
             entity_id,
             value,
             action,
             minutes,
             seconds,
+            scene_id,
         )
-        data = {"target_entity": entity_id, "minutes": minutes, "seconds": seconds}
+        data = {
+            "target_entity": entity_id, 
+            "minutes": minutes, 
+            "seconds": seconds,
+            "scene_id": scene_id,  # Pass lowercase scene_id to avoid ULID uppercase issue
+        }
         if value is not None:
             data["value"] = value
         if action is not None:
@@ -199,7 +210,9 @@ class IntentExecutorCapability(Capability):
                     results.append((eid, resp))
                     continue
 
-                # Step up/down logic (relative brightness adjustments)
+                # Step up/down logic (RELATIVE brightness adjustments)
+                # step_up: increase by BRIGHTNESS_STEP% of current (e.g., 50% -> 60% if step=20%)
+                # step_down: decrease by BRIGHTNESS_STEP% of current (e.g., 50% -> 40% if step=20%)
                 if val in ("step_up", "step_down"):
                     state_obj = hass.states.get(eid)
                     if state_obj:
@@ -207,17 +220,23 @@ class IntentExecutorCapability(Capability):
                         cur_pct = int((cur_255 / 255.0) * 100)
 
                         if val == "step_up":
-                            new_pct = min(100, cur_pct + self.BRIGHTNESS_STEP)
                             if cur_pct == 0:
-                                new_pct = self.BRIGHTNESS_STEP
+                                # Light is off, turn on to reasonable brightness
+                                new_pct = 30
+                            else:
+                                # Increase by BRIGHTNESS_STEP% of current, minimum 5%
+                                change = max(5, int(cur_pct * self.BRIGHTNESS_STEP / 100))
+                                new_pct = min(100, cur_pct + change)
                         else:
-                            new_pct = max(0, cur_pct - self.BRIGHTNESS_STEP)
+                            # step_down: reduce by BRIGHTNESS_STEP% of current, minimum 5%
+                            change = max(5, int(cur_pct * self.BRIGHTNESS_STEP / 100))
+                            new_pct = max(0, cur_pct - change)
 
                         current_params["brightness"] = new_pct
                         final_executed_params["brightness"] = new_pct
                         _LOGGER.debug(
-                            "[IntentExecutor] %s on %s: %d%% -> %d%%",
-                            val, eid, cur_pct, new_pct
+                            "[IntentExecutor] %s on %s: %d%% -> %d%% (change: ±%d%%)",
+                            val, eid, cur_pct, new_pct, change if cur_pct > 0 else 30
                         )
                     else:
                         current_params.pop("brightness", None)
@@ -274,6 +293,27 @@ class IntentExecutorCapability(Capability):
                     language=language or (user_input.language or "de"),
                 )
                 results.append((eid, resp))
+                
+                # Verify execution for certain intents
+                if effective_intent in ("HassTurnOn", "HassTurnOff", "HassLightSet"):
+                    expected_state = None
+                    expected_brightness = None
+                    
+                    if effective_intent == "HassTurnOn":
+                        expected_state = "on"
+                    elif effective_intent == "HassTurnOff":
+                        expected_state = "off"
+                    elif effective_intent == "HassLightSet":
+                        expected_state = "on"  # Light should be on after setting
+                        if "brightness" in current_params:
+                            expected_brightness = current_params["brightness"]
+                    
+                    await self._verify_execution(
+                        eid, effective_intent, 
+                        expected_state=expected_state,
+                        expected_brightness=expected_brightness
+                    )
+                    
             except Exception as e:
                 _LOGGER.warning("[IntentExecutor] Error on %s: %s", eid, e)
 
@@ -361,3 +401,61 @@ class IntentExecutorCapability(Capability):
             ),
             "executed_params": final_executed_params,
         }
+
+    async def _verify_execution(
+        self, 
+        entity_id: str, 
+        intent_name: str, 
+        expected_state: str = None,
+        expected_brightness: int = None,
+        pre_state: dict = None
+    ) -> bool:
+        """Verify that an intent execution succeeded by checking entity state.
+        
+        Args:
+            entity_id: The entity that was controlled
+            intent_name: The intent that was executed
+            expected_state: Expected state value (on/off) if applicable
+            expected_brightness: Expected brightness percentage if applicable
+            pre_state: State before execution for comparison
+            
+        Returns:
+            True if verification passed, False if there's a mismatch
+        """
+        import asyncio
+        
+        # Wait a short time for state to update
+        await asyncio.sleep(0.1)
+        
+        state = self.hass.states.get(entity_id)
+        if not state:
+            _LOGGER.warning("[IntentExecutor] Verification: entity %s not found", entity_id)
+            return False
+        
+        verified = True
+        
+        # Check on/off state
+        if expected_state:
+            if state.state.lower() != expected_state.lower():
+                _LOGGER.warning(
+                    "[IntentExecutor] Verification FAILED for %s: expected state '%s', got '%s'",
+                    entity_id, expected_state, state.state
+                )
+                verified = False
+        
+        # Check brightness
+        if expected_brightness is not None:
+            cur_255 = state.attributes.get("brightness") or 0
+            cur_pct = int((cur_255 / 255.0) * 100)
+            # Allow 5% tolerance for brightness
+            if abs(cur_pct - expected_brightness) > 5:
+                _LOGGER.warning(
+                    "[IntentExecutor] Verification FAILED for %s: expected brightness %d%%, got %d%%",
+                    entity_id, expected_brightness, cur_pct
+                )
+                verified = False
+        
+        if verified:
+            _LOGGER.debug("[IntentExecutor] Verification passed for %s", entity_id)
+        
+        return verified

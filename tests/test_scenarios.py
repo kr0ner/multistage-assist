@@ -1063,3 +1063,7 @@ async def test_scenario_temporary_control_calls_timebox(agent, hass):
         assert call_data["action"] == "on", f"Expected action='on', got: {call_data}"
         assert call_data["minutes"] == 3, f"Expected minutes=3, got: {call_data}"
         assert "buro" in call_data["target_entity"].lower() or "büro" in call_data["target_entity"].lower()
+        
+        # Verify scene_id is passed and lowercase (for HA slug validation)
+        assert "scene_id" in call_data, f"Expected scene_id in call_data, got: {call_data}"
+        assert call_data["scene_id"].islower(), f"scene_id should be lowercase, got: {call_data['scene_id']}"

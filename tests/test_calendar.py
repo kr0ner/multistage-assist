@@ -271,6 +271,30 @@ class TestCalendarCapability:
         assert result["start_date"] == day_after
     
     @pytest.mark.asyncio
+    async def test_resolve_relative_dates_in_x_tagen(self, calendar_capability):
+        """Test that 'in X Tagen' resolves correctly."""
+        from datetime import datetime, timedelta
+        target = (datetime.now() + timedelta(days=37)).strftime("%Y-%m-%d")
+        
+        result = calendar_capability._resolve_relative_dates({"start_date": "in 37 Tagen"})
+        assert result["start_date"] == target
+        
+        # Also test "X Tage" without "in"
+        result2 = calendar_capability._resolve_relative_dates({"start_date": "37 Tage"})
+        assert result2["start_date"] == target
+    
+    @pytest.mark.asyncio
+    async def test_resolve_relative_dates_x_tage_with_time(self, calendar_capability):
+        """Test that 'X Tage HH:MM' datetime resolves correctly."""
+        from datetime import datetime, timedelta
+        target_date = (datetime.now() + timedelta(days=37)).strftime("%Y-%m-%d")
+        
+        result = calendar_capability._resolve_relative_dates({
+            "start_date_time": "37 Tage 16:01"
+        })
+        assert result["start_date_time"] == f"{target_date} 16:01"
+    
+    @pytest.mark.asyncio
     async def test_resolve_relative_dates_preserves_valid(self, calendar_capability):
         """Test that already valid dates are preserved."""
         result = calendar_capability._resolve_relative_dates({"start_date": "2023-12-25"})

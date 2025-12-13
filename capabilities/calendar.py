@@ -82,8 +82,13 @@ Examples:
             event_data["summary"] = slots["summary"]
         if slots.get("location"):
             event_data["location"] = slots["location"]
-        if slots.get("calendar"):
-            event_data["calendar_id"] = slots["calendar"]
+        
+        # Only use calendar slot if it's a valid entity_id (not "default" or similar)
+        slot_calendar = slots.get("calendar", "")
+        if slot_calendar and slot_calendar.startswith("calendar."):
+            # Verify this calendar entity actually exists
+            if self.hass.states.get(slot_calendar):
+                event_data["calendar_id"] = slot_calendar
         
         # Handle date/time combination from slots
         slot_date = slots.get("date", "")  # e.g., "morgen"
@@ -375,6 +380,20 @@ Examples:
             except ValueError:
                 pass
             
+            # Check for "in X Tagen" pattern (e.g., "in 37 Tagen")
+            days_match = re.search(r'in\s+(\d+)\s*tage?n?', val_lower)
+            if days_match:
+                days = int(days_match.group(1))
+                target = today + timedelta(days=days)
+                return target.strftime("%Y-%m-%d")
+            
+            # Check for just "X Tage" pattern (e.g., "37 Tage" or "37 Tage 16:01")
+            days_match = re.search(r'^(\d+)\s*tage?n?\b', val_lower)
+            if days_match:
+                days = int(days_match.group(1))
+                target = today + timedelta(days=days)
+                return target.strftime("%Y-%m-%d")
+            
             # Check relative days (list of tuples, longest first)
             for term, days in relative_days:
                 if term in val_lower:
@@ -576,9 +595,16 @@ Examples:
         return "\n".join(lines)
     
     def _get_calendar_entities(self) -> List[Dict[str, str]]:
-        """Get all calendar entities from Home Assistant."""
+        """Get all calendar entities exposed to the conversation/assist integration."""
+        from homeassistant.components.homeassistant.exposed_entities import async_should_expose
+        
+        CONVERSATION_DOMAIN = "conversation"
         calendars = []
         for entity_id in self.hass.states.async_entity_ids("calendar"):
+            # Only include calendars exposed to conversation/assist
+            if not async_should_expose(self.hass, CONVERSATION_DOMAIN, entity_id):
+                continue
+            
             state = self.hass.states.get(entity_id)
             if state:
                 friendly_name = state.attributes.get("friendly_name", entity_id)

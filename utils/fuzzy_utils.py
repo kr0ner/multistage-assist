@@ -120,3 +120,28 @@ async def fuzzy_match_all(
         threshold,
     )
     return matches
+
+
+def fuzzy_match(query: str, candidate: str) -> int:
+    """Simple synchronous fuzzy match returning score 0-100.
+    
+    Uses difflib as fallback if rapidfuzz is not loaded yet.
+    
+    Args:
+        query: First string
+        candidate: Second string
+        
+    Returns:
+        Match score 0-100
+    """
+    if not query or not candidate:
+        return 0
+    
+    # Try rapidfuzz if already loaded
+    global _fuzz
+    if _fuzz is not None:
+        return int(_fuzz.ratio(query.lower(), candidate.lower()))
+    
+    # Fallback to difflib
+    from difflib import SequenceMatcher
+    return int(SequenceMatcher(None, query.lower(), candidate.lower()).ratio() * 100)

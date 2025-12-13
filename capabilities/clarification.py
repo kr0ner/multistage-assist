@@ -17,7 +17,11 @@ Task: Split the input into precise atomic German commands.
 CRITICAL RULES:
 1. **ALWAYS** split compound commands with "und" into separate array elements.
 2. Each action must be its own string in the output array.
-3. "Zu dunkel" -> "Mache Licht heller". "Zu hell" -> "Mache Licht dunkler".
+3. **IMPLICIT BRIGHTNESS/TEMPERATURE RULES** (VERY IMPORTANT):
+   - "Zu dunkel" / "es ist dunkel" → "Mache Licht heller" (increase brightness)
+   - "Zu hell" / "es ist hell" → "Mache Licht dunkler" (decrease brightness)
+   - "Zu kalt" → "Mache Heizung wärmer" / "Stelle Heizung höher"
+   - "Zu warm" → "Mache Heizung kälter" / "Stelle Heizung niedriger"
 4. Use specific device names if given.
 5. **PRESERVE** time/duration constraints (e.g., "für 5 Minuten", "für 1 Stunde").
 6. **SPLIT** opposite actions (an/aus, auf/zu, heller/dunkler) in different locations into separate commands.
@@ -33,6 +37,12 @@ Output: ["Schalte Licht im Bad an", "Fahre Rollo runter"]
 
 Input: "Im Büro ist es zu dunkel"
 Output: ["Mache das Licht im Büro heller"]
+
+Input: "Zu hell hier"
+Output: ["Mache das Licht dunkler"]
+
+Input: "Es ist zu hell im Wohnzimmer"
+Output: ["Mache das Licht im Wohnzimmer dunkler"]
 
 Input: "Schalte das Licht für 10 Minuten an"
 Output: ["Schalte das Licht für 10 Minuten an"]
@@ -62,10 +72,14 @@ Output: ["Stelle die Heizung im Wohnzimmer auf 22 Grad", "Stelle die Heizung im 
         text_lower = f" {text.lower()} "  # Add spaces for word boundary matching
         has_separator = any(sep in text_lower for sep in separators)
 
-        # For very short commands without separators, bypass LLM
+        # Implicit phrases that ALWAYS need LLM transformation
+        implicit_phrases = ["zu dunkel", "zu hell", "zu kalt", "zu warm", "zu laut", "zu leise"]
+        needs_rephrasing = any(phrase in text_lower for phrase in implicit_phrases)
+
+        # For very short commands without separators AND no implicit phrases, bypass LLM
         # Conservative threshold to avoid breaking complex rephrasing
         word_count = len(text.split())
-        is_very_simple = word_count <= 5 and not has_separator
+        is_very_simple = word_count <= 5 and not has_separator and not needs_rephrasing
 
         if is_very_simple:
             _LOGGER.debug(

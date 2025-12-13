@@ -12,6 +12,7 @@ from custom_components.multistage_assist.conversation_utils import (
     MEDIA_KEYWORDS,
     TIMER_KEYWORDS,
     VACUUM_KEYWORDS,
+    CALENDAR_KEYWORDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ class KeywordIntentCapability(Capability):
         "climate": list(CLIMATE_KEYWORDS.values()) + list(CLIMATE_KEYWORDS.keys()),
         "timer": TIMER_KEYWORDS,
         "vacuum": VACUUM_KEYWORDS,
+        "calendar": CALENDAR_KEYWORDS,
     }
 
     # Common rule for temp control
@@ -108,6 +110,10 @@ class KeywordIntentCapability(Capability):
             "intents": ["HassVacuumStart"],
             "rules": "- 'mode': 'mop' if wischen/nass else 'vacuum'.\n- 'area': Room name.\n- 'floor': Floor name.\n- 'scope': 'GLOBAL' if whole house.",
         },
+        "calendar": {
+            "intents": ["HassCalendarCreate", "HassCreateEvent"],
+            "rules": "- 'summary': Event title/name.\n- 'date': Date of event.\n- 'time': Time of event.\n- 'location': Event location.\n- 'calendar': Calendar name.",
+        },
     }
 
     SCHEMA = {
@@ -130,6 +136,8 @@ class KeywordIntentCapability(Capability):
             return "timer"
         if "vacuum" in matches:
             return "vacuum"
+        if "calendar" in matches:
+            return "calendar"
         if matches:
             return matches[0]
         return None

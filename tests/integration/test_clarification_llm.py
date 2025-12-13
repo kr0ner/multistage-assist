@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 from homeassistant.components import conversation
 
 from multistage_assist.capabilities.clarification import ClarificationCapability
+from tests.integration import get_llm_config
 
 
 pytestmark = pytest.mark.integration  # Mark all tests as integration tests
@@ -19,12 +20,7 @@ def hass():
 @pytest.fixture
 def clarification_capability(hass):
     """Create clarification capability instance with real LLM."""
-    config = {
-        "stage1_ip": "127.0.0.1",  # Real LLM server
-        "stage1_port": 11434,
-        "stage1_model": "qwen3:4b-instruct",
-    }
-    return ClarificationCapability(hass, config)
+    return ClarificationCapability(hass, get_llm_config())
 
 
 def make_input(text: str):

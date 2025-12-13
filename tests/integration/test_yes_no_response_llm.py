@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 from homeassistant.components import conversation
 
 from multistage_assist.capabilities.yes_no_response import YesNoResponseCapability
+from tests.integration import get_llm_config
 
 
 pytestmark = pytest.mark.integration
@@ -29,12 +30,7 @@ def hass():
 @pytest.fixture
 def yes_no_capability(hass):
     """Create yes/no response capability with real LLM."""
-    config = {
-        "stage1_ip": "127.0.0.1",
-        "stage1_port": 11434,
-        "stage1_model": "qwen3:4b-instruct",
-    }
-    return YesNoResponseCapability(hass, config)
+    return YesNoResponseCapability(hass, get_llm_config())
 
 
 def make_input(text: str):

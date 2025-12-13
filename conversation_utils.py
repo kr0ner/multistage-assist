@@ -17,6 +17,7 @@ from .constants.entity_keywords import (
     CLIMATE_KEYWORDS,
     VACUUM_KEYWORDS,
     TIMER_KEYWORDS,
+    CALENDAR_KEYWORDS,
     OTHER_ENTITY_PLURALS,
     ENTITY_PLURALS as _ENTITY_PLURALS,
 )

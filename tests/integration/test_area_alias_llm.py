@@ -1,30 +1,67 @@
 """Integration tests for AreaAliasCapability with real LLM."""
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from homeassistant.components import conversation
 
 from multistage_assist.capabilities.area_alias import AreaAliasCapability
+from tests.integration import get_llm_config
 
 
 pytestmark = pytest.mark.integration
 
 
+# Test candidates that will be mocked in the registry
+TEST_AREAS = ["Badezimmer", "Küche", "Wohnzimmer", "Untergeschoss", "Erdgeschoss", 
+              "Obergeschoss", "Flur EG", "Flur OG", "Flur UG"]
+TEST_FLOORS = ["Erdgeschoss", "Obergeschoss", "Untergeschoss"]
+
+
 @pytest.fixture
 def hass():
-    """Mock Home Assistant instance."""
-    return MagicMock()
+    """Mock Home Assistant instance with area and floor registries."""
+    hass = MagicMock()
+    return hass
 
 
 @pytest.fixture
 def area_alias_capability(hass):
-    """Create area alias capability with real LLM."""
-    config = {
-        "stage1_ip": "127.0.0.1",
-        "stage1_port": 11434,
-        "stage1_model": "qwen3:4b-instruct",
-    }
-    return AreaAliasCapability(hass, config)
+    """Create area alias capability with real LLM and mocked registries."""
+    
+    # Create mock areas
+    mock_areas = []
+    for name in TEST_AREAS:
+        area = MagicMock()
+        area.name = name
+        mock_areas.append(area)
+    
+    # Create mock floors  
+    mock_floors = []
+    for name in TEST_FLOORS:
+        floor = MagicMock()
+        floor.name = name
+        mock_floors.append(floor)
+    
+    # Patch the registry functions
+    with patch("multistage_assist.capabilities.area_alias.ar") as mock_ar, \
+         patch("multistage_assist.capabilities.area_alias.fr") as mock_fr:
+        
+        mock_area_reg = MagicMock()
+        mock_area_reg.async_list_areas.return_value = mock_areas
+        mock_ar.async_get.return_value = mock_area_reg
+        
+        mock_floor_reg = MagicMock()
+        mock_floor_reg.async_list_floors.return_value = mock_floors
+        mock_fr.async_get.return_value = mock_floor_reg
+        
+        capability = AreaAliasCapability(hass, get_llm_config())
+        # Store patched registries so they persist
+        capability._mock_ar = mock_ar
+        capability._mock_fr = mock_fr
+        capability._mock_area_reg = mock_area_reg
+        capability._mock_floor_reg = mock_floor_reg
+        
+        yield capability
 
 
 def make_input(text: str):

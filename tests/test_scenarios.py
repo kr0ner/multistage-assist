@@ -69,10 +69,12 @@ def patch_make_response():
 @pytest.fixture
 def agent(hass, config_entry):
     """Create the agent with real stages and local Ollama."""
-    # Update config entry to use local Ollama
-    config_entry.data["stage1_ip"] = "localhost"
-    config_entry.data["stage1_port"] = 11434
-    config_entry.data["stage1_model"] = "qwen3:4b-instruct"
+    # Update config entry to use Ollama from environment
+    from tests.integration import get_llm_config
+    llm_config = get_llm_config()
+    config_entry.data["stage1_ip"] = llm_config["stage1_ip"]
+    config_entry.data["stage1_port"] = llm_config["stage1_port"]
+    config_entry.data["stage1_model"] = llm_config["stage1_model"]
 
     agent = MultiStageAssistAgent(hass, config_entry.data)
 
@@ -735,11 +737,12 @@ async def test_scenario_brightness_too_dark(agent, hass):
 async def test_scenario_brightness_too_bright(agent, hass):
     """
     Scenario 13: Brightness Adjustment - Too Bright
-    Input: "Im Büro ist es zu hell"
-    Log: Clarification -> "Mache das Licht im Büro dunkler" -> HassLightSet with step_down
+    Input: "Im Hauswirtschaftsraum ist es zu hell"
+    Log: Clarification -> "Mache das Licht im Hauswirtschaftsraum dunkler" -> HassLightSet with step_down
+    Note: Using Hauswirtschaftsraum because it has only one light entity (no disambiguation needed)
     """
     user_input = conversation.ConversationInput(
-        text="Im Büro ist es zu hell",
+        text="Im Hauswirtschaftsraum ist es zu hell",
         context=MagicMock(),
         conversation_id="test_id_13",
         device_id="test_device",
@@ -759,7 +762,7 @@ async def test_scenario_brightness_too_bright(agent, hass):
         speech = result.response.speech["plain"]["speech"]
         print(f"DEBUG: Speech: {speech}")
         # Should confirm brightness adjustment
-        assert "büro" in speech.lower()
+        assert "hauswirtschaftsraum" in speech.lower()
         # Should have executed HassLightSet
         assert mock_async_handle.called
         # Brightness step adjustments - complex to verify without full state tracking

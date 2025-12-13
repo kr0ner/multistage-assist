@@ -628,13 +628,14 @@ def hass():
 @pytest.fixture
 def config_entry():
     """Mock Config Entry."""
+    import os
     entry = MagicMock(spec=ConfigEntry)
     entry.entry_id = "test_entry_id"
     entry.domain = "multistage_assist"
     entry.data = {
-        "stage1_ip": "127.0.0.1",
-        "stage1_port": 5000,
-        "stage1_model": "test_model",
+        "stage1_ip": os.environ.get("OLLAMA_HOST", "127.0.0.1"),
+        "stage1_port": int(os.environ.get("OLLAMA_PORT", "11434")),
+        "stage1_model": os.environ.get("OLLAMA_MODEL", "qwen3:4b-instruct"),
         "google_api_key": "test_key",
         "stage2_model": "gemini-test",
     }

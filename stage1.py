@@ -19,6 +19,7 @@ from .capabilities.intent_resolution import IntentResolutionCapability
 from .capabilities.timer import TimerCapability
 from .capabilities.command_processor import CommandProcessorCapability
 from .capabilities.vacuum import VacuumCapability
+from .capabilities.calendar import CalendarCapability
 
 from .conversation_utils import (
     make_response,
@@ -50,7 +51,8 @@ class Stage1Processor(BaseStage):
         TimerCapability,
         CommandProcessorCapability,
         VacuumCapability,
-        YesNoResponseCapability,  # Added YesNoResponseCapability
+        YesNoResponseCapability,
+        CalendarCapability,  # Added CalendarCapability
     ]
 
     def __init__(self, hass, config):
@@ -139,6 +141,12 @@ class Stage1Processor(BaseStage):
         if ptype == "timer":
             timer = self.get("timer")
             res = await timer.continue_flow(user_input, pending)
+            return self._handle_processor_result(key, res)
+
+        # Calendar Follow-up
+        if ptype == "calendar":
+            calendar = self.get("calendar")
+            res = await calendar.continue_flow(user_input, pending)
             return self._handle_processor_result(key, res)
 
         # Learning Confirmation
@@ -238,6 +246,16 @@ class Stage1Processor(BaseStage):
                 if intent_name == "HassVacuumStart":
                     return await self.get("vacuum").run(user_input, intent_name, slots)
                 # ------------------------
+
+                # --- CALENDAR INTERCEPT ---
+                if intent_name in ("HassCalendarCreate", "HassCreateEvent", "HassCalendarAdd"):
+                    res = await self.get("calendar").run(user_input, intent_name, slots)
+                    return self._handle_processor_result(
+                        getattr(user_input, "session_id", None)
+                        or user_input.conversation_id,
+                        res,
+                    )
+                # --------------------------
 
                 # --- TEMPORARY CONTROL INTERCEPT ---
                 # HassTemporaryControl needs resolution then passes to command_processor

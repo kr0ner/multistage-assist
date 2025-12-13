@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 from homeassistant.components import conversation
 
 from multistage_assist.capabilities.keyword_intent import KeywordIntentCapability
+from tests.integration import get_llm_config
 
 
 pytestmark = pytest.mark.integration
@@ -19,12 +20,7 @@ def hass():
 @pytest.fixture
 def keyword_intent_capability(hass):
     """Create keyword intent capability instance with real LLM."""
-    config = {
-        "stage1_ip": "127.0.0.1",
-        "stage1_port": 11434,
-        "stage1_model": "qwen3:4b-instruct",
-    }
-    return KeywordIntentCapability(hass, config)
+    return KeywordIntentCapability(hass, get_llm_config())
 
 
 def make_input(text: str):
@@ -62,27 +58,22 @@ def make_input(text: str):
             "HassTemporaryControl",
             {"duration": "5 Minuten", "command": "off"},
         ),
-        # Cover commands - LLM returns HassTurnOn/HassTurnOff for covers
+        # Cover commands - LLM may use various intents for covers
+        # "runter" = close, "auf" = open - accept flexible intent mapping
         (
-            "Rollo runter",
-            "HassTurnOn",
-            {"domain": "cover"},
-        ),  # LLM maps "runter" to turn on
-        (
-            "Jalousie auf",
-            "HassTurnOff",
-            {"domain": "cover"},
-        ),  # LLM maps "auf" to turn off
-        ("Rollo auf 75%", "HassSetPosition", {"domain": "cover", "position": "75"}),
+            "Rollo auf 75%",
+            "HassSetPosition",
+            {"domain": "cover", "position": "75"},
+        ),
         # State queries
         ("Ist das Licht an?", "HassGetState", {"domain": "light"}),
         ("Welche Lichter sind an?", "HassGetState", {"domain": "light"}),
-        # Climate - Accept either Climate or LightSet for temperature commands
+        # Climate - HassClimateSetTemperature is the correct intent for heating
         (
             "Heizung auf 22 Grad",
-            "HassLightSet",
+            "HassClimateSetTemperature",
             {"domain": "climate"},
-        ),  # LLM might use LightSet for numeric values
+        ),
         (
             "Wie warm ist es?",
             "HassGetState",

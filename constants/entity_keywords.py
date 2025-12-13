@@ -85,6 +85,17 @@ TIMER_KEYWORDS: List[str] = [
     "stoppuhr",
 ]
 
+CALENDAR_KEYWORDS: List[str] = [
+    "kalender",
+    "termin",
+    "termine",
+    "ereignis",
+    "event",
+    "veranstaltung",
+    "eintrag",
+    "kalendereintrag",
+]
+
 OTHER_ENTITY_PLURALS: Dict[str, str] = {
     "das fenster": "die fenster",
     "tür": "türen",

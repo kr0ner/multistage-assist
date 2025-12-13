@@ -13,6 +13,7 @@ from custom_components.multistage_assist.conversation_utils import (
     TIMER_KEYWORDS,
     VACUUM_KEYWORDS,
     CALENDAR_KEYWORDS,
+    AUTOMATION_KEYWORDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ class KeywordIntentCapability(Capability):
         "timer": TIMER_KEYWORDS,
         "vacuum": VACUUM_KEYWORDS,
         "calendar": CALENDAR_KEYWORDS,
+        "automation": AUTOMATION_KEYWORDS,
     }
 
     # Common rule for temp control
@@ -122,6 +124,16 @@ EXAMPLES:
         "calendar": {
             "intents": ["HassCalendarCreate", "HassCreateEvent"],
             "rules": "- 'summary': Event title/name.\n- 'date': Date of event.\n- 'time': Time of event.\n- 'location': Event location.\n- 'calendar': Calendar name.",
+        },
+        "automation": {
+            "intents": [
+                "HassTurnOn",
+                "HassTurnOff",
+                "HassTemporaryControl",
+            ],
+            "rules": """- 'name': The automation/doorbell name (e.g. "Türklingel", "Doorbell").
+- If DURATION specified, use HassTemporaryControl with 'duration' and 'command' slots.
+""" + _TEMP_RULE,
         },
     }
 

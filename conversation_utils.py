@@ -18,6 +18,7 @@ from .constants.entity_keywords import (
     VACUUM_KEYWORDS,
     TIMER_KEYWORDS,
     CALENDAR_KEYWORDS,
+    AUTOMATION_KEYWORDS,
     OTHER_ENTITY_PLURALS,
     ENTITY_PLURALS as _ENTITY_PLURALS,
 )

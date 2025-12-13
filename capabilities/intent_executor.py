@@ -115,29 +115,18 @@ class IntentExecutorCapability(Capability):
                     requested_state,
                 )
 
-                # Try yes/no response capability
-                yes_no_cap = self.get("yes_no_response")
-                if yes_no_cap:
-                    response_text = await yes_no_cap.run(
-                        user_input,
-                        domain=params.get("domain", ""),
-                        state=requested_state,
-                        entity_ids=valid_ids,
-                    )
-
-                    if response_text:
-                        # Yes/no question detected - return boolean answer
-                        resp = ha_intent.IntentResponse(language=language)
-                        resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
-                        resp.async_set_speech(response_text)
-                        return {"result": resp}
-
-                # Not a yes/no question or no capability - check if empty
+                # If filtering results in empty list, report that
                 if not valid_ids:
                     resp = ha_intent.IntentResponse(language=language)
                     resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
-                    resp.async_set_speech("Es gibt keine passenden Geräte.")
-                    return {"result": resp}
+                    resp.async_set_speech(f"Keine Geräte sind {requested_state}.")
+                    return {
+                        "result": ConversationResult(
+                            response=resp,
+                            conversation_id=user_input.conversation_id,
+                            continue_conversation=False,
+                        )
+                    }
 
         results: List[tuple[str, ha_intent.IntentResponse]] = []
         final_executed_params = params.copy()
@@ -291,13 +280,13 @@ class IntentExecutorCapability(Capability):
         if not results:
             return {}
 
-        # If ALL timebox calls failed, return error
+        # If ALL timebox calls failed, return error message (but as ACTION_DONE to avoid error_code requirement)
         if timebox_failures and len(timebox_failures) == len(valid_ids):
             _LOGGER.error(
                 "[IntentExecutor] All timebox calls failed for: %s", timebox_failures
             )
             resp = ha_intent.IntentResponse(language=language)
-            resp.response_type = ha_intent.IntentResponseType.ERROR
+            resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
             resp.async_set_speech("Fehler beim Ausführen der zeitlichen Steuerung.")
             return {
                 "result": ConversationResult(

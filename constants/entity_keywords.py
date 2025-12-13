@@ -96,6 +96,16 @@ CALENDAR_KEYWORDS: List[str] = [
     "kalendereintrag",
 ]
 
+AUTOMATION_KEYWORDS: List[str] = [
+    "klingel",
+    "türklingel",
+    "doorbell",
+    "benachrichtigung",
+    "alarm",
+    "automation",
+    "automatisierung",
+]
+
 OTHER_ENTITY_PLURALS: Dict[str, str] = {
     "das fenster": "die fenster",
     "tür": "türen",

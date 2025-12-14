@@ -94,32 +94,21 @@ def with_new_text(
 
 
 def join_names(names: List[str]) -> str:
-    if not names:
-        return ""
-    if len(names) == 1:
-        return names[0]
-    return f"{', '.join(names[:-1])} und {names[-1]}"
+    """Format list of names with German 'und' conjunction.
+    
+    This is a backward-compatible wrapper around response_builder.
+    """
+    from .utils.response_builder import join_names as _join_names
+    return _join_names(names)
 
 
 def normalize_speech_for_tts(text: str) -> str:
-    if not text:
-        return ""
-    text = re.sub(r"(\d+)\.(\d+)", r"\1,\2", text)
-    replacements = {
-        "°C": " Grad Celsius",
-        "°": " Grad",
-        "%": " Prozent",
-        "kWh": " Kilowattstunden",
-        "kW": " Kilowatt",
-        "W": " Watt",
-        "V": " Volt",
-        "A": " Ampere",
-        "lx": " Lux",
-        "lm": " Lumen",
-    }
-    for sym, spoken in replacements.items():
-        text = re.sub(rf"{re.escape(sym)}(?=$|\s|[.,!?])", spoken, text)
-    return text.strip()
+    """Normalize text for text-to-speech output.
+    
+    This is a backward-compatible wrapper around response_builder.
+    """
+    from .utils.response_builder import normalize_for_tts
+    return normalize_for_tts(text)
 
 
 def format_chat_history(history: List[Dict[str, str]], max_words: int = 500) -> str:

@@ -178,13 +178,13 @@ class MultiTurnCapability(Capability):
     
     def _is_affirmative(self, text: str) -> bool:
         """Check if text is an affirmative response."""
-        words = text.lower().split()
-        return any(word in self.AFFIRMATIVE for word in words)
+        from ..utils.german_utils import is_affirmative
+        return is_affirmative(text)
     
     def _is_negative(self, text: str) -> bool:
         """Check if text is a negative response."""
-        words = text.lower().split()
-        return any(word in self.NEGATIVE for word in words)
+        from ..utils.german_utils import is_negative
+        return is_negative(text)
     
     # --- Subclass must implement these ---
     

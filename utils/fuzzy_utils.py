@@ -147,9 +147,8 @@ def fuzzy_match(query: str, candidate: str) -> int:
     return int(SequenceMatcher(None, query.lower(), candidate.lower()).ratio() * 100)
 
 
-# German articles and prepositions to remove for fuzzy matching
-GERMAN_ARTICLES = {"der", "die", "das", "den", "dem", "ein", "eine", "einen", "einem", "einer"}
-GERMAN_PREPOSITIONS = {"im", "in", "auf", "unter", "über", "an", "am", "bei", "zum", "zur", "vom", "von"}
+# Re-export from german_utils for backward compatibility
+from .german_utils import GERMAN_ARTICLES, GERMAN_PREPOSITIONS, remove_articles_and_prepositions
 
 
 def normalize_for_fuzzy(text: str) -> str:
@@ -170,9 +169,7 @@ def normalize_for_fuzzy(text: str) -> str:
     if not text:
         return ""
     
-    words = text.lower().split()
-    filtered = [w for w in words if w not in GERMAN_ARTICLES and w not in GERMAN_PREPOSITIONS]
-    return " ".join(filtered).strip()
+    return remove_articles_and_prepositions(text).lower()
 
 
 async def fuzzy_match_candidates(

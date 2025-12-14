@@ -434,100 +434,52 @@ Examples:
     
     def _resolve_relative_dates(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
         """Resolve relative date terms to actual dates."""
-        today = datetime.now()
-        
-        relative_days = [
-            ("übermorgen", 2),
-            ("morgen", 1),
-            ("heute", 0),
-        ]
-        
-        weekdays = {
-            "montag": 0, "dienstag": 1, "mittwoch": 2, "donnerstag": 3,
-            "freitag": 4, "samstag": 5, "sonntag": 6,
-        }
-        
-        def resolve_date(value: str) -> str:
-            """Resolve a single date value to YYYY-MM-DD format."""
-            if not value:
-                return value
-            
-            # Already in correct format
-            if re.match(r'^\d{4}-\d{2}-\d{2}$', value):
-                return value
-            
-            value_lower = value.lower().strip()
-            
-            # Check relative days
-            for term, days_offset in relative_days:
-                if term in value_lower:
-                    target = today + timedelta(days=days_offset)
-                    return target.strftime("%Y-%m-%d")
-            
-            # Check "in X Tagen" pattern
-            match = re.match(r'in\s+(\d+)\s+tag', value_lower)
-            if match:
-                days = int(match.group(1))
-                target = today + timedelta(days=days)
-                return target.strftime("%Y-%m-%d")
-            
-            # Check "X Tage" pattern (without "in")
-            match = re.match(r'(\d+)\s+tag', value_lower)
-            if match:
-                days = int(match.group(1))
-                target = today + timedelta(days=days)
-                return target.strftime("%Y-%m-%d")
-            
-            # Check weekdays
-            for day_name, day_num in weekdays.items():
-                if day_name in value_lower or f"nächsten {day_name}" in value_lower:
-                    days_ahead = day_num - today.weekday()
-                    if days_ahead <= 0:
-                        days_ahead += 7
-                    target = today + timedelta(days=days_ahead)
-                    return target.strftime("%Y-%m-%d")
-            
-            return value
+        from ..utils.german_utils import resolve_relative_date_str
         
         def resolve_datetime(value: str) -> str:
             """Resolve a datetime value, preserving time if present."""
             if not value:
                 return value
             
+            # Already in correct format
             if re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$', value):
                 return value
             
+            # Try to split date and time parts
             parts = value.split(' ')
             if len(parts) >= 2:
                 time_part = parts[-1]
                 date_part = ' '.join(parts[:-1])
                 
+                # Check if last part looks like a time (H:MM or HH:MM)
                 if re.match(r'\d{1,2}:\d{2}', time_part):
-                    resolved_date = resolve_date(date_part)
+                    resolved_date = resolve_relative_date_str(date_part)
                     if re.match(r'^\d{4}-\d{2}-\d{2}$', resolved_date):
+                        # Pad time if needed
                         if len(time_part) == 4:
                             time_part = "0" + time_part
                         return f"{resolved_date} {time_part}"
             
-            resolved = resolve_date(value)
+            # No time part - resolve date and add default time
+            resolved = resolve_relative_date_str(value)
             if resolved != value:
                 return f"{resolved} 12:00"
             
             return value
         
-        # Resolve start_date
+        # Resolve start_date (date only)
         if event_data.get("start_date"):
-            event_data["start_date"] = resolve_date(event_data["start_date"])
+            event_data["start_date"] = resolve_relative_date_str(event_data["start_date"])
         
-        # Resolve end_date
+        # Resolve end_date (date only)
         if event_data.get("end_date"):
-            event_data["end_date"] = resolve_date(event_data["end_date"])
+            event_data["end_date"] = resolve_relative_date_str(event_data["end_date"])
         
-        # Resolve start_date_time
+        # Resolve start_date_time (preserving time)
         if event_data.get("start_date_time"):
             event_data["start_date_time"] = resolve_datetime(event_data["start_date_time"])
         
-        # Resolve end_date_time
+        # Resolve end_date_time (preserving time)
         if event_data.get("end_date_time"):
             event_data["end_date_time"] = resolve_datetime(event_data["end_date_time"])
         

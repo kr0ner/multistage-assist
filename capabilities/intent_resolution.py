@@ -115,11 +115,12 @@ JSON: {"entity_id": <string or null>}
             )
 
         # --- 1. RECOVERY: Check for missed Area in raw text ---
-        # If no area/floor extracted, but text might contain one (e.g. "Kinderbad"), try to find it.
-        if not area_slot and not floor_slot:
+        # If no area/floor extracted AND no specific name given, scan text for area
+        # Skip this if name_slot is present - we'll resolve the entity by name directly
+        if not area_slot and not floor_slot and not name_slot:
             # Ask AreaAlias to scan the FULL text
             _LOGGER.debug(
-                "[IntentResolution] No area slot. Scanning full text for area..."
+                "[IntentResolution] No area/name slot. Scanning full text for area..."
             )
             mapped_area, is_new = await self._resolve_alias(
                 user_input, user_input.text, "area"

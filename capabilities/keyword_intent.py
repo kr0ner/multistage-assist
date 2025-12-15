@@ -122,7 +122,7 @@ class KeywordIntentCapability(Capability):
                 "HassTurnOff",
                 "HassTemporaryControl",
             ],
-            "rules": """- 'name': The automation/doorbell name (e.g. "Türklingel", "Doorbell").
+            "rules": """- 'name': The automation/device name.
 - If DURATION specified, use HassTemporaryControl with 'duration' and 'command' slots.
 """ + _TEMP_RULE,
         },

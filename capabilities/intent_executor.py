@@ -5,11 +5,13 @@ from homeassistant.helpers import intent as ha_intent
 from homeassistant.core import Context
 from homeassistant.components.conversation import ConversationResult
 
-from custom_components.multistage_assist.conversation_utils import (
+from ..conversation_utils import (
     join_names,
     normalize_speech_for_tts,
     parse_duration_string,
+    format_seconds_to_string,
 )
+from ..utils.response_builder import build_confirmation
 from .base import Capability
 
 _LOGGER = logging.getLogger(__name__)
@@ -288,6 +290,23 @@ class IntentExecutorCapability(Capability):
                     )
                     resp = ha_intent.IntentResponse(language=language)
                     resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
+                    
+                    # Generate confirmation speech
+                    state_obj = hass.states.get(eid)
+                    name = state_obj.attributes.get("friendly_name", eid) if state_obj else eid
+                    
+                    action_de = "an" if action == "on" else "aus"
+                    duration_str = current_params.get("duration")
+                    if not duration_str:
+                        duration_str = format_seconds_to_string(minutes * 60 + seconds)
+
+                    speech = build_confirmation(
+                        "HassTemporaryControl",
+                        [name],
+                        params={"duration_str": duration_str, "action": action_de}
+                    )
+                    resp.async_set_speech(speech)
+                    
                     results.append((eid, resp))
                     continue
                 else:
@@ -303,9 +322,25 @@ class IntentExecutorCapability(Capability):
                 if not success:
                     timebox_failures.append(eid)
 
-                # Create fake response
+                # Create response with speech
                 resp = ha_intent.IntentResponse(language=language)
                 resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
+                
+                state_obj = hass.states.get(eid)
+                name = state_obj.attributes.get("friendly_name", eid) if state_obj else eid
+                action_de = "an" if action == "on" else "aus"
+                
+                duration_str = current_params.get("duration")
+                if not duration_str:
+                    duration_str = format_seconds_to_string(minutes * 60 + seconds)
+
+                speech = build_confirmation(
+                    "HassTemporaryControl",
+                    [name],
+                    params={"duration_str": duration_str, "action": action_de}
+                )
+                resp.async_set_speech(speech)
+                
                 results.append((eid, resp))
                 continue
 

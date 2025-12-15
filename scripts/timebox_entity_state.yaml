@@ -25,11 +25,23 @@ sequence:
   - variables:
       # Use passed scene_id or fall back to lowercase context.id
       snapshot_id: "{{ scene_id | default('snapshot_' ~ context.id | lower) }}"
-  - action: scene.create
-    data:
-      scene_id: "{{ snapshot_id }}"
-      snapshot_entities:
-        - "{{ target_entity }}"
+      # Check if this is an automation (scenes don't work for automations)
+      is_automation: "{{ target_entity.startswith('automation.') }}"
+      # Save original state for automations
+      original_state: "{{ states(target_entity) }}"
+  
+  # For non-automations, create a scene snapshot
+  - if:
+      - condition: template
+        value_template: "{{ not is_automation }}"
+    then:
+      - action: scene.create
+        data:
+          scene_id: "{{ snapshot_id }}"
+          snapshot_entities:
+            - "{{ target_entity }}"
+  
+  # Apply the requested action
   - choose:
       # On/Off actions (HassTurnOn/HassTurnOff)
       - conditions:
@@ -83,10 +95,34 @@ sequence:
               entity_id: "{{ target_entity }}"
             data:
               temperature: "{{ value }}"
+  
+  # Wait for the specified duration
   - delay:
       minutes: "{{ minutes | default(0) }}"
       seconds: "{{ seconds | default(0) }}"
-  - action: scene.turn_on
-    target:
-      entity_id: "scene.{{ snapshot_id }}"
-description: ""
+  
+  # Restore original state
+  - choose:
+      # For automations, restore directly (scenes don't work)
+      - conditions:
+          - condition: template
+            value_template: "{{ is_automation }}"
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ original_state == 'on' }}"
+            then:
+              - action: automation.turn_on
+                target:
+                  entity_id: "{{ target_entity }}"
+            else:
+              - action: automation.turn_off
+                target:
+                  entity_id: "{{ target_entity }}"
+    # For other entities, use the scene
+    default:
+      - action: scene.turn_on
+        target:
+          entity_id: "scene.{{ snapshot_id }}"
+description: "Temporarily changes an entity state and restores it after a duration"
+

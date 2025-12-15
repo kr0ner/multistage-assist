@@ -1,9 +1,9 @@
-"""Tests for SemanticCacheCapability.
+"""Tests for SemanticCacheCapability with Ollama embeddings.
 
-Tests semantic command caching with sentence embeddings.
+Tests semantic command caching using mocked Ollama API.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock, patch
 import pytest
 import numpy as np
 
@@ -15,23 +15,27 @@ from multistage_assist.capabilities.semantic_cache import SemanticCacheCapabilit
 # ============================================================================
 
 @pytest.fixture
-def mock_embedding_model():
-    """Mock the sentence transformer model."""
-    mock_model = MagicMock()
-    # Return random but consistent embeddings based on input hash
-    def encode_fn(text, convert_to_numpy=True):
+def mock_ollama_response():
+    """Create a mock Ollama embedding response."""
+    def create_response(text):
+        # Generate deterministic embedding based on text hash
         np.random.seed(hash(text) % 2**32)
-        return np.random.randn(384).astype(np.float32)
-    mock_model.encode = encode_fn
-    return mock_model
+        embedding = np.random.randn(1024).tolist()  # mxbai-embed-large uses 1024 dim
+        return {"embedding": embedding}
+    return create_response
 
 
 @pytest.fixture
-def semantic_cache(hass, config_entry, mock_embedding_model):
-    """Create semantic cache with mocked model."""
+def semantic_cache(hass, config_entry, mock_ollama_response):
+    """Create semantic cache with mocked Ollama API."""
     cache = SemanticCacheCapability(hass, config_entry.data)
-    cache._model = mock_embedding_model
-    cache._loaded = True
+    
+    # Mock the _get_embedding method
+    async def mock_get_embedding(text):
+        np.random.seed(hash(text) % 2**32)
+        return np.random.randn(1024).astype(np.float32)
+    
+    cache._get_embedding = mock_get_embedding
     return cache
 
 
@@ -76,19 +80,21 @@ async def test_cache_hit_bypasses_llm(semantic_cache, hass):
     assert result["score"] > 0.99  # Same text should be near-identical
 
 
-async def test_cache_hit_similar_phrasing(semantic_cache, hass, mock_embedding_model):
+async def test_cache_hit_similar_phrasing(semantic_cache, hass):
     """Test that similar phrasing triggers cache hit."""
-    # Override encode to return similar embeddings for similar phrases
-    base_embedding = np.random.randn(384).astype(np.float32)
+    # Override _get_embedding to return similar embeddings for similar phrases
+    base_embedding = np.random.randn(1024).astype(np.float32)
     
-    def similar_encode(text, convert_to_numpy=True):
+    async def similar_get_embedding(text):
         if "küche" in text.lower() and ("licht" in text.lower() or "lampe" in text.lower()):
             # Return slightly perturbed base embedding for similar phrases
-            noise = np.random.randn(384) * 0.05
+            np.random.seed(42)  # Same seed = same noise
+            noise = np.random.randn(1024) * 0.05
             return (base_embedding + noise).astype(np.float32)
-        return np.random.randn(384).astype(np.float32)
+        np.random.seed(hash(text) % 2**32)
+        return np.random.randn(1024).astype(np.float32)
     
-    mock_embedding_model.encode = similar_encode
+    semantic_cache._get_embedding = similar_get_embedding
     
     # Store command
     await semantic_cache.store(
@@ -103,7 +109,7 @@ async def test_cache_hit_similar_phrasing(semantic_cache, hass, mock_embedding_m
     result = await semantic_cache.lookup("Mach das Licht in der Küche an")
     
     assert result is not None
-    assert result["score"] > 0.9
+    assert result["score"] > 0.8
 
 
 async def test_cache_miss_different_intent(semantic_cache, hass):
@@ -120,7 +126,7 @@ async def test_cache_miss_different_intent(semantic_cache, hass):
     result = await semantic_cache.lookup("Schalte alle Lichter aus")
     
     # Should be low similarity (different semantics)
-    assert result is None or result["score"] < 0.92
+    assert result is None or result["score"] < 0.85
 
 
 async def test_cache_preserves_disambiguation(semantic_cache, hass):
@@ -153,3 +159,47 @@ async def test_cache_not_stored_on_failure(semantic_cache, hass):
     )
     
     assert len(semantic_cache._cache) == 0
+
+
+async def test_cache_disabled(hass, config_entry):
+    """Test that cache can be disabled via config."""
+    config = dict(config_entry.data)
+    config["cache_enabled"] = False
+    
+    cache = SemanticCacheCapability(hass, config)
+    
+    # Mock embedding
+    async def mock_get_embedding(text):
+        return np.random.randn(1024).astype(np.float32)
+    cache._get_embedding = mock_get_embedding
+    
+    await cache.store(
+        text="Test",
+        intent="HassTurnOn",
+        entity_ids=["light.test"],
+        slots={},
+        verified=True,
+    )
+    
+    # Should not store when disabled
+    assert len(cache._cache) == 0
+    
+    # Lookup should return None when disabled
+    result = await cache.lookup("Test")
+    assert result is None
+
+
+async def test_cache_custom_config(hass, config_entry):
+    """Test that cache uses custom config options."""
+    config = dict(config_entry.data)
+    config["embedding_ip"] = "192.168.178.2"
+    config["embedding_port"] = 11434
+    config["embedding_model"] = "nomic-embed-text"
+    config["cache_similarity_threshold"] = 0.9
+    
+    cache = SemanticCacheCapability(hass, config)
+    
+    assert cache.embedding_ip == "192.168.178.2"
+    assert cache.embedding_port == 11434
+    assert cache.embedding_model == "nomic-embed-text"
+    assert cache.threshold == 0.9

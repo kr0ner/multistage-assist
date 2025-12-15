@@ -1,11 +1,19 @@
 {
     "domain": "multistage_assist",
     "name": "Multi-Stage Assist",
-    "version": "0.1.1",
+    "version": "0.2.0",
     "documentation": "https://github.com/kr0ner/multistage-assist",
-    "dependencies": ["conversation"],
-    "requirements": ["rapidfuzz==3.9.7","google-genai>=1.0.0","sentence-transformers>=2.2.0"],
-    "codeowners": ["@kr0ner"],
+    "dependencies": [
+        "conversation"
+    ],
+    "requirements": [
+        "rapidfuzz==3.9.7",
+        "google-genai>=1.0.0",
+        "aiohttp>=3.8.0"
+    ],
+    "codeowners": [
+        "@kr0ner"
+    ],
     "config_flow": true,
     "iot_class": "local_push"
 }

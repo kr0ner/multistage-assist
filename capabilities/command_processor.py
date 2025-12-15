@@ -123,10 +123,12 @@ class CommandProcessorCapability(Capability):
             pending_data.get("intent", ""),
             pending_data.get("params", {}),
             pending_data.get("learning_data"),
+            is_disambiguation_response=True,  # Mark as disambiguation follow-up
         )
 
     async def _execute_final(
-        self, user_input, entity_ids, intent_name, params, learning_data=None
+        self, user_input, entity_ids, intent_name, params, learning_data=None,
+        is_disambiguation_response: bool = False,
     ):
         exec_data = await self.executor.run(
             user_input, intent_name=intent_name, entity_ids=entity_ids, params=params
@@ -185,8 +187,9 @@ class CommandProcessorCapability(Capability):
                     intent=intent_name,
                     entity_ids=entity_ids,
                     slots=final_params,
-                    required_disambiguation=False,  # Will be set by disambiguation flow
+                    required_disambiguation=False,
                     verified=True,
+                    is_disambiguation_response=is_disambiguation_response,
                 )
             except Exception as e:
                 _LOGGER.warning("[CommandProcessor] Failed to cache command: %s", e)

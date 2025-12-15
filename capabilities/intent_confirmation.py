@@ -64,14 +64,15 @@ class IntentConfirmationCapability(Capability):
 
         # Build base rules
         base_rules = """1. **Identify the Device:** Use 'domains' + 'devices' (e.g. domain='light', name='Küche' -> "Das Licht in der Küche").
-2. **Be Specific:** Mention duration if available (e.g. "für 10 Minuten").
-3. **Use Present Tense:** - CORRECT: "Licht ist an.", "Licht ist für 5 Minuten an.", "Rollladen ist zu."
-   - WRONG: "Licht wurde angeschaltet.", "Rollladen wurde geschlossen.\""""
+2. **Duration:** ONLY mention duration if 'duration' is explicitly set in params. If duration is null or missing, do NOT mention any time.
+3. **Use Present Tense:** - CORRECT: "Licht ist an.", "Rollladen ist zu."
+   - WRONG: "Licht wurde angeschaltet.", "Rollladen wurde geschlossen."
+4. **NEVER INVENT:** Do not add information that is not in the params. If no duration is given, do not mention minutes or time."""
 
         # Add brightness guidance only for HassLightSet
         if intent_name == "HassLightSet":
             base_rules += """
-4. **Brightness Changes:** 
+5. **Brightness Changes:** 
    - If brightness increased: "Das Licht im [Raum] ist jetzt heller."
    - If brightness decreased: "Das Licht im [Raum] ist jetzt dunkler."
    - If specific percentage: "Das Licht im [Raum] ist auf [X]% gesetzt."

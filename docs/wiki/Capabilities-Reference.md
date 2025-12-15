@@ -16,9 +16,15 @@ Complete reference of all available capabilities in MultiStage Assist.
 - Uses Ollama embeddings (`mxbai-embed-large` recommended)
 - Cosine similarity matching (threshold: 0.85)
 - Stores only verified successful commands
-- Skips short disambiguation responses (< 3 words)
 - Preserves disambiguation context for re-prompting
 - LRU eviction (max 200 entries)
+
+**Skip Filters (commands NOT cached):**
+- Short texts (< 3 words) - likely disambiguation responses
+- Disambiguation follow-ups ("Küche", "Beide", "das erste")
+- Relative brightness commands (`step_up`/`step_down`) - depend on current state
+- Timer intents (`HassTimerSet`) - one-time events
+- Calendar intents (`HassCalendarCreate`) - unique events
 
 **Config Options:**
 - `embedding_ip`: Ollama host (defaults to stage1_ip)
@@ -34,6 +40,8 @@ Complete reference of all available capabilities in MultiStage Assist.
 [SemanticCache] Stored: 'Licht in der Küche an' -> HassTurnOn
 [SemanticCache] SKIP too short (2 words): 'Die Spots'
 [SemanticCache] SKIP disambig response: 'Küche'
+[SemanticCache] SKIP relative command (step_down): 'Mache das Licht dunkler'
+[SemanticCache] SKIP timer: 'Stelle einen Timer für 5 Minuten'
 ```
 
 ---

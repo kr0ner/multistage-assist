@@ -200,6 +200,62 @@ class Stage1Processor(BaseStage):
 
             return self._handle_processor_result(key, res)
 
+        # Area Clarification (entity not found, user provided area)
+        if ptype == "area_clarification":
+            area_text = user_input.text.strip()
+            intent_name = pending.get("intent")
+            domain = pending.get("domain")
+            original_name = pending.get("name")
+            slots = pending.get("slots", {})
+            
+            _LOGGER.debug(
+                "[Stage1] Processing area clarification: area='%s', intent='%s', domain='%s'",
+                area_text, intent_name, domain
+            )
+            
+            # Resolve the area using area_alias
+            area_alias_cap = self.get("area_alias")
+            areas = [a.name for a in self.hass.helpers.area_registry.async_get_registry().areas.values()]
+            alias_result = await area_alias_cap.run(
+                user_input, user_query=area_text, candidates=areas
+            )
+            
+            matched_area = alias_result.get("match") if alias_result else None
+            if not matched_area or matched_area == "GLOBAL":
+                matched_area = area_text  # Use raw input as fallback
+            
+            _LOGGER.debug("[Stage1] Area resolved to: '%s'", matched_area)
+            
+            # Now get all entities in that area for the domain
+            resolver = self.get("entity_resolver")
+            entity_ids = await resolver.run(
+                user_input,
+                domain=domain,
+                area=matched_area,
+            )
+            
+            if not entity_ids:
+                msg = f"Ich konnte keine {domain}-Geräte in '{matched_area}' finden."
+                return {
+                    "status": "handled",
+                    "result": await make_response(msg, user_input),
+                }
+            
+            # Update slots with the area
+            slots["area"] = matched_area
+            
+            # Process the command with resolved entities
+            processor = self.get("command_processor")
+            res = await processor.process(
+                user_input,
+                entity_ids,
+                intent_name,
+                {k: v for k, v in slots.items() if k not in ("name", "entity_id")},
+                # Offer to learn the alias if original name was unusual
+                {"type": "entity", "source": original_name, "target": entity_ids[0]} if len(entity_ids) == 1 else None,
+            )
+            return self._handle_processor_result(key, res)
+
         return {"status": "error", "result": await error_response(user_input)}
 
     async def _handle_new_command(self, user_input, prev_result) -> Dict[str, Any]:
@@ -359,19 +415,28 @@ class Stage1Processor(BaseStage):
                         )
                     # ------------------------------------
 
-                    # Pass ki_data to intent_resolution to avoid duplicate LLM call
                     res_data = await self.get("intent_resolution").run(user_input, ki_data=ki_data)
                     if not res_data:
-                        # If we have a name but no entity found, ask for area instead of escalating
+                        # If we have a name but no entity found, ask for area
+                        # Store pending state so follow-up is handled properly
                         name_slot = slots.get("name")
                         if name_slot and intent_name in ("HassTurnOn", "HassTurnOff", "HassLightSet", "HassSetPosition"):
                             _LOGGER.debug(
                                 "[Stage1] Entity not found for name '%s', asking for area", name_slot
                             )
-                            msg = f"Ich konnte '{name_slot}' nicht finden. In welchem Bereich ist es?"
+                            msg = f"Ich konnte '{name_slot}' nicht finden. In welchem Bereich ist das?"
+                            key = getattr(user_input, "session_id", None) or user_input.conversation_id
+                            self._pending[key] = {
+                                "type": "area_clarification",
+                                "intent": intent_name,
+                                "name": name_slot,
+                                "domain": domain,
+                                "slots": slots,
+                            }
                             return {
                                 "status": "handled",
                                 "result": await make_response(msg, user_input),
+                                "pending_data": self._pending[key],
                             }
                         return {"status": "escalate", "result": prev_result}
 

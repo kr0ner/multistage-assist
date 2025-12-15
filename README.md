@@ -121,6 +121,33 @@ The system is built on modular **Capabilities**:
 * [ ] **Refined Timer Learning:** Better flow for learning device nicknames during timer setting.
 * [ ] **Visual Feedback:** Add dashboard cards for active clarifications.
 
+## 🔧 Troubleshooting
+
+### Enable Debug Logging
+
+Add this to your `configuration.yaml`:
+
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.multistage_assist: debug
+```
+
+Restart Home Assistant to see detailed logs including:
+- `[Stage0]` / `[Stage1]` / `[Stage2]` - Pipeline flow
+- `[SemanticCache]` - Cache hits/misses/skips
+- `[IntentExecutor]` - Command execution
+- `[Clarification]` - Input parsing
+
+### Common Issues
+
+| Issue | Solution |
+|-------|----------|
+| "Ollama connection failed" | Check Ollama IP/port in settings, ensure model is pulled |
+| Cache returns wrong intent | Clear cache file in `.storage/multistage_assist_semantic_cache.json` |
+| LLM hallucinations | Upgrade Ollama model or reduce temperature |
+
 ## 📄 License
 
 This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.

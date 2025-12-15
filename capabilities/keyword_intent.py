@@ -169,8 +169,9 @@ Slots: area, name, domain, floor, device_class, duration, command, mode, scope, 
 Rules: {meta.get('rules', '')}
 
 IMPORTANT:
-- Only fill 'name' if a SPECIFIC device is named.
-- If generic words (Licht, Lampe), leave 'name' EMPTY.
+- Only fill 'name' if a SPECIFIC device is named (e.g., "Schreibtischlampe", "Deckenleuchte").
+- If generic words (Licht, Lampe, Rollo), leave 'name' EMPTY.
+- **IGNORE expletives/adjectives**: Words like "blöde", "dumm", "verdammte", "scheiß", "doofe" are NOT device names. "das blöde Licht" = just "Licht", so name is EMPTY.
 - For HassGetState: use 'state' slot for queries like "which lights are ON" → {{"state": "on"}}
 - **FLOOR vs AREA**: Use 'floor' slot for floor/level names (Erdgeschoss, Obergeschoss, Untergeschoss, Keller, EG, OG, UG, erster Stock, zweiter Stock). Use 'area' for rooms (Küche, Bad, Büro).
 """

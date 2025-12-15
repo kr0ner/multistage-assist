@@ -62,10 +62,18 @@ def get_entities_by_domain(
         # Filter by exposure
         if use_exposure:
             try:
-                if not async_should_expose(hass, "conversation", entity_id):
+                exposed = async_should_expose(hass, "conversation", entity_id)
+                if not exposed:
+                    _LOGGER.debug(
+                        "[ServiceDiscovery] Skipping %s (not exposed to conversation)",
+                        entity_id
+                    )
                     continue
-            except Exception:
-                pass  # Skip exposure check if it fails
+            except Exception as e:
+                _LOGGER.debug(
+                    "[ServiceDiscovery] Exposure check failed for %s: %s, including anyway",
+                    entity_id, e
+                )
         
         # Get state and attributes
         state = hass.states.get(entity_id)
@@ -79,8 +87,8 @@ def get_entities_by_domain(
             })
     
     _LOGGER.debug(
-        "[ServiceDiscovery] Found %d %s entities",
-        len(entities), domain
+        "[ServiceDiscovery] Found %d %s entities (check_exposure=%s)",
+        len(entities), domain, check_exposure
     )
     return entities
 

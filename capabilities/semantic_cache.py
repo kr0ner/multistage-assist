@@ -318,6 +318,22 @@ class SemanticCacheCapability(Capability):
             _LOGGER.debug("[SemanticCache] SKIP: calendar command")
             return
         
+        # Skip timer commands - they're one-time events
+        if intent in ("HassTimerSet", "HassStartTimer"):
+            _LOGGER.info("[SemanticCache] SKIP timer: '%s'", text[:40])
+            return
+        
+        # Skip relative commands - they depend on current state
+        # Light: step_up/step_down = relative brightness
+        # Cover: step_up/step_down = relative position
+        command = slots.get("command", "") if slots else ""
+        if command in ("step_up", "step_down"):
+            _LOGGER.info(
+                "[SemanticCache] SKIP relative command (%s): '%s'",
+                command, text[:40]
+            )
+            return
+        
         await self._load_cache()
         
         # Get embedding

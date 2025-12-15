@@ -63,8 +63,10 @@ class IntentExecutorCapability(Capability):
             data["action"] = action
 
         try:
+            # Fire-and-forget - don't wait for the script to complete
+            # (script waits for duration before reverting)
             await self.hass.services.async_call(
-                "script", "timebox_entity_state", data, blocking=True
+                "script", "timebox_entity_state", data, blocking=False
             )
             return True
         except Exception as e:

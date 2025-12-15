@@ -63,20 +63,19 @@ class IntentConfirmationCapability(Capability):
         )
 
         # Build base rules
-        base_rules = """1. **Identify the Device:** Use 'domains' + 'devices' (e.g. domain='light', name='Küche' -> "Das Licht in der Küche").
+        base_rules = """1. **Identify the Device:** Use the device names from 'devices' list directly. Don't substitute with area names.
 2. **Duration:** ONLY mention duration if 'duration' is explicitly set in params. If duration is null or missing, do NOT mention any time.
 3. **Use Present Tense:** - CORRECT: "Licht ist an.", "Rollladen ist zu."
    - WRONG: "Licht wurde angeschaltet.", "Rollladen wurde geschlossen."
-4. **NEVER INVENT:** Do not add information that is not in the params. If no duration is given, do not mention minutes or time."""
+4. **NEVER INVENT:** Do not add information that is not in the params."""
 
         # Add brightness guidance only for HassLightSet
         if intent_name == "HassLightSet":
             base_rules += """
-5. **Brightness Changes:** 
-   - If brightness increased: "Das Licht im [Raum] ist jetzt heller."
-   - If brightness decreased: "Das Licht im [Raum] ist jetzt dunkler."
-   - If specific percentage: "Das Licht im [Raum] ist auf [X]% gesetzt."
-   - Avoid technical phrases like "für 1 Schritt runter\""""
+5. **Brightness:** 
+   - If 'brightness' has a NUMBER: say "ist auf [X]% gesetzt."
+   - If 'command' is "step_up" that means "[Licht] ist jetzt heller."
+   - If 'command' is "step_down" that means "[Licht] ist jetzt dunkler." """
 
         system = f"""You are a smart home assistant.
 Generate a VERY SHORT, natural German confirmation (du-form).

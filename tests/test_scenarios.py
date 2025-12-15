@@ -727,8 +727,8 @@ async def test_scenario_brightness_too_dark(agent, hass):
         assert result is not None
         speech = result.response.speech["plain"]["speech"]
         print(f"DEBUG: Speech: {speech}")
-        # Should confirm brightness adjustment
-        assert "büro" in speech.lower()
+        # Should confirm brightness adjustment (LLM may use device name OR just say 'heller')
+        assert "heller" in speech.lower() or "büro" in speech.lower()
         # Should have executed HassLightSet
         assert mock_async_handle.called
         # Brightness step adjustments - complex to verify without full state tracking
@@ -761,8 +761,8 @@ async def test_scenario_brightness_too_bright(agent, hass):
         assert result is not None
         speech = result.response.speech["plain"]["speech"]
         print(f"DEBUG: Speech: {speech}")
-        # Should confirm brightness adjustment
-        assert "hauswirtschaftsraum" in speech.lower()
+        # Should confirm brightness adjustment (LLM may use device name OR just say 'dunkler')
+        assert "dunkler" in speech.lower() or "hauswirtschaftsraum" in speech.lower()
         # Should have executed HassLightSet
         assert mock_async_handle.called
         # Brightness step adjustments - complex to verify without full state tracking

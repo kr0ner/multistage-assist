@@ -152,11 +152,25 @@ Examples:
             _LOGGER.debug(f"Failed to extract event details: {e}")
         return None
     
+    # Generic titles that should prompt for a real title
+    GENERIC_TITLES = {
+        "termin", "kalendereintrag", "eintrag", "event", "meeting", 
+        "besprechung", "termin erstellen", "neuer termin"
+    }
+    
     def _has_field(self, data: Dict[str, Any], field: str) -> bool:
-        """Check if field has a valid value - special handling for datetime."""
+        """Check if field has a valid value - special handling for datetime and summary."""
         if field == "datetime":
             # Either start_date or start_date_time counts as having datetime
             return bool(data.get("start_date") or data.get("start_date_time"))
+        
+        if field == "summary":
+            # Reject generic titles - they need a real name
+            summary = data.get("summary", "")
+            if summary and summary.lower().strip() in self.GENERIC_TITLES:
+                _LOGGER.debug("[Calendar] Rejecting generic title: '%s'", summary)
+                return False
+        
         return super()._has_field(data, field)
     
     async def _validate_data(self, data: Dict[str, Any]) -> Dict[str, Any]:

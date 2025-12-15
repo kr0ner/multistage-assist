@@ -87,7 +87,7 @@ class SemanticCacheCapability(Capability):
         # Cache settings
         self.threshold = config.get("cache_similarity_threshold", DEFAULT_SIMILARITY_THRESHOLD)
         self.max_entries = config.get("cache_max_entries", DEFAULT_MAX_ENTRIES)
-        self.enabled = config.get("cache_enabled", True)
+        self.enabled = config.get("cache_enabled", False)  # Disabled by default until embedding model improves
         
         _LOGGER.info(
             "[SemanticCache] Configured: %s:%s model=%s threshold=%.2f",
@@ -197,6 +197,100 @@ class SemanticCacheCapability(Capability):
         except Exception as e:
             _LOGGER.error("[SemanticCache] Failed to save cache: %s", e)
     
+    def _check_action_consistency(self, text: str, entry: "CacheEntry") -> bool:
+        """
+        Check if the action in text is consistent with the cached entry.
+        
+        Uses the cached slots to determine what action was performed,
+        then checks if the new text has conflicting action keywords.
+        """
+        if not entry.slots:
+            return True
+        
+        cached_command = entry.slots.get("command", "")
+        cached_intent = entry.intent
+        text_lower = text.lower()
+        
+        # Simple opposite detection without hardcoded lists:
+        # If cached intent is TurnOn but text contains "aus", reject
+        # If cached intent is TurnOff but text contains "an " or " an", reject
+        if cached_intent == "HassTurnOn":
+            if " aus" in text_lower or text_lower.endswith("aus"):
+                _LOGGER.debug("[SemanticCache] Action conflict: text has 'aus' but cached is TurnOn")
+                return False
+        elif cached_intent == "HassTurnOff":
+            if " an" in text_lower or text_lower.endswith(" an"):
+                _LOGGER.debug("[SemanticCache] Action conflict: text has 'an' but cached is TurnOff")
+                return False
+        
+        # If cached was brightness adjustment, check direction
+        if cached_command == "step_up" and "dunkler" in text_lower:
+            _LOGGER.debug("[SemanticCache] Action conflict: text has 'dunkler' but cached is step_up")
+            return False
+        if cached_command == "step_down" and "heller" in text_lower:
+            _LOGGER.debug("[SemanticCache] Action conflict: text has 'heller' but cached is step_down")
+            return False
+        
+        return True
+    
+    def _get_ha_areas(self) -> set:
+        """Get all area names from Home Assistant area registry."""
+        try:
+            from homeassistant.helpers import area_registry as ar
+            registry = ar.async_get(self.hass)
+            areas = set()
+            for area in registry.areas.values():
+                areas.add(area.name.lower())
+                # Also add common abbreviations/aliases
+                name_lower = area.name.lower()
+                if "zimmer" in name_lower:
+                    # "Badezimmer" → also match "Bad"
+                    short = name_lower.replace("zimmer", "")
+                    if len(short) > 2:
+                        areas.add(short)
+            return areas
+        except Exception as e:
+            _LOGGER.debug("[SemanticCache] Could not get HA areas: %s", e)
+            return set()
+    
+    def _extract_area_from_text(self, text: str) -> Optional[str]:
+        """Extract area name from text using HA area registry."""
+        text_lower = text.lower()
+        ha_areas = self._get_ha_areas()
+        
+        for area in ha_areas:
+            if area in text_lower:
+                return area
+        return None
+    
+    def _check_area_consistency(self, text: str, entry: "CacheEntry") -> bool:
+        """
+        Check if the area in the text matches the area in the cached entry.
+        
+        Returns False if both have areas but they don't match.
+        Returns True if either has no area (can't verify) or if they match.
+        """
+        text_area = self._extract_area_from_text(text)
+        cached_area = None
+        
+        # Get area from cached slots
+        if entry.slots:
+            cached_area = entry.slots.get("area", "")
+            if cached_area:
+                cached_area = cached_area.lower()
+        
+        # If text has an area and cache has an area, they must match
+        if text_area and cached_area:
+            if text_area not in cached_area and cached_area not in text_area:
+                _LOGGER.debug(
+                    "[SemanticCache] Area mismatch: text has '%s', cached has '%s'",
+                    text_area, cached_area
+                )
+                return False
+        
+        return True
+
+    
     def _cosine_similarity(self, query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
         """Compute cosine similarity between query and all cached embeddings."""
         # Normalize
@@ -216,6 +310,9 @@ class SemanticCacheCapability(Capability):
         """
         if not self.enabled:
             return None
+        
+        # NOTE: Compound commands like "Büro und Küche" are split by clarification
+        # before reaching cache lookup, so we don't need to check here
         
         await self._load_cache()
         
@@ -244,8 +341,28 @@ class SemanticCacheCapability(Capability):
             self._stats["cache_misses"] += 1
             return None
         
-        # Cache hit!
+        # Cache hit candidate - verify action keywords are consistent
         entry = self._cache[best_idx]
+        
+        if not self._check_action_consistency(text, entry):
+            _LOGGER.debug(
+                "[SemanticCache] REJECTED (action mismatch): '%s' would match '%s' but actions conflict",
+                text[:40], entry.intent
+            )
+            self._stats["cache_misses"] += 1
+            return None
+        
+        # Verify area consistency - rooms must match
+        if not self._check_area_consistency(text, entry):
+            _LOGGER.debug(
+                "[SemanticCache] REJECTED (area mismatch): '%s' has different area than cached",
+                text[:40]
+            )
+            self._stats["cache_misses"] += 1
+            return None
+
+        
+        # Valid cache hit!
         entry.hits += 1
         entry.last_hit = time.strftime("%Y-%m-%dT%H:%M:%S")
         

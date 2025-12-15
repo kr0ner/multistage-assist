@@ -262,46 +262,8 @@ class Stage1Processor(BaseStage):
         """
         Process a completely new command through the full capability chain.
         """
-        # --- Semantic Cache Check (Fast Path) ---
-        if self.has("semantic_cache"):
-            cache = self.get("semantic_cache")
-            cached = await cache.lookup(user_input.text)
-            if cached and cached["score"] > 0.9:
-                _LOGGER.info(
-                    "[Stage1] Cache HIT (%.3f): %s -> %s",
-                    cached["score"], cached["intent"], cached["entity_ids"]
-                )
-                
-                if cached["required_disambiguation"]:
-                    # User had to choose before - need to prompt again
-                    _LOGGER.debug("[Stage1] Cached command required disambiguation, prompting user")
-                    
-                    # Use disambiguation capability with cached options
-                    options = cached.get("disambiguation_options") or {}
-                    if options:
-                        disamb_cap = self.get("disambiguation")
-                        disamb_result = await disamb_cap.run(
-                            user_input,
-                            intent=cached["intent"],
-                            candidates=list(options.keys()),
-                            params=cached["slots"],
-                        )
-                        if disamb_result:
-                            return disamb_result
-                else:
-                    # No disambiguation needed - execute directly
-                    processor = self.get("command_processor")
-                    res = await processor.process(
-                        user_input,
-                        cached["entity_ids"],
-                        cached["intent"],
-                        {k: v for k, v in cached["slots"].items() if k not in ("name", "entity_id")},
-                        None,  # No learning data from cache
-                    )
-                    return self._handle_processor_result(
-                        getattr(user_input, "session_id", None) or user_input.conversation_id,
-                        res,
-                    )
+        # NOTE: Semantic cache check happens AFTER clarification
+        # This ensures compound commands like "Büro und Küche" are split first
         
         # --- Early Area Normalization (Optimization) ---
         # Normalize common area aliases BEFORE clarification to reduce disambiguation
@@ -332,6 +294,47 @@ class Stage1Processor(BaseStage):
                 )
                 
                 if is_unchanged:
+                    # --- Semantic Cache Check (after clarification) ---
+                    # Now that we know it's a single atomic command, check cache
+                    if self.has("semantic_cache"):
+                        cache = self.get("semantic_cache")
+                        cached = await cache.lookup(user_input.text)
+                        if cached and cached["score"] > 0.9:
+                            _LOGGER.info(
+                                "[Stage1] Cache HIT (%.3f): %s -> %s",
+                                cached["score"], cached["intent"], cached["entity_ids"]
+                            )
+                            
+                            if cached["required_disambiguation"]:
+                                # User had to choose before - need to prompt again
+                                _LOGGER.debug("[Stage1] Cached command required disambiguation, prompting user")
+                                options = cached.get("disambiguation_options") or {}
+                                if options:
+                                    disamb_cap = self.get("disambiguation")
+                                    disamb_result = await disamb_cap.run(
+                                        user_input,
+                                        intent=cached["intent"],
+                                        candidates=list(options.keys()),
+                                        params=cached["slots"],
+                                    )
+                                    if disamb_result:
+                                        return disamb_result
+                            else:
+                                # No disambiguation needed - execute directly
+                                processor = self.get("command_processor")
+                                res = await processor.process(
+                                    user_input,
+                                    cached["entity_ids"],
+                                    cached["intent"],
+                                    {k: v for k, v in cached["slots"].items() if k not in ("name", "entity_id")},
+                                    None,  # No learning data from cache
+                                )
+                                return self._handle_processor_result(
+                                    getattr(user_input, "session_id", None) or user_input.conversation_id,
+                                    res,
+                                )
+                    
+                    # --- Continue with normal flow if cache miss ---
                     ki_data = await self.use("keyword_intent", user_input) or {}
                     intent_name = ki_data.get("intent")
                     slots = ki_data.get("slots") or {}

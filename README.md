@@ -121,3 +121,8 @@ The system is built on modular **Capabilities**:
 * [ ] **Refined Timer Learning:** Better flow for learning device nicknames during timer setting.
 * [ ] **Visual Feedback:** Add dashboard cards for active clarifications.
 
+## 📄 License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+**Attribution Required:** When using, modifying, or distributing this software, please include a reference to the original repository: [github.com/kr0ner/multistage-assist](https://github.com/kr0ner/multistage-assist)

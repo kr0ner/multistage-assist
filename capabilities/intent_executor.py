@@ -516,12 +516,46 @@ class IntentExecutorCapability(Capability):
                     # Translate common English states to German
                     if language == "de":
                         state_translations = {
+                            # Basic on/off
                             "off": "aus",
                             "on": "an",
+                            # Covers
                             "open": "offen",
                             "closed": "geschlossen",
+                            "opening": "öffnet",
+                            "closing": "schließt",
+                            # Locks
                             "locked": "verschlossen",
                             "unlocked": "aufgeschlossen",
+                            # Media
+                            "playing": "spielt",
+                            "paused": "pausiert",
+                            "idle": "inaktiv",
+                            "standby": "Standby",
+                            "buffering": "lädt",
+                            # Presence
+                            "home": "zuhause",
+                            "not_home": "abwesend",
+                            "away": "abwesend",
+                            # Availability
+                            "unavailable": "nicht verfügbar",
+                            "unknown": "unbekannt",
+                            # Climate
+                            "heat": "heizt",
+                            "cool": "kühlt",
+                            "auto": "automatisch",
+                            "dry": "trocknet",
+                            "fan_only": "nur Lüfter",
+                            # Vacuum
+                            "cleaning": "reinigt",
+                            "docked": "in Station",
+                            "returning": "kehrt zurück",
+                            # Alarm
+                            "armed_home": "scharf (zuhause)",
+                            "armed_away": "scharf (abwesend)",
+                            "armed_night": "scharf (Nacht)",
+                            "disarmed": "deaktiviert",
+                            "triggered": "ausgelöst",
                         }
                         val = state_translations.get(val.lower(), val)
 

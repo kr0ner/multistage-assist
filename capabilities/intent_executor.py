@@ -609,65 +609,72 @@ class IntentExecutorCapability(Capability):
         Returns:
             True if verification passed, False if there's a mismatch
         """
-        import asyncio
+        # Domain-specific verification timeouts (seconds)
+        domain = entity_id.split(".")[0]
+        timeout_map = {
+            "media_player": 10.0,  # Radios need boot time
+            "climate": 5.0,        # HVAC can be slow
+            "vacuum": 5.0,         # Vacuums can be slow
+        }
+        max_wait = timeout_map.get(domain, 2.0)  # Default 2 seconds
         
-        # Wait a short time for state to update
-        await asyncio.sleep(0.1)
+        import time
+        start_time = time.time()
+        last_state = None
         
-        state = self.hass.states.get(entity_id)
-        if not state:
-            _LOGGER.warning("[IntentExecutor] Verification: entity %s not found", entity_id)
-            return False
-        
-        verified = True
-        
-        # Check on/off state
-        # Check on/off state
-        if expected_state:
+        # Poll for state change
+        while (time.time() - start_time) < max_wait:
+            await asyncio.sleep(0.5)
+            
+            state = self.hass.states.get(entity_id)
+            if not state:
+                _LOGGER.warning("[IntentExecutor] Verification: entity %s not found", entity_id)
+                return False
+            
             current = state.state.lower()
-            expected = expected_state.lower()
+            last_state = current
             
-            # Special handling for covers
-            if entity_id.startswith("cover."):
-                # Map 'on' (intent) to 'open' (state)
-                if expected == "on":
-                    expected = "open"
-                elif expected == "off":
-                    expected = "closed"
+            # Check if state matches expected
+            if expected_state:
+                expected = expected_state.lower()
+                
+                # Special handling for covers
+                if entity_id.startswith("cover."):
+                    if expected == "on":
+                        expected = "open"
+                    elif expected == "off":
+                        expected = "closed"
                     
-                # Accept transitional states
-                if expected == "open" and current in ("open", "opening"):
-                    pass # Valid
-                elif expected == "closed" and current in ("closed", "closing"):
-                    pass # Valid
-                elif current != expected:
-                     _LOGGER.warning(
-                        "[IntentExecutor] Verification FAILED for %s: expected state '%s', got '%s'",
-                        entity_id, expected, current
-                    )
-                     verified = False
+                    # Accept transitional states
+                    if expected == "open" and current in ("open", "opening"):
+                        _LOGGER.debug("[IntentExecutor] Verification passed for %s (state: %s)", entity_id, current)
+                        return True
+                    elif expected == "closed" and current in ("closed", "closing"):
+                        _LOGGER.debug("[IntentExecutor] Verification passed for %s (state: %s)", entity_id, current)
+                        return True
+                
+                # Standard entities and media players
+                elif current == expected:
+                    _LOGGER.debug("[IntentExecutor] Verification passed for %s after %.1fs", entity_id, time.time() - start_time)
+                    return True
+                
+                # For media_player, also accept "playing", "paused", "idle" as "on" states
+                elif domain == "media_player" and expected == "on" and current not in ("off", "unavailable", "unknown"):
+                    _LOGGER.debug("[IntentExecutor] Verification passed for %s (media state: %s)", entity_id, current)
+                    return True
             
-            # Standard entities
-            elif current != expected:
-                _LOGGER.warning(
-                    "[IntentExecutor] Verification FAILED for %s: expected state '%s', got '%s'",
-                    entity_id, expected, current
-                )
-                verified = False
+            # Check brightness if applicable
+            if expected_brightness is not None:
+                cur_255 = state.attributes.get("brightness") or 0
+                cur_pct = int((cur_255 / 255.0) * 100)
+                if abs(cur_pct - expected_brightness) <= 5:
+                    _LOGGER.debug("[IntentExecutor] Verification passed for %s (brightness: %d%%)", entity_id, cur_pct)
+                    return True
         
-        # Check brightness
-        if expected_brightness is not None:
-            cur_255 = state.attributes.get("brightness") or 0
-            cur_pct = int((cur_255 / 255.0) * 100)
-            # Allow 5% tolerance for brightness
-            if abs(cur_pct - expected_brightness) > 5:
-                _LOGGER.warning(
-                    "[IntentExecutor] Verification FAILED for %s: expected brightness %d%%, got %d%%",
-                    entity_id, expected_brightness, cur_pct
-                )
-                verified = False
-        
-        if verified:
-            _LOGGER.debug("[IntentExecutor] Verification passed for %s", entity_id)
-        
-        return verified
+        # Timeout - log failure
+        _LOGGER.warning(
+            "[IntentExecutor] Verification FAILED for %s after %.1fs: expected '%s', got '%s'",
+            entity_id, max_wait, expected_state, last_state
+        )
+        return False
+

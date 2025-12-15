@@ -315,6 +315,17 @@ class Stage1Processor(BaseStage):
                     # Pass ki_data to intent_resolution to avoid duplicate LLM call
                     res_data = await self.get("intent_resolution").run(user_input, ki_data=ki_data)
                     if not res_data:
+                        # If we have a name but no entity found, ask for area instead of escalating
+                        name_slot = slots.get("name")
+                        if name_slot and intent_name in ("HassTurnOn", "HassTurnOff", "HassLightSet", "HassSetPosition"):
+                            _LOGGER.debug(
+                                "[Stage1] Entity not found for name '%s', asking for area", name_slot
+                            )
+                            msg = f"Ich konnte '{name_slot}' nicht finden. In welchem Bereich ist es?"
+                            return {
+                                "status": "handled",
+                                "result": await make_response(msg, user_input),
+                            }
                         return {"status": "escalate", "result": prev_result}
 
                     processor = self.get("command_processor")

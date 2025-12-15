@@ -21,6 +21,7 @@ from .capabilities.timer import TimerCapability
 from .capabilities.command_processor import CommandProcessorCapability
 from .capabilities.vacuum import VacuumCapability
 from .capabilities.calendar import CalendarCapability
+from .capabilities.semantic_cache import SemanticCacheCapability
 
 from .conversation_utils import (
     make_response,
@@ -53,7 +54,8 @@ class Stage1Processor(BaseStage):
         CommandProcessorCapability,
         VacuumCapability,
         YesNoResponseCapability,
-        CalendarCapability,  # Added CalendarCapability
+        CalendarCapability,
+        SemanticCacheCapability,  # Semantic command cache
     ]
 
     def __init__(self, hass, config):
@@ -68,6 +70,10 @@ class Stage1Processor(BaseStage):
 
         if self.has("intent_resolution"):
             self.get("intent_resolution").set_memory(memory)
+        
+        # Inject semantic cache into command processor for verified command storage
+        if self.has("semantic_cache") and self.has("command_processor"):
+            self.get("command_processor").set_cache(self.get("semantic_cache"))
 
     async def _normalize_area_aliases(self, user_input):
         """
@@ -200,6 +206,47 @@ class Stage1Processor(BaseStage):
         """
         Process a completely new command through the full capability chain.
         """
+        # --- Semantic Cache Check (Fast Path) ---
+        if self.has("semantic_cache"):
+            cache = self.get("semantic_cache")
+            cached = await cache.lookup(user_input.text)
+            if cached and cached["score"] > 0.9:
+                _LOGGER.info(
+                    "[Stage1] Cache HIT (%.3f): %s -> %s",
+                    cached["score"], cached["intent"], cached["entity_ids"]
+                )
+                
+                if cached["required_disambiguation"]:
+                    # User had to choose before - need to prompt again
+                    _LOGGER.debug("[Stage1] Cached command required disambiguation, prompting user")
+                    
+                    # Use disambiguation capability with cached options
+                    options = cached.get("disambiguation_options") or {}
+                    if options:
+                        disamb_cap = self.get("disambiguation")
+                        disamb_result = await disamb_cap.run(
+                            user_input,
+                            intent=cached["intent"],
+                            candidates=list(options.keys()),
+                            params=cached["slots"],
+                        )
+                        if disamb_result:
+                            return disamb_result
+                else:
+                    # No disambiguation needed - execute directly
+                    processor = self.get("command_processor")
+                    res = await processor.process(
+                        user_input,
+                        cached["entity_ids"],
+                        cached["intent"],
+                        {k: v for k, v in cached["slots"].items() if k not in ("name", "entity_id")},
+                        None,  # No learning data from cache
+                    )
+                    return self._handle_processor_result(
+                        getattr(user_input, "session_id", None) or user_input.conversation_id,
+                        res,
+                    )
+        
         # --- Early Area Normalization (Optimization) ---
         # Normalize common area aliases BEFORE clarification to reduce disambiguation
         # E.g., "bad" → "Badezimmer" before LLM processing
@@ -501,7 +548,7 @@ class Stage1Processor(BaseStage):
         candidates = []
         
         for entity in ent_reg.entities.values():
-            if entity.disabled:
+            if entity.disabled_by:
                 continue
             
             # Check friendly name

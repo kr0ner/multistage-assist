@@ -4,7 +4,7 @@
     "version": "0.1.1",
     "documentation": "https://github.com/kr0ner/multistage-assist",
     "dependencies": ["conversation"],
-    "requirements": ["rapidfuzz==3.9.7","google-genai>=1.0.0"],
+    "requirements": ["rapidfuzz==3.9.7","google-genai>=1.0.0","sentence-transformers>=2.2.0"],
     "codeowners": ["@kr0ner"],
     "config_flow": true,
     "iot_class": "local_push"

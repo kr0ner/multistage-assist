@@ -36,6 +36,11 @@ class CommandProcessorCapability(Capability):
         self.select = DisambiguationSelectCapability(hass, config)
         self.memory = MemoryCapability(hass, config)
         self.timer = TimerCapability(hass, config)
+        self.semantic_cache = None  # Injected by Stage1
+    
+    def set_cache(self, cache):
+        """Inject semantic cache capability for storing verified commands."""
+        self.semantic_cache = cache
 
     async def process(
         self,
@@ -170,6 +175,21 @@ class CommandProcessorCapability(Capability):
                 "source": src,
                 "target": tgt,
             }
+
+        # --- Semantic Cache Storage ---
+        # Only cache if execution was verified successful (no error flag)
+        if self.semantic_cache and not exec_data.get("error"):
+            try:
+                await self.semantic_cache.store(
+                    text=user_input.text,
+                    intent=intent_name,
+                    entity_ids=entity_ids,
+                    slots=final_params,
+                    required_disambiguation=False,  # Will be set by disambiguation flow
+                    verified=True,
+                )
+            except Exception as e:
+                _LOGGER.warning("[CommandProcessor] Failed to cache command: %s", e)
 
         res = {"status": "handled", "result": result_obj}
         if pending_data:

@@ -11,6 +11,11 @@ import os
 import pytest
 import aiohttp
 
+# Mark all tests as integration tests (requires external reranker)
+# Run with: pytest -m integration tests/test_anchor_patterns.py
+# Skip with: pytest -m "not integration"
+pytestmark = pytest.mark.integration
+
 # Reranker configuration
 RERANKER_HOST = os.getenv("RERANKER_HOST", "192.168.178.2")
 RERANKER_PORT = int(os.getenv("RERANKER_PORT", "9876"))
@@ -478,4 +483,151 @@ class TestHassClimateSetTemperatureAnchorMisses:
         score = result["scores"][0]
         
         assert score < DOMAIN_THRESHOLDS["climate"], \
+            f"Expected MISS for '{query}' ({reason}) but got score {score:.3f}"
+
+
+# ============================================================================
+# SWITCH ANCHOR TESTS
+# ============================================================================
+
+
+class TestSwitchAnchorHits:
+    """Test cases that SHOULD match switch anchors."""
+
+    ANCHOR = "Schalte den Nachtmodus an"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("query", [
+        "Schalte den Nachtmodus an",
+        "Nachtmodus aktivieren",
+        "Mach den Nachtmodus an",
+        "Aktiviere den Nachtmodus",
+        "Nachtmodus einschalten",
+    ])
+    async def test_switch_on_hit(self, query):
+        """Test switch on anchor hits."""
+        result = await call_reranker(query, [self.ANCHOR])
+        score = result["scores"][0]
+        
+        assert score >= DOMAIN_THRESHOLDS["switch"], \
+            f"Expected HIT for '{query}' but got score {score:.3f}"
+
+
+class TestSwitchAnchorMisses:
+    """Test cases that should NOT match switch anchors."""
+
+    ANCHOR = "Schalte den Nachtmodus an"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("query,reason", [
+        ("Schalte den Nachtmodus aus", "opposite action"),
+        ("Schalte das Licht an", "different domain"),
+        ("Wie ist das Wetter", "unrelated"),
+    ])
+    async def test_switch_miss(self, query, reason):
+        """Test switch anchor misses."""
+        result = await call_reranker(query, [self.ANCHOR])
+        score = result["scores"][0]
+        
+        assert score < DOMAIN_THRESHOLDS["switch"], \
+            f"Expected MISS for '{query}' ({reason}) but got score {score:.3f}"
+
+
+# ============================================================================
+# GLOBAL PATTERN TESTS (alle Lichter, etc.)
+# ============================================================================
+
+
+class TestGlobalPatternHits:
+    """Test cases that SHOULD match global patterns."""
+
+    ANCHOR_ALL_LIGHTS_OFF = "Schalte alle Lichter aus"
+    ANCHOR_ALL_LIGHTS_ON = "Schalte alle Lichter an"
+    ANCHOR_ALL_COVERS_DOWN = "Alle Rollos runter"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("query,anchor", [
+        ("Alle Lichter aus", "Schalte alle Lichter aus"),
+        ("Schalte alle Lichter aus", "Schalte alle Lichter aus"),
+        ("Mach alle Lichter aus", "Schalte alle Lichter aus"),
+        ("Alle Lampen ausschalten", "Schalte alle Lichter aus"),
+        ("Alle Lichter an", "Schalte alle Lichter an"),
+        ("Schalte alle Lichter an", "Schalte alle Lichter an"),
+        ("Mach alle Lichter an", "Schalte alle Lichter an"),
+        ("Alle Rollos runter", "Alle Rollos runter"),
+        ("Fahre alle Rollos runter", "Alle Rollos runter"),
+        ("Alle Rollläden schließen", "Alle Rollos runter"),
+    ])
+    async def test_global_pattern_hit(self, query, anchor):
+        """Test global pattern anchor hits."""
+        result = await call_reranker(query, [anchor])
+        score = result["scores"][0]
+        
+        assert score >= DEFAULT_THRESHOLD, \
+            f"Expected HIT for '{query}' but got score {score:.3f}"
+
+
+class TestGlobalPatternMisses:
+    """Test cases that should NOT match global patterns."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("query,anchor,reason", [
+        ("Schalte das Licht im Büro aus", "Schalte alle Lichter aus", "specific room"),
+        ("Alle Lichter an", "Schalte alle Lichter aus", "opposite action"),
+        ("Alle Rollos hoch", "Alle Rollos runter", "opposite action"),
+        ("Schalte den Fernseher aus", "Schalte alle Lichter aus", "different domain"),
+    ])
+    async def test_global_pattern_miss(self, query, anchor, reason):
+        """Test global pattern anchor misses."""
+        result = await call_reranker(query, [anchor])
+        score = result["scores"][0]
+        
+        assert score < DEFAULT_THRESHOLD, \
+            f"Expected MISS for '{query}' ({reason}) but got score {score:.3f}"
+
+
+# ============================================================================
+# MEDIA PLAYER ANCHOR TESTS
+# ============================================================================
+
+
+class TestMediaPlayerAnchorHits:
+    """Test cases that SHOULD match media player anchors."""
+
+    ANCHOR = "Schalte den Fernseher im Wohnzimmer an"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("query", [
+        "Schalte den Fernseher im Wohnzimmer an",
+        "Fernseher im Wohnzimmer einschalten",
+        "Mach den Fernseher im Wohnzimmer an",
+        "TV im Wohnzimmer anmachen",
+    ])
+    async def test_media_player_hit(self, query):
+        """Test media player anchor hits."""
+        result = await call_reranker(query, [self.ANCHOR])
+        score = result["scores"][0]
+        
+        assert score >= DEFAULT_THRESHOLD, \
+            f"Expected HIT for '{query}' but got score {score:.3f}"
+
+
+class TestMediaPlayerAnchorMisses:
+    """Test cases that should NOT match media player anchors."""
+
+    ANCHOR = "Schalte den Fernseher im Wohnzimmer an"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("query,reason", [
+        ("Schalte den Fernseher im Wohnzimmer aus", "opposite action"),
+        ("Schalte den Fernseher in der Küche an", "different room"),
+        ("Schalte das Licht im Wohnzimmer an", "different domain"),
+        ("Pausiere den Fernseher", "different intent"),
+    ])
+    async def test_media_player_miss(self, query, reason):
+        """Test media player anchor misses."""
+        result = await call_reranker(query, [self.ANCHOR])
+        score = result["scores"][0]
+        
+        assert score < DEFAULT_THRESHOLD, \
             f"Expected MISS for '{query}' ({reason}) but got score {score:.3f}"

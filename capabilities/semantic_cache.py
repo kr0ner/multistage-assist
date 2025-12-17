@@ -81,21 +81,27 @@ class CacheEntry:
 # Anchor phrase patterns for each intent (German)
 # Maps intent → list of (pattern, extra_slots) tuples
 # extra_slots will be merged into the cache entry slots
+# NOTE: HassTurnOn/HassTurnOff work for multiple domains:
+#   - light/switch/fan: on/off
+#   - cover: open/close (HassTurnOn=open, HassTurnOff=close)
+#   - media_player: on/off
+#   - automation: activate/deactivate
 INTENT_PHRASE_PATTERNS = {
-    # One pattern per intent - embedding model handles variations
+    # Basic on/off - works for light, switch, fan, media_player, automation, cover
     "HassTurnOn": [("Schalte {device} in der {area} an", {})],
     "HassTurnOff": [("Schalte {device} in der {area} aus", {})],
-    # Brightness: use explicit phrasing to match semantic search accurately
+    # Brightness: explicit phrasing for light domain
     "HassLightSet": [
         ("Erhöhe die Helligkeit von {device} in der {area}", {"command": "step_up"}),
         ("Reduziere die Helligkeit von {device} in der {area}", {"command": "step_down"}),
     ],
-    # Cover: open and close patterns
+    # Cover position: for intermediate positions (not open/close - use HassTurnOn/Off for that)
     "HassSetPosition": [
-        ("Öffne {device} in der {area}", {"position": 100}),  # Open = 100%
-        ("Mach {device} in der {area} zu", {"position": 0}),  # Close = 0%
+        ("Stelle {device} in der {area} auf 50 Prozent", {"position": 50}),
     ],
+    # Climate
     "HassClimateSetTemperature": [("Stelle {device} in der {area} auf {temp} Grad", {})],
+    # State queries - work for any domain
     "HassGetState": [("Ist {device} in der {area} an", {})],
     # HassTemporaryControl: Handled by keyword detection, not semantic cache
 }
@@ -107,6 +113,9 @@ DOMAIN_DEVICE_WORDS = {
     "climate": "die Heizung",
     "switch": "den Schalter",
     "fan": "den Ventilator",
+    "media_player": "den Fernseher",
+    "sensor": "den Sensor",
+    "automation": "die Automatisierung",
 }
 
 # Global patterns - domain-wide commands without area restriction
@@ -119,10 +128,31 @@ GLOBAL_PHRASE_PATTERNS = {
         ("Alle Lichter an", "HassTurnOn", {}),
     ],
     "cover": [
-        ("Schließe alle Rollos", "HassSetPosition", {"position": 0}),
-        ("Öffne alle Rollos", "HassSetPosition", {"position": 100}),
-        ("Alle Rollos runter", "HassSetPosition", {"position": 0}),
-        ("Alle Rollos hoch", "HassSetPosition", {"position": 100}),
+        ("Schließe alle Rollos", "HassTurnOff", {}),  # Close = TurnOff
+        ("Öffne alle Rollos", "HassTurnOn", {}),  # Open = TurnOn
+        ("Alle Rollos runter", "HassTurnOff", {}),
+        ("Alle Rollos hoch", "HassTurnOn", {}),
+        ("Alle Rollläden runter", "HassTurnOff", {}),
+        ("Alle Rollläden hoch", "HassTurnOn", {}),
+    ],
+    "switch": [
+        ("Schalte alle Schalter aus", "HassTurnOff", {}),
+        ("Schalte alle Schalter an", "HassTurnOn", {}),
+    ],
+    "fan": [
+        ("Schalte alle Ventilatoren aus", "HassTurnOff", {}),
+        ("Schalte alle Ventilatoren an", "HassTurnOn", {}),
+    ],
+    "media_player": [
+        ("Schalte alle Fernseher aus", "HassTurnOff", {}),
+        ("Schalte alle Fernseher an", "HassTurnOn", {}),
+        ("Alle Fernseher aus", "HassTurnOff", {}),
+    ],
+    "automation": [
+        ("Schalte alle Automatisierungen aus", "HassTurnOff", {}),
+        ("Schalte alle Automatisierungen an", "HassTurnOn", {}),
+        ("Deaktiviere alle Automatisierungen", "HassTurnOff", {}),
+        ("Aktiviere alle Automatisierungen", "HassTurnOn", {}),
     ],
 }
 

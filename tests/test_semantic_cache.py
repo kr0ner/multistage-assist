@@ -171,17 +171,20 @@ async def test_cache_skips_timer_commands(semantic_cache, hass):
     assert len(semantic_cache._cache) == 0
 
 
-async def test_cache_skips_relative_commands(semantic_cache, hass):
-    """Test that relative brightness commands are not cached."""
+async def test_cache_stores_relative_commands(semantic_cache, hass):
+    """Test that relative brightness commands ARE cached (command slot only, no brightness value)."""
     await semantic_cache.store(
         text="Mach das Licht heller",
         intent="HassLightSet",
         entity_ids=["light.kitchen"],
-        slots={"command": "step_up"},
+        slots={"command": "step_up", "brightness": 50},  # brightness should be filtered out
         verified=True,
     )
 
-    assert len(semantic_cache._cache) == 0
+    assert len(semantic_cache._cache) == 1
+    entry = semantic_cache._cache[0]
+    assert entry.slots.get("command") == "step_up"
+    assert "brightness" not in entry.slots  # Runtime value should be filtered
 
 
 # ============================================================================

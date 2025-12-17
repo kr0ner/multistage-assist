@@ -1,0 +1,11 @@
+{
+    "name": "Multi-Stage Assist",
+    "hacs": "integration",
+    "domains": [
+        "conversation"
+    ],
+    "documentation": "https://github.com/kr0ner/multistage-assist",
+    "homeassistant": "2024.1.0",
+    "iot_class": "local_polling",
+    "render_readme": true
+}

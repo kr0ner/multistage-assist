@@ -109,6 +109,23 @@ DOMAIN_DEVICE_WORDS = {
     "fan": "den Ventilator",
 }
 
+# Global patterns - domain-wide commands without area restriction
+# These create cache entries with domain but no area
+GLOBAL_PHRASE_PATTERNS = {
+    "light": [
+        ("Schalte alle Lichter aus", "HassTurnOff", {}),
+        ("Schalte alle Lichter an", "HassTurnOn", {}),
+        ("Alle Lichter aus", "HassTurnOff", {}),
+        ("Alle Lichter an", "HassTurnOn", {}),
+    ],
+    "cover": [
+        ("Schließe alle Rollos", "HassSetPosition", {"position": 0}),
+        ("Öffne alle Rollos", "HassSetPosition", {"position": 100}),
+        ("Alle Rollos runter", "HassSetPosition", {"position": 0}),
+        ("Alle Rollos hoch", "HassSetPosition", {"position": 100}),
+    ],
+}
+
 
 class SemanticCacheCapability(Capability):
     """
@@ -525,6 +542,35 @@ class SemanticCacheCapability(Capability):
 
 
         # Area-based entries: intent + area + domain, entity resolution happens after
+
+        # Generate global anchors (no area, domain-wide)
+        _LOGGER.info("[SemanticCache] Generating global anchors...")
+        for domain, patterns in GLOBAL_PHRASE_PATTERNS.items():
+            for text, intent, extra_slots in patterns:
+                embedding = await self._get_embedding(text)
+                if embedding is None:
+                    continue
+                
+                slots = {"domain": domain}
+                slots.update(extra_slots)
+                
+                entry = CacheEntry(
+                    text=text,
+                    embedding=embedding.tolist(),
+                    intent=intent,
+                    entity_ids=[],  # Empty - full domain resolution
+                    slots=slots,
+                    required_disambiguation=False,
+                    disambiguation_options=None,
+                    hits=0,
+                    last_hit="",
+                    verified=True,
+                    is_anchor=False,
+                    generated=True,
+                )
+                new_anchors.append(entry)
+        
+        _LOGGER.info("[SemanticCache] Added %d global anchors", len(GLOBAL_PHRASE_PATTERNS.get("light", [])) + len(GLOBAL_PHRASE_PATTERNS.get("cover", [])))
 
         # Add to cache and save
         self._cache.extend(new_anchors)

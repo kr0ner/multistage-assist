@@ -49,19 +49,35 @@ The agent processes every utterance through a sequence of **Stages**:
 
 ## 🛠 Prerequisites
 
-1.  **Home Assistant** (tested on recent versions).
+1.  **Home Assistant** (2024.1.0 or later).
 2.  **Ollama** running locally (or accessible via network).
     * Recommended Model: `qwen3:4b-instruct` (fast and capable).
     * Embedding Model: `mxbai-embed-large` (for semantic cache, multilingual support).
-3.  **Google Gemini API Key** (for Stage 2 chat).
+3.  **Reranker Addon** (optional but recommended) - Improves semantic cache accuracy.
+4.  **Google Gemini API Key** (for Stage 2 chat).
 
 ## 📥 Installation
 
+### Option 1: HACS (Recommended)
+
+[![Open your Home Assistant instance and open a repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=kr0ner&repository=multistage-assist&category=integration)
+
+1. Open HACS in Home Assistant
+2. Click the three dots menu → **Custom repositories**
+3. Add `https://github.com/kr0ner/multistage-assist` with category **Integration**
+4. Search for "Multi-Stage Assist" and install
+5. Restart Home Assistant
+
+### Option 2: Manual
+
 1.  Copy the `multistage_assist` folder to your Home Assistant `custom_components` directory.
 2.  Restart Home Assistant.
-3.  Go to **Settings > Devices & Services > Add Integration**.
-4.  Search for **Multi-Stage Assist**.
-5.  Pull the embedding model on your Ollama server:
+
+### Post-Installation
+
+1.  Go to **Settings > Devices & Services > Add Integration**
+2.  Search for **Multi-Stage Assist**
+3.  Pull the embedding model on your Ollama server:
     ```bash
     ollama pull mxbai-embed-large
     ```
@@ -84,6 +100,13 @@ During setup (or via "Configure"), provide:
 * **Port:** Defaults to Stage 1 port.
 * **Model:** `mxbai-embed-large` (recommended for German support).
 
+### Reranker (Optional)
+The reranker addon provides a second-stage validation for semantic cache matches, significantly improving accuracy.
+
+* **IP:** IP address of the reranker service (e.g., `192.168.1.x`).
+* **Port:** Default `9876`.
+* **Install:** Available as a Home Assistant addon in `reranker-addon/` directory.
+
 ## 🧠 Capabilities
 
 The system is built on modular **Capabilities**:
@@ -99,6 +122,19 @@ The system is built on modular **Capabilities**:
 | **Timer** | Specialized flow for setting Android timers via `notify.mobile_app`. |
 | **Vacuum** | Specialized flow for `HassVacuumStart` to clean rooms/floors. |
 | **CommandProcessor** | The engine that runs the execution pipeline (filters, disambiguation, etc). |
+
+### Semantic Cache Design
+
+The semantic cache uses a two-stage approach:
+
+1. **Vector Search** (Ollama embeddings) - Fast broad matching
+2. **Reranker** (BAAI/bge-reranker-base) - Precise semantic validation
+
+**Cache Entry Types:**
+- **Pre-generated anchors** (`anchors.json`) - Area-based and global patterns
+- **User-learned entries** (`semantic_cache.json`) - Commands learned from usage
+
+**Design Philosophy:** Always prefer adding cache entries over hardcoding bypass logic. If a command pattern isn't matching correctly, add it to `INTENT_PHRASE_PATTERNS` or `GLOBAL_PHRASE_PATTERNS` rather than adding regex bypasses.
 
 ## ✅ Usage Examples
 

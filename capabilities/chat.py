@@ -27,7 +27,7 @@ class ChatCapability(Capability):
     description = "General conversation handler using Google Gemini."
 
     PROMPT = {
-        "system": """You are Jarvis, a smart home assistant. Chatting in German.
+        "system": """You are a smart home assistant. Chatting in German.
 Decimals use commas. Units written out. Years as words.
 """,
         "schema": {

@@ -122,9 +122,19 @@ class Stage1Processor(BaseStage):
             and prev_result.intent
         )
 
+        # Skip cache for compound commands - they need to be split first
+        # Cache lookup is wasteful and can cause misleading near-hits
+        separators = [",", " and ", " und ", " oder ", " or ", " dann "]
+        text_lower = f" {user_input.text.lower()} "
+        is_compound_command = any(sep in text_lower for sep in separators)
+
         # 0. Check Semantic Cache FIRST (pre-verified entries = no LLM needed!)
-        # Skip if: pending response, OR Stage0 already has intent from NLU
-        if key not in self._pending and self.has("semantic_cache") and not stage0_has_intent:
+        # Skip if: pending response, Stage0 has intent, OR compound command
+        skip_cache = stage0_has_intent or is_compound_command
+        if is_compound_command:
+            _LOGGER.debug("[Stage1] Skipping cache - compound command detected")
+        
+        if key not in self._pending and self.has("semantic_cache") and not skip_cache:
             cache = self.get("semantic_cache")
             cached = await cache.lookup(user_input.text)
             if cached:

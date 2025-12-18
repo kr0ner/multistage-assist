@@ -19,7 +19,7 @@ DEFAULT_RERANKER_MODEL = "BAAI/bge-reranker-base"
 DEFAULT_RERANKER_THRESHOLD = 0.70  # Fallback for unknown domains
 DEFAULT_VECTOR_THRESHOLD = 0.5  # Loose filter for candidate selection
 DEFAULT_VECTOR_TOP_K = 10  # Number of candidates to rerank
-DEFAULT_MAX_ENTRIES = 200
+DEFAULT_MAX_ENTRIES = 2000  # Must be large enough for all generated anchors + user entries
 MIN_CACHE_WORDS = 3
 
 # Per-domain thresholds - optimized through systematic testing

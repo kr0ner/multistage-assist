@@ -116,9 +116,15 @@ class Stage1Processor(BaseStage):
         _LOGGER.debug("[Stage1] Input='%s'", user_input.text)
         key = getattr(user_input, "session_id", None) or user_input.conversation_id
 
+        # Skip cache if Stage0 already resolved intent (NLU success)
+        stage0_has_intent = (
+            isinstance(prev_result, Stage0Result)
+            and prev_result.intent
+        )
+
         # 0. Check Semantic Cache FIRST (pre-verified entries = no LLM needed!)
-        # Skip if this is a pending response (user answering disambiguation)
-        if key not in self._pending and self.has("semantic_cache"):
+        # Skip if: pending response, OR Stage0 already has intent from NLU
+        if key not in self._pending and self.has("semantic_cache") and not stage0_has_intent:
             cache = self.get("semantic_cache")
             cached = await cache.lookup(user_input.text)
             if cached:

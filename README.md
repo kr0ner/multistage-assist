@@ -105,7 +105,7 @@ The reranker addon provides a second-stage validation for semantic cache matches
 
 * **IP:** IP address of the reranker service (e.g., `192.168.1.x`).
 * **Port:** Default `9876`.
-* **Install:** Available as a Home Assistant addon in `reranker-addon/` directory.
+* **Install:** Available as a Home Assistant addon: https://github.com/kr0ner/reranker-addon
 
 ## 🧠 Capabilities
 

@@ -17,7 +17,7 @@ DEFAULT_RERANKER_MODEL = "BAAI/bge-reranker-base"
 # Configuration defaults
 # base model score ranges: synonyms ~0.65-0.80, opposites ~0.40, different rooms ~0.35
 DEFAULT_RERANKER_THRESHOLD = 0.70  # Fallback for unknown domains
-DEFAULT_VECTOR_THRESHOLD = 0.4  # Loose filter for candidate selection
+DEFAULT_VECTOR_THRESHOLD = 0.5  # Loose filter for candidate selection
 DEFAULT_VECTOR_TOP_K = 10  # Number of candidates to rerank
 DEFAULT_MAX_ENTRIES = 200
 MIN_CACHE_WORDS = 3

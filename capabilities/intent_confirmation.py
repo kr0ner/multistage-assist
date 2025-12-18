@@ -2,6 +2,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from .base import Capability
+from ..utils.response_builder import build_state_response
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,6 +53,13 @@ class IntentConfirmationCapability(Capability):
                 names.append(eid)
                 domains.append(eid.split(".")[0] if "." in eid else "")
                 states.append("unknown")
+
+        # Template-based response for state queries (no LLM needed)
+        if intent_name == "HassGetState":
+            domain = domains[0] if domains else None
+            message = build_state_response(names, states, domain)
+            _LOGGER.debug("[IntentConfirmation] Template response for HassGetState: '%s'", message)
+            return {"message": message}
 
         ignored_keys = {"domain", "service", "entity_id", "area_id"}
         relevant_params = {
@@ -105,3 +113,4 @@ Action: {action_desc}
 
         _LOGGER.debug("[IntentConfirmation] Generated: '%s'", message)
         return {"message": message}
+

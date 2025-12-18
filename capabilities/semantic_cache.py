@@ -603,14 +603,14 @@ class SemanticCacheCapability(Capability):
              _LOGGER.debug("[SemanticCache] Generalized Lookup: '%s' -> '%s' [%s]", text, query_norm, query_values)
         
         # Stage 1: Vector search
-        _LOGGER.error("DEBUG: Starting vector search for '%s' (norm: '%s')", text, query_norm)
+        _LOGGER.debug("DEBUG: Starting vector search for '%s' (norm: '%s')", text, query_norm)
         query_emb = await self._get_embedding(query_norm)
         if query_emb is None:
             self._stats["cache_misses"] += 1
             return None
 
         similarities = self._cosine_similarity(query_emb, self._embeddings_matrix)
-        _LOGGER.error("DEBUG: Similarities calculated. Max: %s", np.max(similarities))
+        _LOGGER.debug("DEBUG: Similarities calculated. Max: %s", np.max(similarities))
 
         # Get top-k candidates above loose threshold
         candidates: List[Tuple[float, int, CacheEntry]] = []
@@ -618,7 +618,7 @@ class SemanticCacheCapability(Capability):
             if score >= self.vector_threshold:
                 candidates.append((float(score), idx, self._cache[idx]))
 
-        _LOGGER.error("DEBUG: Found %d candidates above threshold %s", len(candidates), self.vector_threshold)
+        _LOGGER.debug("DEBUG: Found %d candidates above threshold %s", len(candidates), self.vector_threshold)
 
         # Sort by score descending
         candidates.sort(key=lambda x: x[0], reverse=True)

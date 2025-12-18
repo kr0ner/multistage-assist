@@ -170,6 +170,70 @@ def build_confirmation(
     return f"{devices} ist {verb}."
 
 
+# --- State Query Responses ---
+
+# State descriptions per domain
+STATE_DESCRIPTIONS_DE = {
+    "light": {"on": "an", "off": "aus"},
+    "switch": {"on": "an", "off": "aus"},
+    "fan": {"on": "an", "off": "aus"},
+    "cover": {"open": "offen", "closed": "geschlossen", "opening": "öffnet", "closing": "schließt"},
+    "climate": {"heat": "heizt", "cool": "kühlt", "off": "aus", "idle": "im Leerlauf"},
+    "media_player": {"on": "an", "off": "aus", "playing": "spielt", "paused": "pausiert", "idle": "im Leerlauf"},
+    "vacuum": {"cleaning": "saugt", "docked": "angedockt", "returning": "kehrt zurück", "idle": "im Leerlauf"},
+    "sensor": {},  # Sensors use their value directly
+    "binary_sensor": {"on": "aktiv", "off": "inaktiv"},
+    "automation": {"on": "aktiv", "off": "inaktiv"},
+}
+
+
+def build_state_response(
+    device_names: List[str],
+    states: List[str],
+    domain: str = None,
+) -> str:
+    """Build a German state query response.
+    
+    Args:
+        device_names: List of device names that match the query
+        states: List of states for each device
+        domain: Entity domain (optional, for state translation)
+        
+    Returns:
+        German state response
+        
+    Examples:
+        build_state_response(["Wohnzimmer"], ["on"], "light")
+            -> "Wohnzimmer ist an."
+        build_state_response(["Wohnzimmer", "Büro"], ["on", "on"], "light")
+            -> "Wohnzimmer und Büro sind an."
+        build_state_response(["Küche", "Bad", "Büro"], ["on", "off", "on"], "light")
+            -> "Küche und Büro sind an. Bad ist aus."
+    """
+    if not device_names:
+        return "Keine Geräte gefunden."
+    
+    # Get state translations for this domain
+    state_map = STATE_DESCRIPTIONS_DE.get(domain, {})
+    
+    # Group devices by state
+    state_groups: Dict[str, List[str]] = {}
+    for name, state in zip(device_names, states):
+        translated = state_map.get(state, state)
+        if translated not in state_groups:
+            state_groups[translated] = []
+        state_groups[translated].append(name)
+    
+    # Build response parts
+    parts = []
+    for state, names in state_groups.items():
+        devices = join_names(names)
+        verb = "ist" if len(names) == 1 else "sind"
+        parts.append(f"{devices} {verb} {state}")
+    
+    return ". ".join(parts) + "."
+
+
 # --- Question Building ---
 
 def build_question(field: str, context: str = None) -> str:

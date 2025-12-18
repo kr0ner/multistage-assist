@@ -118,22 +118,31 @@ JSON: {"entity_id": <string or null>}
         # If no area/floor extracted AND no specific name given, scan text for area
         # Skip this if name_slot is present - we'll resolve the entity by name directly
         if not area_slot and not floor_slot and not name_slot:
-            # Ask AreaAlias to scan the FULL text
-            _LOGGER.debug(
-                "[IntentResolution] No area/name slot. Scanning full text for area..."
-            )
-            mapped_area, is_new = await self._resolve_alias(
-                user_input, user_input.text, "area"
-            )
-
-            if mapped_area and mapped_area != "GLOBAL":
+            # Check for global scope keywords - no need for LLM call
+            text_lower = user_input.text.lower()
+            global_keywords = ["alle ", "alles ", "sämtliche ", "überall", "ganzes haus", "ganze wohnung"]
+            is_global_scope = any(kw in text_lower for kw in global_keywords)
+            
+            if is_global_scope:
+                _LOGGER.debug("[IntentResolution] Global scope detected, skipping area_alias LLM")
+                # Don't set area - entity resolver will fetch all entities for the domain
+            else:
+                # Ask AreaAlias to scan the FULL text
                 _LOGGER.debug(
-                    "[IntentResolution] Recovered area from text: %s", mapped_area
+                    "[IntentResolution] No area/name slot. Scanning full text for area..."
                 )
-                new_slots["area"] = mapped_area
-                area_slot = mapped_area  # Update local var for next steps
-                # We don't trigger learning here usually because it might be a fuzzy match on the whole sentence,
-                # but if it mapped a specific substring effectively, it's good.
+                mapped_area, is_new = await self._resolve_alias(
+                    user_input, user_input.text, "area"
+                )
+
+                if mapped_area and mapped_area != "GLOBAL":
+                    _LOGGER.debug(
+                        "[IntentResolution] Recovered area from text: %s", mapped_area
+                    )
+                    new_slots["area"] = mapped_area
+                    area_slot = mapped_area  # Update local var for next steps
+                    # We don't trigger learning here usually because it might be a fuzzy match on the whole sentence,
+                    # but if it mapped a specific substring effectively, it's good.
         # -----------------------------------------------------
 
         # 2. Resolve FLOOR

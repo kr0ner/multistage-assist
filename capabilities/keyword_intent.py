@@ -171,7 +171,12 @@ Rules: {meta.get('rules', '')}
 IMPORTANT:
 - Only fill 'name' if a SPECIFIC device is named (e.g., "Schreibtischlampe", "Deckenleuchte").
 - If generic words (Licht, Lampe, Rollo), leave 'name' EMPTY.
-- For HassGetState: use 'state' slot for queries like "which lights are ON" → {{"state": "on"}}
+- For HassGetState: use 'state' slot to capture the QUERIED state:
+  - "Sind alle Lichter aus?" → {{"state": "off"}}  (user asks about OFF state)
+  - "Sind alle Lichter an?" → {{"state": "on"}}    (user asks about ON state)
+  - "Welche Lichter sind an?" → {{"state": "on"}}
+  - "Ist das Rollo geschlossen?" → {{"state": "closed"}}
+  - "Ist das Rollo offen?" → {{"state": "open"}}
 - **FLOOR vs AREA**: Use 'floor' slot for floor/level names (Erdgeschoss, Obergeschoss, Untergeschoss, Keller, EG, OG, UG, erster Stock, zweiter Stock). Use 'area' for rooms (Küche, Bad, Büro).
 """
         data = await self._safe_prompt(

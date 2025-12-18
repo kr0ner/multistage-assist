@@ -496,7 +496,7 @@ class IntentExecutorCapability(Capability):
 
         final_resp = results[-1][1]
 
-        # Speech Generation
+        # Speech Generation for State Queries
         if effective_intent in ("HassGetState", "HassClimateGetTemperature"):
             current_speech = (
                 final_resp.speech.get("plain", {}).get("speech", "")
@@ -505,76 +505,69 @@ class IntentExecutorCapability(Capability):
             )
 
             if not current_speech or current_speech.strip() == "Okay":
-                parts = []
+                # Collect entity data
+                names = []
+                states = []
                 for eid, _ in results:
                     state_obj = hass.states.get(eid)
-
                     if not state_obj:
                         continue
-
                     friendly = state_obj.attributes.get("friendly_name", eid)
-                    val = state_obj.state
-                    unit = state_obj.attributes.get("unit_of_measurement", "")
-
-                    # Translate common English states to German
-                    if language == "de":
-                        state_translations = {
-                            # Basic on/off
-                            "off": "aus",
-                            "on": "an",
-                            # Covers
-                            "open": "offen",
-                            "closed": "geschlossen",
-                            "opening": "öffnet",
-                            "closing": "schließt",
-                            # Locks
-                            "locked": "verschlossen",
-                            "unlocked": "aufgeschlossen",
-                            # Media
-                            "playing": "spielt",
-                            "paused": "pausiert",
-                            "idle": "inaktiv",
-                            "standby": "Standby",
-                            "buffering": "lädt",
-                            # Presence
-                            "home": "zuhause",
-                            "not_home": "abwesend",
-                            "away": "abwesend",
-                            # Availability
-                            "unavailable": "nicht verfügbar",
-                            "unknown": "unbekannt",
-                            # Climate
-                            "heat": "heizt",
-                            "cool": "kühlt",
-                            "auto": "automatisch",
-                            "dry": "trocknet",
-                            "fan_only": "nur Lüfter",
-                            # Vacuum
-                            "cleaning": "reinigt",
-                            "docked": "in Station",
-                            "returning": "kehrt zurück",
-                            # Alarm
-                            "armed_home": "scharf (zuhause)",
-                            "armed_away": "scharf (abwesend)",
-                            "armed_night": "scharf (Nacht)",
-                            "disarmed": "deaktiviert",
-                            "triggered": "ausgelöst",
-                        }
-                        val = state_translations.get(val.lower(), val)
-
-                    if val.replace(".", "", 1).isdigit():
-                        val = val.replace(".", ",")
-                    text_part = f"{friendly} ist {val}"
-
-                    if unit:
-                        text_part += f" {unit}"
-
-                    parts.append(text_part)
-
-                if parts:
-                    raw_text = join_names(parts) + "."
-                    speech_text = normalize_speech_for_tts(raw_text)
-                    final_resp.async_set_speech(speech_text)
+                    names.append(friendly)
+                    states.append(state_obj.state)
+                
+                domain = entity_ids[0].split(".")[0] if entity_ids else None
+                
+                # Check for yes/no question: "Sind alle X geschlossen/an/offen?"
+                query_state = params.get("state", "").lower()
+                is_yes_no_query = query_state and len(names) > 1
+                
+                if is_yes_no_query and query_state:
+                    # Check if ALL entities match the queried state
+                    # Import state descriptions from response_builder
+                    from ..utils.response_builder import STATE_DESCRIPTIONS_DE, build_state_response
+                    
+                    # Normalize states for comparison
+                    state_map = {
+                        "closed": ["closed"],
+                        "geschlossen": ["closed"],
+                        "open": ["open"],
+                        "offen": ["open"],
+                        "on": ["on"],
+                        "an": ["on"],
+                        "off": ["off"],
+                        "aus": ["off"],
+                    }
+                    expected_states = state_map.get(query_state, [query_state])
+                    
+                    matching = [n for n, s in zip(names, states) if s in expected_states]
+                    not_matching = [n for n, s in zip(names, states) if s not in expected_states]
+                    
+                    # Get German state words from centralized definitions
+                    domain_states = STATE_DESCRIPTIONS_DE.get(domain, {})
+                    # Map expected state to German positive word
+                    positive_word = domain_states.get(expected_states[0], query_state)
+                    # Get opposite state word
+                    opposite_map = {"an": "aus", "aus": "an", "offen": "geschlossen", "geschlossen": "offen"}
+                    opposite_word = opposite_map.get(positive_word, "anders")
+                    
+                    if not not_matching:
+                        # All match - simple "Ja"
+                        speech_text = f"Ja, alle sind {positive_word}."
+                    else:
+                        # Some don't match - list exceptions
+                        if len(not_matching) <= 3:
+                            exceptions = join_names(not_matching)
+                            verb = "ist" if len(not_matching) == 1 else "sind"
+                            speech_text = f"Nein, {exceptions} {verb} noch {opposite_word}."
+                        else:
+                            speech_text = f"Nein, {len(not_matching)} sind noch {opposite_word}."
+                else:
+                    # Normal state query - use template
+                    from ..utils.response_builder import build_state_response
+                    speech_text = build_state_response(names, states, domain)
+                
+                final_resp.async_set_speech(speech_text)
 
         def _has_speech(r):
             s = getattr(r, "speech", None)

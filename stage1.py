@@ -10,7 +10,6 @@ from .capabilities.disambiguation import DisambiguationCapability
 from .capabilities.disambiguation_select import DisambiguationSelectCapability
 from .capabilities.plural_detection import PluralDetectionCapability
 from .capabilities.intent_confirmation import IntentConfirmationCapability
-from .capabilities.yes_no_response import YesNoResponseCapability
 from .capabilities.intent_executor import IntentExecutorCapability
 from .capabilities.entity_resolver import EntityResolverCapability
 from .capabilities.keyword_intent import KeywordIntentCapability
@@ -53,7 +52,6 @@ class Stage1Processor(BaseStage):
         TimerCapability,
         CommandProcessorCapability,
         VacuumCapability,
-        YesNoResponseCapability,
         CalendarCapability,
         SemanticCacheCapability,  # Semantic command cache
     ]

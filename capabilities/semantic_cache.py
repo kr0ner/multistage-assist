@@ -608,6 +608,20 @@ class SemanticCacheCapability(Capability):
                         
                         # Use all entities in the area
                         area_entity_ids = [e[0] for e in entity_list]
+                        
+                        # Filter non-dimmable lights for dimming intents
+                        if domain == "light" and intent == "HassLightSet":
+                            dimmable_ids = []
+                            for eid in area_entity_ids:
+                                state = self.hass.states.get(eid)
+                                if state:
+                                    modes = state.attributes.get("supported_color_modes", [])
+                                    # Empty or anything other than just "onoff" is dimmable
+                                    if not modes or modes != ["onoff"]:
+                                        dimmable_ids.append(eid)
+                            area_entity_ids = dimmable_ids
+                            if not area_entity_ids:
+                                continue  # Skip this anchor - no dimmable lights in area
 
                         entry = CacheEntry(
                             text=text,
@@ -627,8 +641,21 @@ class SemanticCacheCapability(Capability):
                     # --- TIER 2: ENTITY-SCOPE ---
                     # Create ONE entry per entity+intent
                     for entity_id, entity_name in entity_list:
+                        # Check dimmability for lights (skip dimming patterns for on/off-only lights)
+                        is_dimmable = True
+                        if domain == "light":
+                            state = self.hass.states.get(entity_id)
+                            if state:
+                                color_modes = state.attributes.get("supported_color_modes", [])
+                                # onoff means no dimming capability
+                                is_dimmable = not color_modes or color_modes != ["onoff"]
+
                         for pattern_tuple in entity_patterns:
                             pattern, intent, extra_slots = pattern_tuple
+                            
+                            # Skip dimming patterns for non-dimmable lights
+                            if intent == "HassLightSet" and not is_dimmable:
+                                continue
                             
                             try:
                                 text = pattern.format(

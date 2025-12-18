@@ -213,6 +213,17 @@ class EntityResolverCapability(Capability):
         except Exception as e:
             _LOGGER.debug("[EntityResolver] Knowledge graph filtering failed: %s", e)
 
+        # Filter by Capability (e.g., dimmability for HassLightSet)
+        intent = self._first_str(slots, "intent")
+        if intent == "HassLightSet" and domain == "light":
+            before_cap = len(resolved)
+            resolved = [eid for eid in resolved if self._is_light_dimmable(eid)]
+            if before_cap != len(resolved):
+                _LOGGER.debug(
+                    "[EntityResolver] Filtered %d non-dimmable lights for HassLightSet",
+                    before_cap - len(resolved)
+                )
+
         _LOGGER.debug(
             "[EntityResolver] Final Result: %d entities (pre-filter: %d, filtered by deps: %d)",
             len(resolved),
@@ -220,6 +231,15 @@ class EntityResolverCapability(Capability):
             len(filtered_by_deps),
         )
         return {"resolved_ids": resolved, "filtered_by_deps": filtered_by_deps}
+
+    def _is_light_dimmable(self, entity_id: str) -> bool:
+        """Check if a light entity supports dimming (not onoff-only)."""
+        state = self.hass.states.get(entity_id)
+        if not state:
+            return False
+        modes = state.attributes.get("supported_color_modes", [])
+        # Empty or anything other than just "onoff" is dimmable
+        return not modes or modes != ["onoff"]
 
     # --- NEW HELPER ---
     def _entities_in_area_by_name(

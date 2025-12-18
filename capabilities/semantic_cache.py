@@ -714,6 +714,7 @@ class SemanticCacheCapability(Capability):
             "HassCreateEvent",
             "HassTimerSet",
             "HassStartTimer",
+            "HassTemporaryControl",  # Duration-specific, not generalizable
         ):
             _LOGGER.debug("[SemanticCache] SKIP: non-repeatable intent %s", intent)
             return

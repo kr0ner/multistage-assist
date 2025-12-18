@@ -74,7 +74,6 @@ class CacheEntry:
     hits: int  # Number of times reused
     last_hit: str  # ISO timestamp of last use
     verified: bool  # True if execution verified successful
-    is_anchor: bool = False  # Deprecated, kept for compatibility
     generated: bool = False  # True = pre-generated entry (from anchors.json)
 
 
@@ -396,6 +395,8 @@ class SemanticCacheCapability(Capability):
             data = await self.hass.async_add_executor_job(_read)
 
             for entry_data in data.get("entries", []):
+                # Sanitize removed fields to avoid TypeErrors
+                entry_data.pop("is_anchor", None)
                 self._cache.append(CacheEntry(**entry_data))
 
             # Merge loaded stats with defaults to ensure all keys exist
@@ -434,6 +435,8 @@ class SemanticCacheCapability(Capability):
             
             # Load anchors
             for entry_data in data.get("anchors", []):
+                # Sanitize removed fields
+                entry_data.pop("is_anchor", None)
                 self._cache.append(CacheEntry(**entry_data))
             
             _LOGGER.info("[SemanticCache] Loaded %d anchors from cache", 
@@ -602,18 +605,21 @@ class SemanticCacheCapability(Capability):
                             continue
 
                         slots = {"area": area_name, "domain": domain, **extra_slots}
+                        
+                        # Use all entities in the area
+                        area_entity_ids = [e[0] for e in entity_list]
+
                         entry = CacheEntry(
                             text=text,
                             embedding=embedding.tolist(),
                             intent=intent,
-                            entity_ids=[],  # Empty - entity resolution after
+                            entity_ids=area_entity_ids,
                             slots=slots,
-                            required_disambiguation=False,
+                            required_disambiguation=(len(area_entity_ids) > 1),
                             disambiguation_options=None,
                             hits=0,
                             last_hit="",
                             verified=True,
-                            is_anchor=False,
                             generated=True,
                         )
                         new_anchors.append(entry)
@@ -649,7 +655,6 @@ class SemanticCacheCapability(Capability):
                                 hits=0,
                                 last_hit="",
                                 verified=True,
-                                is_anchor=False,
                                 generated=True,
                             )
                             new_anchors.append(entry)
@@ -681,7 +686,6 @@ class SemanticCacheCapability(Capability):
                     hits=0,
                     last_hit="",
                     verified=True,
-                    is_anchor=False,
                     generated=True,
                 )
                 new_anchors.append(entry)
@@ -780,11 +784,6 @@ class SemanticCacheCapability(Capability):
             Best match dict with reranker score, or None if all below threshold
         """
         if not self.reranker_enabled:
-            # Fallback: return best vector match if above legacy threshold
-            if candidates and candidates[0][0] > 0.85:
-                _, idx, entry = candidates[0]
-                if not entry.is_anchor:  # Don't return anchors
-                    return self._make_result(entry, candidates[0][0], idx)
             return None
 
         # Determine mode: auto tries local first
@@ -913,11 +912,6 @@ class SemanticCacheCapability(Capability):
         threshold = DOMAIN_THRESHOLDS.get(domain, self.reranker_threshold)
         
         if best_prob >= threshold:
-            # Check if best match is an anchor
-            if entry.is_anchor:
-                # ...
-                return None
-
             return self._make_result(entry, best_prob, cache_idx, is_reranked=True)
 
         self._stats["reranker_blocks"] += 1
@@ -958,6 +952,10 @@ class SemanticCacheCapability(Capability):
             Dict with {intent, entity_ids, slots, score, ...} or None
         """
         if not self.enabled:
+            return None
+
+        # Strict Requirement: If reranker is disabled, cache is unreliable (no vector-only fallback)
+        if not self.reranker_enabled:
             return None
 
         # Ensure cache is loaded (fast, from disk)
@@ -1195,7 +1193,7 @@ class SemanticCacheCapability(Capability):
     async def get_stats(self) -> Dict[str, Any]:
         """Return cache statistics."""
         await self._load_cache()
-        anchor_count = sum(1 for e in self._cache if e.is_anchor)
+        anchor_count = sum(1 for e in self._cache if e.generated)
         real_count = len(self._cache) - anchor_count
         return {
             **self._stats,

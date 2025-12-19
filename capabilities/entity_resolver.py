@@ -3,7 +3,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from homeassistant.core import HomeAssistant, State
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers import (
     area_registry as ar,
     device_registry as dr,

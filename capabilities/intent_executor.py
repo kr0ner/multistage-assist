@@ -8,7 +8,6 @@ from homeassistant.components.conversation import ConversationResult
 
 from ..conversation_utils import (
     join_names,
-    normalize_speech_for_tts,
     parse_duration_string,
     format_seconds_to_string,
 )
@@ -591,7 +590,6 @@ class IntentExecutorCapability(Capability):
         intent_name: str, 
         expected_state: str = None,
         expected_brightness: int = None,
-        pre_state: dict = None
     ) -> bool:
         """Verify that an intent execution succeeded by checking entity state.
         
@@ -600,7 +598,6 @@ class IntentExecutorCapability(Capability):
             intent_name: The intent that was executed
             expected_state: Expected state value (on/off) if applicable
             expected_brightness: Expected brightness percentage if applicable
-            pre_state: State before execution for comparison
             
         Returns:
             True if verification passed, False if there's a mismatch

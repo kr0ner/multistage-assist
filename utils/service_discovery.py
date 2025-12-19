@@ -5,7 +5,7 @@ attributes from Home Assistant.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional
 
 from homeassistant.core import HomeAssistant
 

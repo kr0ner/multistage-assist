@@ -1,191 +1,92 @@
 # Multi-Stage Assist for Home Assistant
 
-If you like the project, help me code all night 😴
-
 <a href="https://www.buymeacoffee.com/kr0ner" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
-**Multi-Stage Assist** is a highly advanced, local-first (with cloud fallback) conversational agent for Home Assistant. It orchestrates multiple processing stages to provide the speed of standard NLU with the intelligence of LLMs, enabling complex intent recognition, interactive disambiguation, and learning capabilities.
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 
-## 🚀 Features
+**Multi-Stage Assist** is a highly advanced, local-first (with cloud fallback) conversational agent for Home Assistant. It orchestrates multiple processing stages to provide the speed of standard NLU with the intelligence of LLMs.
 
-* **Multi-Stage Pipeline:**
-    * **Stage 0 (Fast):** Uses Home Assistant's built-in NLU for instant execution of exact commands.
-    * **Stage 1 (Smart):** Uses a local LLM (Ollama) for complex intent parsing, fuzzy entity resolution, and clarification of indirect commands (e.g., "It's too dark" → "Turn on lights").
-    * **Stage 2 (Chat):** Falls back to Google Gemini for general knowledge and chit-chat if no smart home intent is found.
-* **Semantic Command Cache:** Stores successful commands as embeddings for instant replay of similar requests without LLM calls.
-* **Adaptive Learning (Memory):** The system learns from your interactions. If you use a new name for a room or device (e.g., "Bad" for "Badezimmer"), it asks for confirmation and remembers it forever.
-* **Interactive Disambiguation:** If a command is ambiguous (e.g., "Turn on the light" in a room with three lights), it asks clarifying questions.
-* **Context-Aware Execution:**
-    * **Indirect Commands:** Understands "It's too dark/bright".
-    * **Temporary Controls:** Turn on devices for a duration (e.g., "für 10 Minuten").
-    * **Timers:** Dedicated logic for setting timers on specific mobile devices.
-    * **Vacuums:** Specialized logic for cleaning specific rooms, floors, or the whole house.
-* **Natural Responses:** Generates varied, natural-sounding German confirmation messages.
+📚 **[Full Documentation →](docs/wiki/Home.md)**
 
-## 🏗 Architecture
+## Quick Overview
 
-The agent processes every utterance through a sequence of **Stages**:
+| Stage | Purpose | Technology |
+|-------|---------|------------|
+| **Stage 0** | Fast path - instant NLU | Home Assistant built-in |
+| **Stage 1** | Smart orchestration | Local LLM (Ollama) |
+| **Stage 2** | Chat fallback | Google Gemini |
 
-### 1. Stage 0: The Fast Path (Native NLU)
-* **Goal:** Speed.
-* **Logic:** Runs a "dry run" of Home Assistant's native intent recognition.
-* **Action:** If a single, unambiguous entity is matched, it executes immediately. If results are ambiguous or missing, it **escalates** to Stage 1.
+## Key Features
 
-### 2. Stage 1: The Smart Orchestrator (Local LLM - Ollama)
-* **Goal:** Intelligence & Control.
-* **Capabilities:**
-    * **Semantic Cache:** Checks if a similar command was executed before (uses Ollama embeddings).
-    * **Clarification:** Rewrites complex inputs (e.g., splits "Turn on light and close blinds" into atomic commands).
-    * **Keyword Intent:** Identifies domains/intents even from vague phrasing.
-    * **Entity Resolution:** Uses fuzzy matching, area aliases, and "all entities" fallback logic.
-    * **Memory:** Checks a local JSON store for learned aliases before asking the LLM.
-    * **Command Processor:** Handles the execution flow (Filter by state -> Check Plural -> Disambiguate -> Execute -> Confirm).
-* **Action:** Executes the command or asks the user for more info. If it can't determine a command, it **escalates** to Stage 2.
+- **Semantic Command Cache** - Instant replay of learned commands
+- **Adaptive Learning** - Remembers your custom room/device names
+- **Temporary Controls** - "Turn on light for 10 minutes"
+- **Natural German Responses** - Optimized for German language
 
-### 3. Stage 2: The Chat Fallback (Google Gemini)
-* **Goal:** Conversation.
-* **Logic:** Handles open-ended queries or "chit-chat" that isn't related to controlling the house.
-* **Features:** Maintains "Sticky Chat" mode—once you start chatting, it stays in chat mode until the session ends.
+## Quick Start
 
-## 🛠 Prerequisites
+### Prerequisites
 
-1.  **Home Assistant** (2024.1.0 or later).
-2.  **Ollama** running locally (or accessible via network).
-    * Recommended Model: `qwen3:4b-instruct` (fast and capable).
-    * Embedding Model: `mxbai-embed-large` (for semantic cache, multilingual support).
-3.  **Reranker Addon** (optional but recommended) - Improves semantic cache accuracy.
-4.  **Google Gemini API Key** (for Stage 2 chat).
+- Home Assistant 2024.1.0+
+- [Ollama](https://ollama.ai) with `qwen3:4b-instruct` and `mxbai-embed-large`
+- Google Gemini API Key
+- Optional: [Reranker Addon](https://github.com/kr0ner/reranker-addon)
 
-## 📥 Installation
+### Installation
 
-### Option 1: HACS (Recommended)
+[![Install via HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=kr0ner&repository=multistage-assist&category=integration)
 
-[![Open your Home Assistant instance and open a repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=kr0ner&repository=multistage-assist&category=integration)
+1. Add via HACS: `https://github.com/kr0ner/multistage-assist`
+2. Restart Home Assistant
+3. Add integration: **Settings → Devices & Services → Add Integration**
+4. Pull embedding model: `ollama pull mxbai-embed-large`
 
-1. Open HACS in Home Assistant
-2. Click the three dots menu → **Custom repositories**
-3. Add `https://github.com/kr0ner/multistage-assist` with category **Integration**
-4. Search for "Multi-Stage Assist" and install
-5. Restart Home Assistant
+## Expert Configuration
 
-### Option 2: Manual
+Power users can add YAML settings to `configuration.yaml`:
 
-1.  Copy the `multistage_assist` folder to your Home Assistant `custom_components` directory.
-2.  Restart Home Assistant.
+```yaml
+multistage_assist:
+  # Semantic Cache tuning
+  reranker_threshold: 0.73
+  hybrid_enabled: true
+  hybrid_alpha: 0.7
+  
+  # Low-hardware mode (cache-only, no LLM in Stage1)
+  skip_stage1_llm: false
+  
+  # LLM behavior
+  llm_timeout: 30
+  llm_max_retries: 2
+  
+  # Debugging
+  debug_cache_hits: false
+  debug_llm_prompts: false
+```
 
-### Post-Installation
+See [Configuration Reference](docs/wiki/Configuration.md) for all options.
 
-1.  Go to **Settings > Devices & Services > Add Integration**
-2.  Search for **Multi-Stage Assist**
-3.  Pull the embedding model on your Ollama server:
-    ```bash
-    ollama pull mxbai-embed-large
-    ```
+## Documentation
 
-## ⚙️ Configuration
+| Topic | Link |
+|-------|------|
+| Architecture | [Architecture.md](docs/wiki/Architecture.md) |
+| Capabilities | [Capabilities-Reference.md](docs/wiki/Capabilities-Reference.md) |
+| Configuration | [Configuration.md](docs/wiki/Configuration.md) |
+| Development | [Development-Guide.md](docs/wiki/Development-Guide.md) |
 
-During setup (or via "Configure"), provide:
+## Troubleshooting
 
-### Stage 1 (Local Control)
-* **IP:** IP address of your Ollama instance (e.g., `127.0.0.1` or `192.168.1.x`).
-* **Port:** Default `11434`.
-* **Model:** `qwen3:4b-instruct` (or your preferred local model).
-
-### Stage 2 (Chat)
-* **Google API Key:** Your Gemini API Key.
-* **Model:** `gemini-2.5-flash` (or `gemini-2.0-flash`).
-
-### Embedding (Semantic Cache)
-* **IP:** Defaults to Stage 1 IP. Can point to different Ollama server.
-* **Port:** Defaults to Stage 1 port.
-* **Model:** `mxbai-embed-large` (recommended for German support).
-
-### Reranker (Optional)
-The reranker addon provides a second-stage validation for semantic cache matches, significantly improving accuracy.
-
-* **IP:** IP address of the reranker service (e.g., `192.168.1.x`).
-* **Port:** Default `9876`.
-* **Install:** Available as a Home Assistant addon: https://github.com/kr0ner/reranker-addon
-
-## 🧠 Capabilities
-
-The system is built on modular **Capabilities**:
-
-| Capability | Description |
-| :--- | :--- |
-| **SemanticCache** | Caches verified commands as embeddings for instant replay. |
-| **Clarification** | Splits compound commands ("AND") and translates indirect speech ("too dark"). |
-| **KeywordIntent** | Extracts specific slots (brightness, duration) and intents using LLM logic. |
-| **EntityResolver** | Finds devices using fuzzy matching, area filters, and device classes. |
-| **AreaAlias** | Maps fuzzy names ("Unten", "Keller") to real HA Areas/Floors. |
-| **Memory** | Persists learned aliases for Areas and Entities to disk. |
-| **Timer** | Specialized flow for setting Android timers via `notify.mobile_app`. |
-| **Vacuum** | Specialized flow for `HassVacuumStart` to clean rooms/floors. |
-| **CommandProcessor** | The engine that runs the execution pipeline (filters, disambiguation, etc). |
-
-### Semantic Cache Design
-
-The semantic cache uses a two-stage approach:
-
-1. **Vector Search** (Ollama embeddings) - Fast broad matching
-2. **Reranker** (BAAI/bge-reranker-base) - Precise semantic validation
-
-**Cache Entry Types:**
-- **Pre-generated anchors** (`anchors.json`) - Area-based and global patterns
-- **User-learned entries** (`semantic_cache.json`) - Commands learned from usage
-
-**Design Philosophy:** Always prefer adding cache entries over hardcoding bypass logic. If a command pattern isn't matching correctly, add it to `INTENT_PHRASE_PATTERNS` or `GLOBAL_PHRASE_PATTERNS` rather than adding regex bypasses.
-
-## ✅ Usage Examples
-
-* **Direct Control:** *"Schalte das Licht im Büro an"*
-* **Indirect:** *"Im Wohnzimmer ist es zu dunkel"* (Turns on light)
-* **Temporary Control:** *"Licht im Bad für 10 Minuten an"*
-* **Timer:** *"Stelle einen Timer für 5 Minuten auf Daniels Handy"*
-* **Vacuum:** *"Wische das Erdgeschoss"*
-* **Learning:**
-    * *User:* "Schalte das Spiegellicht an"
-    * *System:* "Meinst du 'Badezimmer Spiegel'?"
-    * *User:* "Ja"
-    * *System:* "Alles klar. Soll ich mir merken, dass 'Spiegellicht' 'Badezimmer Spiegel' bedeutet?"
-    * *User:* "Ja" (Saved forever!)
-
-## 📝 TODOs
-
-* [x] **Semantic Cache:** Store successful commands for fast replay.
-* [ ] **RAG / Knowledge:** Implement a vector store to query Home Assistant history or documentation.
-* [ ] **Refined Timer Learning:** Better flow for learning device nicknames during timer setting.
-* [ ] **Visual Feedback:** Add dashboard cards for active clarifications.
-
-## 🔧 Troubleshooting
-
-### Enable Debug Logging
-
-Add this to your `configuration.yaml`:
+Enable debug logging:
 
 ```yaml
 logger:
-  default: info
   logs:
     custom_components.multistage_assist: debug
 ```
 
-Restart Home Assistant to see detailed logs including:
-- `[Stage0]` / `[Stage1]` / `[Stage2]` - Pipeline flow
-- `[SemanticCache]` - Cache hits/misses/skips
-- `[IntentExecutor]` - Command execution
-- `[Clarification]` - Input parsing
+## License
 
-### Common Issues
+MIT License - see [LICENSE](LICENSE)
 
-| Issue | Solution |
-|-------|----------|
-| "Ollama connection failed" | Check Ollama IP/port in settings, ensure model is pulled |
-| Cache returns wrong intent | Clear cache file in `.storage/multistage_assist_semantic_cache.json` |
-| LLM hallucinations | Upgrade Ollama model or reduce temperature |
-
-## 📄 License
-
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
-
-**Attribution Required:** When using, modifying, or distributing this software, please include a reference to the original repository: [github.com/kr0ner/multistage-assist](https://github.com/kr0ner/multistage-assist)
+**Attribution Required:** [github.com/kr0ner/multistage-assist](https://github.com/kr0ner/multistage-assist)

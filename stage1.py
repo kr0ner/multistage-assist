@@ -59,6 +59,12 @@ class Stage1Processor(BaseStage):
     def __init__(self, hass, config):
         super().__init__(hass, config)
         self._pending: Dict[str, Dict[str, Any]] = {}
+        
+        # Cache-only mode for low-hardware systems
+        # When enabled, only cached commands work - no LLM calls in Stage1
+        self._skip_stage1_llm = config.get("skip_stage1_llm", False)
+        if self._skip_stage1_llm:
+            _LOGGER.info("[Stage1] Running in cache-only mode (skip_stage1_llm=True)")
 
         # Inject shared memory into capabilities that need it
         memory = self.get("memory")
@@ -396,6 +402,14 @@ class Stage1Processor(BaseStage):
                                     res,
                                 )
                     
+                    # --- Cache-only mode: Skip LLM if enabled ---
+                    if self._skip_stage1_llm:
+                        _LOGGER.debug(
+                            "[Stage1] Cache miss in cache-only mode, escalating: '%s'",
+                            user_input.text
+                        )
+                        return {"status": "escalate", "result": prev_result}
+                    
                     # --- Continue with normal flow if cache miss ---
                     ki_data = await self.use("keyword_intent", user_input) or {}
                     intent_name = ki_data.get("intent")
@@ -548,7 +562,7 @@ class Stage1Processor(BaseStage):
 
     # ... (Keep _execute_sequence, _continue_sequence, _add_confirmation_if_needed, _merge_speech) ...
     async def _execute_sequence(
-        self, user_input, commands: List[str], previous_results: List[Any] = None
+        self, user_input, commands: List[str]
     ) -> Dict[str, Any]:
         return await self._continue_sequence(user_input, None, commands)
 

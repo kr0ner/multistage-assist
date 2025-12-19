@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from homeassistant.core import HomeAssistant, State
+from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
 

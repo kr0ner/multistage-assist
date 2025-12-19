@@ -281,6 +281,7 @@ class EntityResolverCapability(Capability):
         ]
 
     def _find_floor(self, floor_name: str):
+        """Find floor by name (alias resolution happens earlier via memory/LLM)."""
         if not floor_name:
             return None
         floor_reg = fr.async_get(self.hass)

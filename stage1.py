@@ -274,7 +274,9 @@ class Stage1Processor(BaseStage):
             
             # Resolve the area using area_alias
             area_alias_cap = self.get("area_alias")
-            areas = [a.name for a in self.hass.helpers.area_registry.async_get_registry().areas.values()]
+            from homeassistant.helpers import area_registry as ar
+            area_reg = ar.async_get(self.hass)
+            areas = [a.name for a in area_reg.areas.values()]
             alias_result = await area_alias_cap.run(
                 user_input, user_query=area_text, candidates=areas
             )

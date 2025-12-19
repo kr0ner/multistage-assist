@@ -265,7 +265,7 @@ class SemanticCacheBuilder:
         intent_data = KeywordIntentCapability.INTENT_DATA
 
         # Get areas from Home Assistant area registry
-        from homeassistant.helpers import area_registry
+        from homeassistant.helpers import area_registry, floor_registry
         areas = []
         area_ids_to_names = {}
         registry = area_registry.async_get(self.hass)
@@ -273,8 +273,23 @@ class SemanticCacheBuilder:
             areas.append(area.name)
             area_ids_to_names[area.id] = area.name
 
+        # Get floors from Home Assistant floor registry
+        floors = []
+        floor_ids_to_names = {}
+        floor_reg = floor_registry.async_get(self.hass)
+        for floor in floor_reg.async_list_floors():
+            floors.append(floor.name)
+            floor_ids_to_names[floor.floor_id] = floor.name
+
+        # Map area_id -> floor_name
+        area_id_to_floor = {}
+        for area in registry.async_list_areas():
+            if area.floor_id and area.floor_id in floor_ids_to_names:
+                area_id_to_floor[area.id] = floor_ids_to_names[area.floor_id]
+
         # Get entities grouped by domain and area
         entities_by_domain_area = {}
+        entities_by_domain_floor = {}  # NEW: entities by floor
         try:
             from homeassistant.helpers import entity_registry
 
@@ -288,24 +303,35 @@ class SemanticCacheBuilder:
                     continue
 
                 area_name = None
+                floor_name = None
                 if entity.area_id:
                     area_name = area_ids_to_names.get(entity.area_id)
-
-                if not area_name:
-                    continue
+                    floor_name = area_id_to_floor.get(entity.area_id)
 
                 friendly_name = entity.name or entity.original_name
                 if not friendly_name:
                     continue
 
-                if domain not in entities_by_domain_area:
-                    entities_by_domain_area[domain] = {}
-                if area_name not in entities_by_domain_area[domain]:
-                    entities_by_domain_area[domain][area_name] = []
+                # Add to area dict
+                if area_name:
+                    if domain not in entities_by_domain_area:
+                        entities_by_domain_area[domain] = {}
+                    if area_name not in entities_by_domain_area[domain]:
+                        entities_by_domain_area[domain][area_name] = []
+                    entities_by_domain_area[domain][area_name].append(
+                        (entity.entity_id, friendly_name)
+                    )
 
-                entities_by_domain_area[domain][area_name].append(
-                    (entity.entity_id, friendly_name)
-                )
+                # Add to floor dict
+                if floor_name:
+                    if domain not in entities_by_domain_floor:
+                        entities_by_domain_floor[domain] = {}
+                    if floor_name not in entities_by_domain_floor[domain]:
+                        entities_by_domain_floor[domain][floor_name] = []
+                    entities_by_domain_floor[domain][floor_name].append(
+                        (entity.entity_id, friendly_name)
+                    )
+
         except Exception as e:
             _LOGGER.warning("[SemanticCache] Could not get entities: %s", e)
 
@@ -315,8 +341,9 @@ class SemanticCacheBuilder:
             for entities in domain_areas.values()
         )
         _LOGGER.info(
-            "[SemanticCache] Generating anchors for %d areas, %d domains, %d entities",
+            "[SemanticCache] Generating anchors for %d areas, %d floors, %d domains, %d entities",
             len(areas),
+            len(floors),
             len(intent_data),
             total_entities,
         )
@@ -325,6 +352,7 @@ class SemanticCacheBuilder:
         
         # Track processed area+domain+intent combinations for area-scope (avoid duplicates)
         processed_area_domain_intent = set()
+        processed_floor_domain_intent = set()
         
         _LOGGER.info("[SemanticCache] Generating anchors...")
 
@@ -359,6 +387,30 @@ class SemanticCacheBuilder:
                     _LOGGER.info(
                         "[SemanticCache] ✓ %s/%s done - %d entries so far",
                         domain, area_name, len(new_anchors)
+                    )
+
+        # Generate FLOOR-SCOPE anchors (reuse area patterns with floor substitution)
+        if entities_by_domain_floor:
+            _LOGGER.info("[SemanticCache] Generating floor anchors...")
+            for domain, floors_entities in entities_by_domain_floor.items():
+                device_word = DOMAIN_DEVICE_WORDS.get(domain, f"das {domain}")
+                # Reuse area patterns for floors
+                area_patterns = AREA_PHRASE_PATTERNS.get(domain, [])
+
+                for floor_name, entity_list in floors_entities.items():
+                    if not entity_list:
+                        continue
+
+                    new_anchors.extend(
+                        await self._generate_floor_anchors(
+                            domain, floor_name, entity_list, device_word,
+                            area_patterns, processed_floor_domain_intent
+                        )
+                    )
+
+                    _LOGGER.info(
+                        "[SemanticCache] ✓ %s/%s (floor) done - %d entries so far",
+                        domain, floor_name, len(new_anchors)
                     )
 
         # Generate global anchors (no area, domain-wide)
@@ -495,6 +547,79 @@ class SemanticCacheBuilder:
                     generated=True,
                 )
                 anchors.append(entry)
+        
+        return anchors
+
+    async def _generate_floor_anchors(
+        self,
+        domain: str,
+        floor_name: str,
+        entity_list: List[Tuple[str, str]],
+        device_word: str,
+        area_patterns: List[Tuple[str, str, Dict]],  # Reuse area patterns
+        processed: set
+    ) -> List[CacheEntry]:
+        """Generate floor-scope anchors (reuses area patterns with floor substitution)."""
+        anchors = []
+        
+        for pattern_tuple in area_patterns:
+            pattern, intent, extra_slots = pattern_tuple
+            
+            floor_key = (domain, floor_name, intent)
+            if floor_key in processed:
+                continue
+            processed.add(floor_key)
+            
+            try:
+                # Reuse area patterns - substitute {area} with floor_name
+                text = pattern.format(area=floor_name, device=device_word)
+            except KeyError:
+                continue
+
+            if len(text.split()) < MIN_CACHE_WORDS:
+                continue
+
+            # Normalize text for Generalized Number Matching
+            text_norm, _ = self._normalize_numeric_value(text)
+            if text_norm != text:
+                text = text_norm
+
+            embedding = await self._get_embedding(text)
+            if embedding is None:
+                continue
+
+            slots = {"floor": floor_name, "domain": domain, **extra_slots}
+            
+            # Use all entities on the floor
+            floor_entity_ids = [e[0] for e in entity_list]
+            
+            # Filter non-dimmable lights for dimming intents
+            if domain == "light" and intent == "HassLightSet":
+                dimmable_ids = []
+                for eid in floor_entity_ids:
+                    state = self.hass.states.get(eid)
+                    if state:
+                        modes = state.attributes.get("supported_color_modes", [])
+                        if not modes or modes != ["onoff"]:
+                            dimmable_ids.append(eid)
+                floor_entity_ids = dimmable_ids
+                if not floor_entity_ids:
+                    continue
+
+            entry = CacheEntry(
+                text=text,
+                embedding=embedding.tolist(),
+                intent=intent,
+                entity_ids=floor_entity_ids,
+                slots=slots,
+                required_disambiguation=(len(floor_entity_ids) > 1),
+                disambiguation_options=None,
+                hits=0,
+                last_hit="",
+                verified=True,
+                generated=True,
+            )
+            anchors.append(entry)
         
         return anchors
 

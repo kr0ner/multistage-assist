@@ -177,7 +177,13 @@ IMPORTANT:
   - "Welche Lichter sind an?" → {{"state": "on"}}
   - "Ist das Rollo geschlossen?" → {{"state": "closed"}}
   - "Ist das Rollo offen?" → {{"state": "open"}}
-- **FLOOR vs AREA**: Use 'floor' slot for floor/level names (Erdgeschoss, Obergeschoss, Untergeschoss, Keller, EG, OG, UG, erster Stock, zweiter Stock). Use 'area' for rooms (Küche, Bad, Büro).
+- **FLOOR vs AREA** (CRITICAL):
+  - Use 'floor' for: Erdgeschoss, Obergeschoss, Untergeschoss, Keller, EG, OG, UG, oben, unten, erster/zweiter Stock
+  - Use 'area' for rooms: Küche, Bad, Büro, Wohnzimmer, Schlafzimmer
+  - Examples:
+    - "Licht im Obergeschoss an" → {{"floor": "Obergeschoss"}} NOT area!
+    - "Rollläden im OG runter" → {{"floor": "OG"}}
+    - "Licht im Büro an" → {{"area": "Büro"}}
 """
         data = await self._safe_prompt(
             {"system": system, "schema": self.SCHEMA}, {"user_input": text}

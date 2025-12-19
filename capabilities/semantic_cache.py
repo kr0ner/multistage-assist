@@ -30,6 +30,15 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+# BM25 for hybrid search (keyword + semantic)
+try:
+    from rank_bm25 import BM25Okapi
+    BM25_AVAILABLE = True
+except ImportError:
+    BM25_AVAILABLE = False
+    _LOGGER = logging.getLogger(__name__)
+    _LOGGER.warning("[SemanticCache] rank_bm25 not installed - hybrid search disabled")
+
 from .base import Capability
 from .semantic_cache_builder import SemanticCacheBuilder
 from ..utils.semantic_cache_types import (
@@ -45,6 +54,42 @@ from ..utils.semantic_cache_types import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# German tokenizer for BM25 with optional n-gram support
+def _tokenize_german(text: str, ngram_size: int = 1) -> List[str]:
+    """Tokenize German text for BM25 keyword matching.
+    
+    Args:
+        text: Input text to tokenize
+        ngram_size: Maximum n-gram size (1=words only, 2=words+bigrams, etc.)
+    
+    Handles German specifics:
+    - Lowercasing with umlauts preserved
+    - Removes punctuation but keeps compound words
+    - Keeps action keywords like 'an', 'aus' as separate tokens
+    - Optionally generates n-grams for phrase-level matching
+    """
+    text = text.lower()
+    # Remove punctuation except hyphens (for compound words)
+    text = re.sub(r'[^\w\s-]', ' ', text)
+    # Split into words
+    words = text.split()
+    # Filter very short tokens except important ones
+    important_shorts = {'an', 'aus', 'auf', 'zu', 'ab', 'um', 'im', 'in'}
+    words = [t for t in words if len(t) > 1 or t in important_shorts]
+    
+    if ngram_size <= 1:
+        return words
+    
+    # Generate n-grams (bigrams, trigrams, etc.)
+    tokens = words.copy()  # Start with unigrams
+    for n in range(2, ngram_size + 1):
+        for i in range(len(words) - n + 1):
+            ngram = " ".join(words[i:i+n])
+            tokens.append(ngram)
+    
+    return tokens
 
 
 
@@ -114,6 +159,17 @@ class SemanticCacheCapability(Capability):
         self.max_entries = config.get("cache_max_entries", DEFAULT_MAX_ENTRIES)
         # Enabled by default - note: requires ~1GB RAM for embedding + reranker
         self.enabled = config.get("cache_enabled", True)
+
+        # BM25 Hybrid Search config
+        # Alpha: weight for semantic score (1-alpha = BM25 weight)
+        # 0.7 = 70% semantic + 30% keyword
+        self.hybrid_alpha = config.get("hybrid_alpha", 0.7)
+        self.hybrid_enabled = config.get("hybrid_enabled", True) and BM25_AVAILABLE
+        # N-gram size: 1=word-level only, 2=includes bigrams, 3=includes trigrams
+        # Higher values enable phrase-level matching but increase index size
+        self.hybrid_ngram_size = config.get("hybrid_ngram_size", 2)  # Default: bigrams
+        self._bm25_index = None  # Lazy built when cache loads
+        self._bm25_corpus = []  # Tokenized anchor texts
 
         _LOGGER.info(
             "[SemanticCache] Configured: enabled=%s, embedding=%s, reranker=%s (mode=%s)",
@@ -232,6 +288,8 @@ class SemanticCacheCapability(Capability):
             if self._cache:
                 self._embeddings_matrix = np.array([e.embedding for e in self._cache])
                 self._embedding_dim = len(self._cache[0].embedding)
+                # Build BM25 index for hybrid search
+                self._build_bm25_index()
 
             _LOGGER.info("[SemanticCache] Loaded %d cached commands", len(self._cache))
         except Exception as e:
@@ -280,6 +338,7 @@ class SemanticCacheCapability(Capability):
             self._anchors_initialized = True
             if self._cache:
                 self._embeddings_matrix = np.array([e.embedding for e in self._cache])
+                self._build_bm25_index()  # Rebuild BM25 index for hybrid search
             return
 
         # Generate new anchors using builder
@@ -298,6 +357,7 @@ class SemanticCacheCapability(Capability):
         # Rebuild embeddings matrix
         if self._cache:
             self._embeddings_matrix = np.array([e.embedding for e in self._cache])
+            self._build_bm25_index()  # Build BM25 index for hybrid search
 
         self._anchors_initialized = True
         _LOGGER.info("[SemanticCache] Created and cached %d semantic anchors", len(new_anchors))
@@ -368,6 +428,44 @@ class SemanticCacheCapability(Capability):
         norms = np.linalg.norm(matrix, axis=1, keepdims=True)
         matrix_norm = matrix / (norms + 1e-10)
         return np.dot(matrix_norm, query_norm)
+
+    def _build_bm25_index(self):
+        """Build BM25 index from cached anchor texts for hybrid search."""
+        if not self.hybrid_enabled or not self._cache:
+            return
+        
+        # Tokenize all anchor texts with configured n-gram size
+        self._bm25_corpus = [
+            _tokenize_german(entry.text, self.hybrid_ngram_size) 
+            for entry in self._cache
+        ]
+        
+        # Build BM25 index
+        self._bm25_index = BM25Okapi(self._bm25_corpus)
+        
+        ngram_desc = "words" if self.hybrid_ngram_size == 1 else f"up to {self.hybrid_ngram_size}-grams"
+        _LOGGER.info(
+            "[SemanticCache] Built BM25 index for %d entries (alpha=%.2f, %s)",
+            len(self._bm25_corpus), self.hybrid_alpha, ngram_desc
+        )
+
+    def _get_bm25_scores(self, query: str) -> np.ndarray:
+        """Get BM25 scores for query against all cached entries.
+        
+        Returns normalized scores in range [0, 1].
+        """
+        if self._bm25_index is None:
+            return np.zeros(len(self._cache))
+        
+        # Tokenize query with same n-gram size as index
+        tokens = _tokenize_german(query, self.hybrid_ngram_size)
+        scores = np.array(self._bm25_index.get_scores(tokens))
+        
+        # Normalize to [0, 1] using min-max scaling
+        if scores.max() > 0:
+            scores = scores / scores.max()
+        
+        return scores
 
     async def _rerank_candidates(
         self, query: str, candidates: List[Tuple[float, int, CacheEntry]]
@@ -611,6 +709,18 @@ class SemanticCacheCapability(Capability):
 
         similarities = self._cosine_similarity(query_emb, self._embeddings_matrix)
         _LOGGER.debug("DEBUG: Similarities calculated. Max: %s", np.max(similarities))
+
+        # Hybrid search: combine semantic + BM25 keyword scores
+        if self.hybrid_enabled and self._bm25_index is not None:
+            bm25_scores = self._get_bm25_scores(query_norm)
+            # Weighted combination: alpha * semantic + (1-alpha) * keyword
+            hybrid_scores = (self.hybrid_alpha * similarities + 
+                           (1 - self.hybrid_alpha) * bm25_scores)
+            _LOGGER.debug(
+                "DEBUG: Hybrid search - semantic max: %.3f, BM25 max: %.3f, hybrid max: %.3f",
+                np.max(similarities), np.max(bm25_scores), np.max(hybrid_scores)
+            )
+            similarities = hybrid_scores
 
         # Get top-k candidates above loose threshold
         candidates: List[Tuple[float, int, CacheEntry]] = []

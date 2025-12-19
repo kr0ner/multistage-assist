@@ -19,3 +19,12 @@ CONF_EMBEDDING_MODEL = "embedding_model"
 # Reranker: For semantic cache validation
 CONF_RERANKER_IP = "reranker_ip"
 CONF_RERANKER_PORT = "reranker_port"
+
+# Expert Settings (YAML only, not in config flow UI)
+# These allow power users to fine-tune semantic cache behavior
+CONF_RERANKER_THRESHOLD = "reranker_threshold"
+CONF_HYBRID_ENABLED = "hybrid_enabled"
+CONF_HYBRID_ALPHA = "hybrid_alpha"  # 0.0-1.0, weight for semantic vs keyword
+CONF_HYBRID_NGRAM_SIZE = "hybrid_ngram_size"  # 1=words, 2=bigrams, 3=trigrams
+CONF_VECTOR_THRESHOLD = "vector_search_threshold"
+CONF_VECTOR_TOP_K = "vector_search_top_k"

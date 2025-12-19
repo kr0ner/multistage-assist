@@ -5,6 +5,35 @@ Anchors provide pre-verified command patterns that enable fast cache hits withou
 needing LLM processing.
 
 The SemanticCacheCapability imports this builder for initial cache population.
+
+================================================================================
+ANCHOR GENERATION LOGIC - DO NOT MODIFY WITHOUT UNDERSTANDING THIS!
+================================================================================
+
+The anchor generation uses a 4-tier structure. All pattern variants are generated
+for comprehensive semantic matching coverage.
+
++--------+--------------------------------+---------------+----------------------------+
+| Tier   | Source                         | Scope         | Count Formula              |
++--------+--------------------------------+---------------+----------------------------+
+| AREA   | AREA_PHRASE_PATTERNS[domain]   | Each area     | areas × patterns_per_domain |
+| ENTITY | ENTITY_PHRASE_PATTERNS[domain] | Each entity   | entities × patterns_per_domain |
+| FLOOR  | Reuses AREA_PHRASE_PATTERNS    | Each floor    | floors × patterns_per_domain |
+| GLOBAL | GLOBAL_PHRASE_PATTERNS[domain] | Domain-wide   | patterns                   |
++--------+--------------------------------+---------------+----------------------------+
+
+Key rules:
+- ALL pattern variants are generated (not just 1 per intent)
+- Deduplication is by TEXT, not by intent (allows multiple phrasings per action)
+- Expected total: ~1500-2000 entries for a typical home
+
+Example generation:
+    Light domain (~30 patterns):
+        - 21 areas × 30 patterns = 630 area anchors
+        - ~42 entities × 12 patterns = 504 entity anchors
+        - 4 floors × 30 patterns = 120 floor anchors
+    + Global patterns (~18 total)
+    = ~1500+ total anchors
 """
 
 import asyncio
@@ -37,30 +66,100 @@ _LOGGER = logging.getLogger(__name__)
 # AREA-SCOPE patterns: {device} + {area} → resolves to all entities in area
 AREA_PHRASE_PATTERNS = {
     "light": [
+        # === HassTurnOn - multiple word orders ===
         ("Schalte {device} in {area} an", "HassTurnOn", {}),
+        # Word order variants (troublesome patterns)
+        ("{device} in {area} an", "HassTurnOn", {}),  # "Licht in Küche an"
+        ("{device} an in {area}", "HassTurnOn", {}),  # "Licht an in der Küche"
+        ("Mach {device} in {area} an", "HassTurnOn", {}),  # "Mach das Licht in Küche an"
+        # Colloquial/informal
+        ("{area} {device} an", "HassTurnOn", {}),  # "Küche Licht an"
+        ("{device} {area} an", "HassTurnOn", {}),  # "Licht Küche an"
+        # Synonyms: Lampe, Beleuchtung, einschalten, Aktiviere
+        ("die Lampe in {area} an", "HassTurnOn", {}),
+        ("Lampe in {area} anschalten", "HassTurnOn", {}),
+        ("Mach die Lampe in {area} an", "HassTurnOn", {}),
+        ("{area} Lampe an", "HassTurnOn", {}),
+        ("Beleuchtung in {area} an", "HassTurnOn", {}),
+        ("Aktiviere Beleuchtung in {area}", "HassTurnOn", {}),
+        ("Aktiviere {device} in {area}", "HassTurnOn", {}),
+        ("{device} in {area} einschalten", "HassTurnOn", {}),
+        ("Einschalten {device} in {area}", "HassTurnOn", {}),
+        ("Mach mal {device} in {area} an", "HassTurnOn", {}),
+        
+        # === HassTurnOff - multiple word orders ===
         ("Schalte {device} in {area} aus", "HassTurnOff", {}),
+        # Word order variants
+        ("{device} in {area} aus", "HassTurnOff", {}),  # "Licht in Küche aus"
+        ("{device} aus in {area}", "HassTurnOff", {}),  # "Licht aus in der Küche"
+        ("Mach {device} in {area} aus", "HassTurnOff", {}),  # "Mach das Licht in Küche aus"
+        # Colloquial/informal
+        ("{area} {device} aus", "HassTurnOff", {}),  # "Küche Licht aus"
+        ("{device} {area} aus", "HassTurnOff", {}),  # "Licht Küche aus"
+        # Synonyms: Lampe, Beleuchtung, ausschalten, Deaktiviere
+        ("die Lampe in {area} aus", "HassTurnOff", {}),
+        ("Lampe in {area} ausschalten", "HassTurnOff", {}),
+        ("Mach die Lampe in {area} aus", "HassTurnOff", {}),
+        ("{area} Lampe aus", "HassTurnOff", {}),
+        ("Beleuchtung in {area} aus", "HassTurnOff", {}),
+        ("Deaktiviere Beleuchtung in {area}", "HassTurnOff", {}),
+        ("Deaktiviere {device} in {area}", "HassTurnOff", {}),
+        ("{device} in {area} ausschalten", "HassTurnOff", {}),
+        ("Ausschalten {device} in {area}", "HassTurnOff", {}),
+        ("Mach mal {device} in {area} aus", "HassTurnOff", {}),
+        
+        # === HassLightSet - formal brightness patterns ===
         ("Erhöhe die Helligkeit von {device} in {area}", "HassLightSet", {"command": "step_up"}),
         ("Reduziere die Helligkeit von {device} in {area}", "HassLightSet", {"command": "step_down"}),
         ("Dimme {device} in {area} auf 50 Prozent", "HassLightSet", {"brightness": 50}),
+        # Informal brightness patterns - "heller/dunkler" variations
+        ("Mach {device} in {area} heller", "HassLightSet", {"command": "step_up"}),
+        ("Mach {device} in {area} dunkler", "HassLightSet", {"command": "step_down"}),
+        ("{device} in {area} heller", "HassLightSet", {"command": "step_up"}),
+        ("{device} in {area} dunkler", "HassLightSet", {"command": "step_down"}),
+        ("Dimme {device} in {area}", "HassLightSet", {"command": "step_down"}),
+        # More informal brightness variants
+        ("{device} heller in {area}", "HassLightSet", {"command": "step_up"}),
+        ("{device} dunkler in {area}", "HassLightSet", {"command": "step_down"}),
+        
+        # === HassGetState ===
         ("Ist {device} in {area} an", "HassGetState", {}),
+        ("Brennt {device} in {area}", "HassGetState", {}),
     ],
     "cover": [
-        ("Öffne {device} in {area}", "HassTurnOn", {}),
-        ("Schließe {device} in {area}", "HassTurnOff", {}),
+        # === Cover Open ===
+        ("Öffne {device} in {area}", "HassSetPosition", {"position": 100}),
+        ("{device} in {area} öffnen", "HassSetPosition", {"position": 100}),
+        ("{device} in {area} hoch", "HassSetPosition", {"position": 100}),
+        ("Mach {device} in {area} auf", "HassSetPosition", {"position": 100}),
+        # === Cover Close ===
+        ("Schließe {device} in {area}", "HassSetPosition", {"position": 0}),
+        ("{device} in {area} schließen", "HassSetPosition", {"position": 0}),
+        ("{device} in {area} runter", "HassSetPosition", {"position": 0}),
+        ("Mach {device} in {area} zu", "HassSetPosition", {"position": 0}),
+        # === Cover Step ===
         ("Fahre {device} in {area} weiter hoch", "HassSetPosition", {"command": "step_up"}),
         ("Fahre {device} in {area} weiter runter", "HassSetPosition", {"command": "step_down"}),
         ("Stelle {device} in {area} auf 50 Prozent", "HassSetPosition", {"position": 50}),
+        # === Cover State ===
         ("Ist {device} in {area} offen", "HassGetState", {}),
+        ("Sind {device} in {area} offen", "HassGetState", {}),
     ],
     "climate": [
         ("Schalte {device} in {area} an", "HassTurnOn", {}),
         ("Schalte {device} in {area} aus", "HassTurnOff", {}),
         ("Stelle {device} in {area} auf 21 Grad", "HassClimateSetTemperature", {}),
+        ("Mach es in {area} wärmer", "HassClimateSetTemperature", {"command": "step_up"}),
+        ("Mach es in {area} kälter", "HassClimateSetTemperature", {"command": "step_down"}),
         ("Wie warm ist es in {area}", "HassGetState", {}),
     ],
     "switch": [
         ("Schalte {device} in {area} an", "HassTurnOn", {}),
+        ("{device} in {area} an", "HassTurnOn", {}),
+        ("Mach {device} in {area} an", "HassTurnOn", {}),
         ("Schalte {device} in {area} aus", "HassTurnOff", {}),
+        ("{device} in {area} aus", "HassTurnOff", {}),
+        ("Mach {device} in {area} aus", "HassTurnOff", {}),
         ("Ist {device} in {area} an", "HassGetState", {}),
     ],
     "fan": [
@@ -85,9 +184,16 @@ ENTITY_PHRASE_PATTERNS = {
     "light": [
         ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
         ("Schalte {device} {entity_name} in {area} aus", "HassTurnOff", {}),
+        # Formal brightness patterns
         ("Erhöhe die Helligkeit von {device} {entity_name} in {area}", "HassLightSet", {"command": "step_up"}),
         ("Reduziere die Helligkeit von {device} {entity_name} in {area}", "HassLightSet", {"command": "step_down"}),
         ("Dimme {device} {entity_name} in {area} auf 50 Prozent", "HassLightSet", {"brightness": 50}),
+        # Informal brightness patterns - "heller/dunkler" variations
+        ("Mach {device} {entity_name} in {area} heller", "HassLightSet", {"command": "step_up"}),
+        ("Mach {device} {entity_name} in {area} dunkler", "HassLightSet", {"command": "step_down"}),
+        ("{device} {entity_name} in {area} heller", "HassLightSet", {"command": "step_up"}),
+        ("{device} {entity_name} in {area} dunkler", "HassLightSet", {"command": "step_down"}),
+        # State query
         ("Ist {device} {entity_name} in {area} an", "HassGetState", {}),
     ],
     "cover": [
@@ -435,15 +541,16 @@ class SemanticCacheBuilder:
         for pattern_tuple in area_patterns:
             pattern, intent, extra_slots = pattern_tuple
             
-            area_key = (domain, area_name, intent)
-            if area_key in processed:
-                continue
-            processed.add(area_key)
-            
             try:
                 text = pattern.format(area=area_name, device=device_word)
             except KeyError:
                 continue
+            
+            # Deduplicate by actual generated text (not by intent)
+            text_key = (domain, area_name, text)
+            if text_key in processed:
+                continue
+            processed.add(text_key)
 
             if len(text.split()) < MIN_CACHE_WORDS:
                 continue
@@ -565,16 +672,17 @@ class SemanticCacheBuilder:
         for pattern_tuple in area_patterns:
             pattern, intent, extra_slots = pattern_tuple
             
-            floor_key = (domain, floor_name, intent)
-            if floor_key in processed:
-                continue
-            processed.add(floor_key)
-            
             try:
                 # Reuse area patterns - substitute {area} with floor_name
                 text = pattern.format(area=floor_name, device=device_word)
             except KeyError:
                 continue
+            
+            # Deduplicate by actual generated text (not by intent)
+            floor_key = (domain, floor_name, text)
+            if floor_key in processed:
+                continue
+            processed.add(floor_key)
 
             if len(text.split()) < MIN_CACHE_WORDS:
                 continue

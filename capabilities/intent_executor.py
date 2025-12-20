@@ -380,11 +380,17 @@ class IntentExecutorCapability(Capability):
                     if state_obj:
                         cur_255 = state_obj.attributes.get("brightness") or 0
                         cur_pct = int((cur_255 / 255.0) * 100)
+                        light_is_off = state_obj.state == "off" or cur_pct == 0
 
                         if val == "step_up":
-                            if cur_pct == 0:
-                                # Light is off, turn on to reasonable brightness
+                            if light_is_off:
+                                # Light is off - use HassTurnOn to ensure it turns on
                                 new_pct = 30
+                                effective_intent = "HassTurnOn"  # Switch to turn on!
+                                _LOGGER.debug(
+                                    "[IntentExecutor] step_up on OFF light %s: switching to HassTurnOn with brightness=%d%%",
+                                    eid, new_pct
+                                )
                             else:
                                 # Increase by BRIGHTNESS_STEP% of current, minimum 10%
                                 change = max(10, int(cur_pct * self.BRIGHTNESS_STEP / 100))
@@ -398,7 +404,7 @@ class IntentExecutorCapability(Capability):
                         final_executed_params["brightness"] = new_pct
                         _LOGGER.debug(
                             "[IntentExecutor] %s on %s: %d%% -> %d%% (change: ±%d%%)",
-                            val, eid, cur_pct, new_pct, change if cur_pct > 0 else 30
+                            val, eid, cur_pct, new_pct, change if not light_is_off else new_pct
                         )
                     else:
                         current_params.pop("brightness", None)

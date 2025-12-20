@@ -81,6 +81,11 @@
   - IntentExecutor calculates new position from current for `HassSetPosition`
   - File: `intent_executor.py`
 
+- **Fixed step_up on OFF lights**
+  - "Es ist zu dunkel" now turns on the light (was staying off)
+  - Uses `HassTurnOn` instead of `HassLightSet` when light is OFF
+  - File: `intent_executor.py`
+
 ### Code Cleanup
 
 - **Dead code removal**

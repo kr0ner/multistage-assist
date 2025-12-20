@@ -6,60 +6,61 @@ entity recognition and plural detection.
 
 from typing import Dict, List
 
-# --- DOMAIN-SPECIFIC KEYWORDS ---
+# --- DOMAIN-SPECIFIC KEYWORDS (with articles) ---
+# Format: "article singular" -> "article plural"
+# To get just the noun, split and take index [1] or [-1]
 
 LIGHT_KEYWORDS: Dict[str, str] = {
-    "licht": "lichter",
-    "lampe": "lampen",
-    "leuchte": "leuchten",
-    "beleuchtung": "beleuchtungen",
-    "spot": "spots",
+    "das licht": "die lichter",
+    "die lampe": "die lampen",
+    "die leuchte": "die leuchten",
+    "die beleuchtung": "die beleuchtungen",
+    "der spot": "die spots",
 }
 
 COVER_KEYWORDS: Dict[str, str] = {
-    "rollladen": "rollläden",
-    "rollo": "rollos",
-    "jalousie": "jalousien",
-    "markise": "markisen",
-    "beschattung": "beschattungen",
+    "der rollladen": "die rollläden",
+    "das rollo": "die rollos",
+    "die jalousie": "die jalousien",
+    "die markise": "die markisen",
+    "die beschattung": "die beschattungen",
 }
 
 SWITCH_KEYWORDS: Dict[str, str] = {
-    "schalter": "schalter",  # Canonical name first
-    "steckdose": "steckdosen",
-    "zwischenstecker": "zwischenstecker",
-    "strom": "strom",
+    "der schalter": "die schalter",
+    "die steckdose": "die steckdosen",
+    "der zwischenstecker": "die zwischenstecker",
+    "der strom": "der strom",
 }
 
 FAN_KEYWORDS: Dict[str, str] = {
-    "ventilator": "ventilatoren",
-    "luefter": "luefter",
-    "lüfter": "lüfter",
+    "der ventilator": "die ventilatoren",
+    "der lüfter": "die lüfter",
 }
 
 MEDIA_KEYWORDS: Dict[str, str] = {
-    "tv": "tvs",
-    "fernseher": "fernseher",
-    "musik": "musik",
-    "radio": "radios",
-    "lautsprecher": "lautsprecher",
-    "player": "player",
+    "der tv": "die tvs",
+    "der fernseher": "die fernseher",
+    "die musik": "die musik",
+    "das radio": "die radios",
+    "der lautsprecher": "die lautsprecher",
+    "der player": "die player",
 }
 
 SENSOR_KEYWORDS: Dict[str, str] = {
-    "sensor": "sensoren",  # Canonical name first
-    "temperatur": "temperaturen",
-    "luftfeuchtigkeit": "luftfeuchtigkeiten",
-    "feuchtigkeit": "feuchtigkeiten",
-    "wert": "werte",
-    "status": "status",
-    "zustand": "zustände",
+    "der sensor": "die sensoren",
+    "die temperatur": "die temperaturen",
+    "die luftfeuchtigkeit": "die luftfeuchtigkeiten",
+    "die feuchtigkeit": "die feuchtigkeiten",
+    "der wert": "die werte",
+    "der status": "die status",
+    "der zustand": "die zustände",
 }
 
 CLIMATE_KEYWORDS: Dict[str, str] = {
-    "thermostat": "thermostate",  # Canonical name first
-    "heizung": "heizungen",
-    "klimaanlage": "klimaanlagen",
+    "das thermostat": "die thermostate",
+    "die heizung": "die heizungen",
+    "die klimaanlage": "die klimaanlagen",
 }
 
 VACUUM_KEYWORDS: List[str] = [
@@ -108,24 +109,29 @@ AUTOMATION_KEYWORDS: List[str] = [
 
 OTHER_ENTITY_PLURALS: Dict[str, str] = {
     "das fenster": "die fenster",
-    "tür": "türen",
-    "tor": "tore",
-    "gerät": "geräte",
+    "die tür": "die türen",
+    "das tor": "die tore",
+    "das gerät": "die geräte",
 }
 
 # --- DOMAIN NAME MAPPING ---
 
+# Helper to get noun from "article noun" format
+def _get_noun(keyword: str) -> str:
+    """Extract noun from 'article noun' format, e.g., 'das licht' -> 'Licht'"""
+    return keyword.split()[-1].capitalize()
+
 # Auto-generate domain names from first keyword in each domain dict
-# First keyword is the canonical/response name (e.g., "schalter" not "steckdose")
+# First keyword is the canonical/response name (e.g., "der schalter" -> "Schalter")
 DOMAIN_NAMES: Dict[str, str] = {
-    "light": next(iter(LIGHT_KEYWORDS)).capitalize(),
-    "cover": next(iter(COVER_KEYWORDS)).capitalize(),
-    "switch": next(iter(SWITCH_KEYWORDS)).capitalize(),
-    "fan": next(iter(FAN_KEYWORDS)).capitalize(),
-    "climate": next(iter(CLIMATE_KEYWORDS)).capitalize(),
+    "light": _get_noun(next(iter(LIGHT_KEYWORDS))),
+    "cover": _get_noun(next(iter(COVER_KEYWORDS))),
+    "switch": _get_noun(next(iter(SWITCH_KEYWORDS))),
+    "fan": _get_noun(next(iter(FAN_KEYWORDS))),
+    "climate": _get_noun(next(iter(CLIMATE_KEYWORDS))),
     "media_player": "Mediaplayer",  # Special case - two words
     "vacuum": VACUUM_KEYWORDS[0].capitalize(),  # List, not dict
-    "sensor": next(iter(SENSOR_KEYWORDS)).capitalize(),
+    "sensor": _get_noun(next(iter(SENSOR_KEYWORDS))),
 }
 
 

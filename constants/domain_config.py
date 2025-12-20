@@ -35,17 +35,74 @@ from .entity_keywords import (
 )
 
 
+def _extract_nouns(keywords_dict: Dict[str, str]) -> List[str]:
+    """Extract nouns from 'article noun' format keywords.
+    
+    E.g., {"das licht": "die lichter"} -> ["licht", "lichter"]
+    """
+    nouns = []
+    for key, value in keywords_dict.items():
+        nouns.append(key.split()[-1])   # Last word of key
+        nouns.append(value.split()[-1]) # Last word of value
+    return nouns
+
+
+def _get_name_de(keywords_dict: Dict[str, str]) -> str:
+    """Get German singular name from first keyword.
+    
+    E.g., {"das licht": ...} -> "Licht"
+    """
+    first_key = next(iter(keywords_dict.keys()))
+    return first_key.split()[-1].capitalize()
+
+
+def _get_name_de_plural(keywords_dict: Dict[str, str]) -> str:
+    """Get German plural name from first keyword's value.
+    
+    E.g., {...: "die lichter"} -> "Lichter"
+    """
+    first_value = next(iter(keywords_dict.values()))
+    return first_value.split()[-1].capitalize()
+
+
+def _get_device_word_de(keywords_dict: Dict[str, str]) -> str:
+    """Get German device word with article from first keyword.
+    
+    Converts to accusative case for use in commands (e.g., "Öffne den Rollladen").
+    E.g., {"der rollladen": ...} -> "den Rollladen"
+    """
+    first_key = next(iter(keywords_dict.keys()))
+    parts = first_key.split()
+    article = parts[0]
+    noun = parts[-1].capitalize()
+    # Convert nominative to accusative (der -> den for masculine)
+    if article == "der":
+        article = "den"
+    return article + " " + noun
+
+
+def _get_device_word_de_plural(keywords_dict: Dict[str, str]) -> str:
+    """Get German device word plural with article (accusative case).
+    
+    E.g., {...: "die lichter"} -> "die Lichter"
+    """
+    first_value = next(iter(keywords_dict.values()))
+    parts = first_value.split()
+    # Plural articles stay the same in accusative
+    return parts[0] + " " + parts[-1].capitalize()
+
+
 # --- Domain Configuration ---
 
 DOMAIN_CONFIG: Dict[str, Dict[str, Any]] = {
     "light": {
-        # Display names (German)
-        "name_de": "Licht",
-        "name_de_plural": "Lichter",
-        "device_word_de": "das Licht",
+        # Display names derived from LIGHT_KEYWORDS
+        "name_de": _get_name_de(LIGHT_KEYWORDS),
+        "name_de_plural": _get_name_de_plural(LIGHT_KEYWORDS),
+        "device_word_de": _get_device_word_de(LIGHT_KEYWORDS),
         
-        # Keywords for domain detection (merged from entity_keywords)
-        "keywords": list(LIGHT_KEYWORDS.keys()) + list(LIGHT_KEYWORDS.values()),
+        # Keywords for domain detection
+        "keywords": _extract_nouns(LIGHT_KEYWORDS),
         
         # Supported intents
         "intents": [
@@ -61,7 +118,7 @@ DOMAIN_CONFIG: Dict[str, Dict[str, Any]] = {
             "attribute": "brightness",
             "step_percent": 35,  # Percentage of current value
             "min_step": 10,      # Minimum absolute step
-            "off_to_on": 30,     # Value when turning on from off
+            "off_to_on": 50,     # Value when turning on from off
             "unit": "%",
         },
         
@@ -70,11 +127,13 @@ DOMAIN_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     
     "cover": {
-        "name_de": "Rollo",
-        "name_de_plural": "Rollläden",
-        "device_word_de": "die Rollläden",
+        # Display names derived from COVER_KEYWORDS
+        "name_de": _get_name_de(COVER_KEYWORDS),
+        "name_de_plural": _get_name_de_plural(COVER_KEYWORDS),
+        "device_word_de": _get_device_word_de_plural(COVER_KEYWORDS),  # Plural for area scope
+        "device_word_de_singular": _get_device_word_de(COVER_KEYWORDS),  # Singular for entity scope
         
-        "keywords": list(COVER_KEYWORDS.keys()) + list(COVER_KEYWORDS.values()),
+        "keywords": _extract_nouns(COVER_KEYWORDS),
         
         "intents": [
             "HassTurnOn",  # Open
@@ -96,11 +155,11 @@ DOMAIN_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     
     "switch": {
-        "name_de": "Schalter",
-        "name_de_plural": "Schalter",
-        "device_word_de": "den Schalter",
+        "name_de": _get_name_de(SWITCH_KEYWORDS),
+        "name_de_plural": _get_name_de_plural(SWITCH_KEYWORDS),
+        "device_word_de": _get_device_word_de(SWITCH_KEYWORDS),
         
-        "keywords": list(SWITCH_KEYWORDS.keys()) + list(SWITCH_KEYWORDS.values()),
+        "keywords": _extract_nouns(SWITCH_KEYWORDS),
         
         "intents": [
             "HassTurnOn",
@@ -115,11 +174,11 @@ DOMAIN_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     
     "fan": {
-        "name_de": "Ventilator",
-        "name_de_plural": "Ventilatoren",
-        "device_word_de": "den Ventilator",
+        "name_de": _get_name_de(FAN_KEYWORDS),
+        "name_de_plural": _get_name_de_plural(FAN_KEYWORDS),
+        "device_word_de": _get_device_word_de(FAN_KEYWORDS),
         
-        "keywords": list(FAN_KEYWORDS.keys()) + list(FAN_KEYWORDS.values()),
+        "keywords": _extract_nouns(FAN_KEYWORDS),
         
         "intents": [
             "HassTurnOn",
@@ -140,11 +199,11 @@ DOMAIN_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     
     "climate": {
-        "name_de": "Heizung",
-        "name_de_plural": "Heizungen",
-        "device_word_de": "die Heizung",
+        "name_de": _get_name_de(CLIMATE_KEYWORDS),
+        "name_de_plural": _get_name_de_plural(CLIMATE_KEYWORDS),
+        "device_word_de": _get_device_word_de(CLIMATE_KEYWORDS),
         
-        "keywords": list(CLIMATE_KEYWORDS.keys()) + list(CLIMATE_KEYWORDS.values()),
+        "keywords": _extract_nouns(CLIMATE_KEYWORDS),
         
         "intents": [
             "HassClimateSetTemperature",
@@ -165,11 +224,11 @@ DOMAIN_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     
     "media_player": {
-        "name_de": "Mediaplayer",
-        "name_de_plural": "Mediaplayer",
-        "device_word_de": "den Fernseher",
+        "name_de": _get_name_de(MEDIA_KEYWORDS),
+        "name_de_plural": _get_name_de_plural(MEDIA_KEYWORDS),
+        "device_word_de": _get_device_word_de(MEDIA_KEYWORDS),
         
-        "keywords": list(MEDIA_KEYWORDS.keys()) + list(MEDIA_KEYWORDS.values()),
+        "keywords": _extract_nouns(MEDIA_KEYWORDS),
         
         "intents": [
             "HassTurnOn",
@@ -183,11 +242,11 @@ DOMAIN_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     
     "sensor": {
-        "name_de": "Sensor",
-        "name_de_plural": "Sensoren",
-        "device_word_de": "den Sensor",
+        "name_de": _get_name_de(SENSOR_KEYWORDS),
+        "name_de_plural": _get_name_de_plural(SENSOR_KEYWORDS),
+        "device_word_de": _get_device_word_de(SENSOR_KEYWORDS),
         
-        "keywords": list(SENSOR_KEYWORDS.keys()) + list(SENSOR_KEYWORDS.values()) + ["grad", "warm", "kalt", "wieviel"],
+        "keywords": _extract_nouns(SENSOR_KEYWORDS) + ["grad", "warm", "kalt", "wieviel"],
         
         "intents": ["HassGetState"],
         

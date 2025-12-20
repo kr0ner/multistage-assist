@@ -197,12 +197,14 @@ ENTITY_PHRASE_PATTERNS = {
         ("Ist {device} {entity_name} in {area} an", "HassGetState", {}),
     ],
     "cover": [
+        # Entity patterns use singular device word: "den Rollladen {entity_name}"
         ("Öffne {device} {entity_name} in {area}", "HassTurnOn", {}),
         ("Schließe {device} {entity_name} in {area}", "HassTurnOff", {}),
         ("Fahre {device} {entity_name} in {area} weiter hoch", "HassSetPosition", {"command": "step_up"}),
         ("Fahre {device} {entity_name} in {area} weiter runter", "HassSetPosition", {"command": "step_down"}),
         ("Stelle {device} {entity_name} in {area} auf 50 Prozent", "HassSetPosition", {"position": 50}),
-        ("Ist {device} {entity_name} in {area} offen", "HassGetState", {}),
+        ("Ist {device} {entity_name} in {area} offen", "HassGetState", {"state": "open"}),
+        ("Ist {device} {entity_name} in {area} geschlossen", "HassGetState", {"state": "closed"}),
     ],
     "climate": [
         ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
@@ -228,15 +230,47 @@ ENTITY_PHRASE_PATTERNS = {
     ],
 }
 
-# Generic device words by domain
+# Import keywords to generate device words with articles
+from ..constants.entity_keywords import (
+    LIGHT_KEYWORDS,
+    COVER_KEYWORDS,
+    SWITCH_KEYWORDS,
+    FAN_KEYWORDS,
+    MEDIA_KEYWORDS,
+    SENSOR_KEYWORDS,
+    CLIMATE_KEYWORDS,
+)
+
+def _get_first_keyword(keywords_dict):
+    """Get first keyword (singular form with article)."""
+    return next(iter(keywords_dict.keys()))
+
+def _get_first_plural(keywords_dict):
+    """Get first keyword's plural form with article."""
+    return next(iter(keywords_dict.values()))
+
+# Generic device words by domain (plural form for area/floor scope)
+# Auto-generated from entity_keywords with articles
 DOMAIN_DEVICE_WORDS = {
-    "light": "das Licht",
-    "cover": "die Rollläden",
-    "climate": "die Heizung",
-    "switch": "den Schalter",
-    "fan": "den Ventilator",
-    "media_player": "den Fernseher",
-    "sensor": "den Sensor",
+    "light": _get_first_keyword(LIGHT_KEYWORDS),        # "das licht"
+    "cover": _get_first_plural(COVER_KEYWORDS),         # "die rollläden" (plural for area scope)
+    "climate": _get_first_keyword(CLIMATE_KEYWORDS),    # "das thermostat"
+    "switch": _get_first_keyword(SWITCH_KEYWORDS),      # "der schalter"
+    "fan": _get_first_keyword(FAN_KEYWORDS),            # "der ventilator"
+    "media_player": _get_first_keyword(MEDIA_KEYWORDS), # "der tv"
+    "sensor": _get_first_keyword(SENSOR_KEYWORDS),      # "der sensor"
+    "automation": "die Automatisierung",
+}
+
+# Singular device words for entity-scope patterns (single entity)
+DOMAIN_DEVICE_WORDS_SINGULAR = {
+    "light": _get_first_keyword(LIGHT_KEYWORDS),        # "das licht"
+    "cover": _get_first_keyword(COVER_KEYWORDS),        # "der rollladen" (singular!)
+    "climate": _get_first_keyword(CLIMATE_KEYWORDS),
+    "switch": _get_first_keyword(SWITCH_KEYWORDS),
+    "fan": _get_first_keyword(FAN_KEYWORDS),
+    "media_player": _get_first_keyword(MEDIA_KEYWORDS),
+    "sensor": _get_first_keyword(SENSOR_KEYWORDS),
     "automation": "die Automatisierung",
 }
 
@@ -483,10 +517,11 @@ class SemanticCacheBuilder:
                         )
                     )
 
-                    # --- TIER 2: ENTITY-SCOPE ---
+                    # --- TIER 2: ENTITY-SCOPE (use singular device word) ---
+                    device_word_singular = DOMAIN_DEVICE_WORDS_SINGULAR.get(domain, device_word)
                     new_anchors.extend(
                         await self._generate_entity_anchors(
-                            domain, area_name, entity_list, device_word, entity_patterns
+                            domain, area_name, entity_list, device_word_singular, entity_patterns
                         )
                     )
 

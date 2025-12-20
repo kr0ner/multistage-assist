@@ -69,6 +69,13 @@
   - Now skips empty string slots before passing to Home Assistant
   - File: `intent_executor.py`
 
+- **Fixed semantic cache anchor German grammar**
+  - Entity-scope now uses singular: "Öffne **den Rollladen** Büro Ost im Büro"
+  - Area-scope uses plural: "Öffne **die Rollläden** im Büro"
+  - Centralized articles in `entity_keywords.py` (e.g., "das licht" → "die lichter")
+  - Added `_extract_nouns()` helpers in `domain_config.py`, `keyword_intent.py`
+  - Files: `entity_keywords.py`, `semantic_cache_builder.py`, `domain_config.py`, `keyword_intent.py`
+
 ### Code Cleanup
 
 - **Dead code removal**

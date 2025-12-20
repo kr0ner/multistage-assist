@@ -19,21 +19,28 @@ from custom_components.multistage_assist.conversation_utils import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _extract_nouns(keywords_dict: Dict[str, str]) -> List[str]:
+    """Extract nouns from 'article noun' format keywords."""
+    nouns = []
+    for key, value in keywords_dict.items():
+        nouns.append(key.split()[-1])
+        nouns.append(value.split()[-1])
+    return nouns
+
+
 class KeywordIntentCapability(Capability):
     """Derive intent/domain from keywords."""
 
     name = "keyword_intent"
 
     DOMAIN_KEYWORDS = {
-        "light": list(LIGHT_KEYWORDS.values()) + list(LIGHT_KEYWORDS.keys()),
-        "cover": list(COVER_KEYWORDS.values()) + list(COVER_KEYWORDS.keys()),
-        "switch": list(SWITCH_KEYWORDS.values()) + list(SWITCH_KEYWORDS.keys()),
-        "fan": list(FAN_KEYWORDS.values()) + list(FAN_KEYWORDS.keys()),
-        "media_player": list(MEDIA_KEYWORDS.values()) + list(MEDIA_KEYWORDS.keys()),
-        "sensor": list(SENSOR_KEYWORDS.values())
-        + list(SENSOR_KEYWORDS.keys())
-        + ["grad", "warm", "kalt", "wieviel"],
-        "climate": list(CLIMATE_KEYWORDS.values()) + list(CLIMATE_KEYWORDS.keys()),
+        "light": _extract_nouns(LIGHT_KEYWORDS),
+        "cover": _extract_nouns(COVER_KEYWORDS),
+        "switch": _extract_nouns(SWITCH_KEYWORDS),
+        "fan": _extract_nouns(FAN_KEYWORDS),
+        "media_player": _extract_nouns(MEDIA_KEYWORDS),
+        "sensor": _extract_nouns(SENSOR_KEYWORDS) + ["grad", "warm", "kalt", "wieviel"],
+        "climate": _extract_nouns(CLIMATE_KEYWORDS),
         "timer": TIMER_KEYWORDS,
         "vacuum": VACUUM_KEYWORDS,
         "calendar": CALENDAR_KEYWORDS,

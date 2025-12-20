@@ -45,6 +45,13 @@
   - Added safety check and auto-rebuild of BM25 index
   - Falls back to vector-only search if rebuild fails
 
+- **Fixed HassGetState response for list vs yes/no questions**
+  - "Welche Lichter sind an?" → Lists matching: "Licht Küche und Licht Wohnzimmer sind an."
+  - "Sind alle Lichter an?" → Yes/no with exceptions: "Nein, Licht Garage ist noch aus."
+  - "Ist das Licht in der Dusche an?" → Yes/no for single: "Ja, Dusche ist an."
+  - Detects question type from user input keywords and entity count
+  - File: `intent_executor.py`
+
 ### Code Cleanup
 
 - **Dead code removal**

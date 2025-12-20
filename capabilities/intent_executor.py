@@ -224,6 +224,10 @@ class IntentExecutorCapability(Capability):
             return {}
 
         # --- STATE FILTERING for HassGetState queries ---
+        # For "Welche Lichter sind an?" - we need to know about ALL entities
+        # to properly answer "Ja, alle sind an" vs "Nein, 4 von 24 sind an"
+        all_entity_ids = valid_ids.copy()  # Track ALL before filtering
+        
         if intent_name == "HassGetState" and "state" in params:
             requested_state = params.get("state", "").lower()
             if requested_state:
@@ -234,8 +238,9 @@ class IntentExecutorCapability(Capability):
                     if hass.states.get(eid).state.lower() == requested_state
                 ]
                 _LOGGER.debug(
-                    "[IntentExecutor] Filtered to %d entities with state='%s'",
+                    "[IntentExecutor] Filtered to %d of %d entities with state='%s'",
                     len(valid_ids),
+                    len(all_entity_ids),
                     requested_state,
                 )
 
@@ -522,53 +527,87 @@ class IntentExecutorCapability(Capability):
                 
                 domain = entity_ids[0].split(".")[0] if entity_ids else None
                 
-                # Check for yes/no question: "Sind alle X geschlossen/an/offen?"
+                # Detect question type from user input
+                user_text = user_input.text.lower()
                 query_state = params.get("state", "").lower()
-                is_yes_no_query = query_state and len(names) > 1
                 
-                if is_yes_no_query and query_state:
-                    # Check if ALL entities match the queried state
-                    # Import state descriptions from response_builder
-                    from ..utils.response_builder import STATE_DESCRIPTIONS_DE, build_state_response
+                # "Welche Lichter sind an?" → LIST the matching ones
+                # "Sind alle Lichter an?" → YES/NO about ALL entities
+                is_list_question = any(w in user_text for w in ["welche", "welches", "was für", "was ist", "wie viele"])
+                is_all_question = "alle" in user_text or "sämtliche" in user_text
+                
+                from ..utils.response_builder import STATE_DESCRIPTIONS_DE, build_state_response
+                
+                # State mapping for comparison
+                state_map = {
+                    "closed": ["closed"],
+                    "geschlossen": ["closed"],
+                    "open": ["open"],
+                    "offen": ["open"],
+                    "on": ["on"],
+                    "an": ["on"],
+                    "off": ["off"],
+                    "aus": ["off"],
+                }
+                expected_states = state_map.get(query_state, [query_state]) if query_state else []
+                
+                # Get German state words
+                domain_states = STATE_DESCRIPTIONS_DE.get(domain, {})
+                positive_word = domain_states.get(expected_states[0], query_state) if expected_states else ""
+                opposite_map = {"an": "aus", "aus": "an", "offen": "geschlossen", "geschlossen": "offen"}
+                opposite_word = opposite_map.get(positive_word, "anders")
+                
+                if is_list_question and query_state:
+                    # LIST QUESTION: "Welche Lichter sind an?" → list the matching ones (names)
+                    # names/states come from filtered results (only matching entities)
+                    if len(names) == 0:
+                        speech_text = f"Keine sind {positive_word}."
+                    elif len(names) == 1:
+                        speech_text = f"{names[0]} ist {positive_word}."
+                    elif len(names) <= 5:
+                        speech_text = f"{join_names(names)} sind {positive_word}."
+                    else:
+                        speech_text = f"{len(names)} sind {positive_word}."
+                        
+                elif is_all_question and query_state:
+                    # YES/NO QUESTION: "Sind alle Lichter an?" → check ALL entities
+                    # Get names and states for ALL entities (not just filtered)
+                    all_names = []
+                    all_states = []
+                    for eid in all_entity_ids:
+                        state_obj = hass.states.get(eid)
+                        if state_obj:
+                            all_names.append(state_obj.attributes.get("friendly_name", eid))
+                            all_states.append(state_obj.state)
                     
-                    # Normalize states for comparison
-                    state_map = {
-                        "closed": ["closed"],
-                        "geschlossen": ["closed"],
-                        "open": ["open"],
-                        "offen": ["open"],
-                        "on": ["on"],
-                        "an": ["on"],
-                        "off": ["off"],
-                        "aus": ["off"],
-                    }
-                    expected_states = state_map.get(query_state, [query_state])
-                    
-                    matching = [n for n, s in zip(names, states) if s in expected_states]
-                    not_matching = [n for n, s in zip(names, states) if s not in expected_states]
-                    
-                    # Get German state words from centralized definitions
-                    domain_states = STATE_DESCRIPTIONS_DE.get(domain, {})
-                    # Map expected state to German positive word
-                    positive_word = domain_states.get(expected_states[0], query_state)
-                    # Get opposite state word
-                    opposite_map = {"an": "aus", "aus": "an", "offen": "geschlossen", "geschlossen": "offen"}
-                    opposite_word = opposite_map.get(positive_word, "anders")
+                    matching = [n for n, s in zip(all_names, all_states) if s in expected_states]
+                    not_matching = [n for n, s in zip(all_names, all_states) if s not in expected_states]
                     
                     if not not_matching:
                         # All match - simple "Ja"
                         speech_text = f"Ja, alle sind {positive_word}."
                     else:
-                        # Some don't match - list exceptions
+                        # Some don't match - list the NOT matching ones
                         if len(not_matching) <= 3:
                             exceptions = join_names(not_matching)
                             verb = "ist" if len(not_matching) == 1 else "sind"
                             speech_text = f"Nein, {exceptions} {verb} noch {opposite_word}."
                         else:
                             speech_text = f"Nein, {len(not_matching)} sind noch {opposite_word}."
+                
+                elif query_state and len(all_entity_ids) == 1:
+                    # SINGLE ENTITY YES/NO: "Ist das Licht in der Dusche an?"
+                    # → "Ja, Dusche ist an." / "Nein, Dusche ist aus."
+                    entity_state = states[0] if states else hass.states.get(all_entity_ids[0]).state
+                    entity_name = names[0] if names else all_entity_ids[0].split(".")[-1]
+                    
+                    if entity_state in expected_states:
+                        speech_text = f"Ja, {entity_name} ist {positive_word}."
+                    else:
+                        speech_text = f"Nein, {entity_name} ist {opposite_word}."
+                
                 else:
                     # Normal state query - use template
-                    from ..utils.response_builder import build_state_response
                     speech_text = build_state_response(names, states, domain)
                 
                 final_resp.async_set_speech(speech_text)

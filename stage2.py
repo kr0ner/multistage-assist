@@ -23,6 +23,21 @@ class Stage2Processor(BaseStage):
         key = getattr(user_input, "session_id", None) or user_input.conversation_id
         return key in self._chat_sessions
 
+    async def process(self, user_input, context=None):
+        """New unified interface - wraps legacy run() for backward compatibility."""
+        from .stage_result import StageResult
+        result = await self.run(user_input, prev_result=context)
+        if result.get("status") == "handled":
+            return StageResult(
+                status="success",
+                response=result.get("result"),
+                raw_text=user_input.text,
+            )
+        return StageResult.error(
+            response=result.get("result"),
+            raw_text=user_input.text,
+        )
+
     async def run(self, user_input, prev_result=None):
         _LOGGER.debug("[Stage2] Input='%s'. Entering Chat Mode.", user_input.text)
         key = getattr(user_input, "session_id", None) or user_input.conversation_id

@@ -50,6 +50,9 @@ CONF_DEBUG_CACHE_HITS = "debug_cache_hits"  # Log cache hits/misses in detail
 CONF_DEBUG_LLM_PROMPTS = "debug_llm_prompts"  # Log LLM prompts and responses
 CONF_DEBUG_INTENT_RESOLUTION = "debug_intent_resolution"  # Log intent resolution steps
 
+# Pipeline Settings (NEW - Architecture 2.0)
+CONF_USE_NEW_PIPELINE = "use_new_pipeline"  # Use new unified StageResult pipeline
+
 # Default values for expert settings
 EXPERT_DEFAULTS = {
     CONF_RERANKER_THRESHOLD: 0.73,
@@ -66,4 +69,5 @@ EXPERT_DEFAULTS = {
     CONF_DEBUG_CACHE_HITS: False,
     CONF_DEBUG_LLM_PROMPTS: False,
     CONF_DEBUG_INTENT_RESOLUTION: False,
+    CONF_USE_NEW_PIPELINE: False,  # Default to legacy for stability
 }

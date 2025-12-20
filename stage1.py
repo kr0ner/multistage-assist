@@ -118,6 +118,28 @@ class Stage1Processor(BaseStage):
             return with_new_text(user_input, text)
         return user_input
 
+    async def process(self, user_input, context=None):
+        """New unified interface - wraps legacy run() for backward compatibility."""
+        from .stage_result import StageResult
+        result = await self.run(user_input, prev_result=context)
+        # Convert legacy result to StageResult
+        if result.get("status") == "handled":
+            return StageResult(
+                status="success",
+                response=result.get("result"),
+                raw_text=user_input.text,
+            )
+        elif result.get("status") == "escalate":
+            return StageResult.escalate(
+                context={"legacy_result": result.get("result")},
+                raw_text=user_input.text,
+            )
+        else:
+            return StageResult.error(
+                response=result.get("result"),
+                raw_text=user_input.text,
+            )
+
     async def run(self, user_input, prev_result=None):
         _LOGGER.debug("[Stage1] Input='%s'", user_input.text)
         key = getattr(user_input, "session_id", None) or user_input.conversation_id

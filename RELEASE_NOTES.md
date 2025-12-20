@@ -57,6 +57,13 @@
   - Added German floor aliases: EG↔Erdgeschoss, OG↔Obergeschoss, UG↔Untergeschoss, etc.
   - File: `entity_resolver.py`
 
+- **Fixed Home Assistant alias resolution globally**
+  - Areas: "S-Zimmer" matches "Esszimmer" via HA aliases
+  - Floors: HA floor aliases now checked in addition to German aliases
+  - Entities: HA entity aliases now checked in name matching
+  - All locations now search: (1) name, (2) HA aliases, (3) partial match
+  - File: `entity_resolver.py`
+
 - **Fixed empty slot validation errors**
   - LLM returning `device_class: ""` caused "Received invalid slot info" HA errors
   - Now skips empty string slots before passing to Home Assistant

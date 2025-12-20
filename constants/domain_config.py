@@ -258,6 +258,20 @@ DOMAIN_CONFIG: Dict[str, Dict[str, Any]] = {
 }
 
 
+# --- Floor Aliases (German abbreviations and synonyms) ---
+FLOOR_ALIASES_DE: Dict[str, List[str]] = {
+    "eg": ["erdgeschoss", "ground floor", "parterre"],
+    "erdgeschoss": ["eg", "ground floor", "parterre", "unten"],
+    "og": ["obergeschoss", "first floor", "oben"],
+    "obergeschoss": ["og", "first floor", "oben", "1og", "1. og"],
+    "ug": ["untergeschoss", "basement", "keller"],
+    "untergeschoss": ["ug", "basement", "keller"],
+    "keller": ["ug", "untergeschoss", "basement"],
+    "dg": ["dachgeschoss", "attic"],
+    "dachgeschoss": ["dg", "attic", "dach"],
+}
+
+
 # --- Helper Functions ---
 
 def get_domain_name(domain: str, plural: bool = False) -> str:

@@ -21,6 +21,7 @@ from homeassistant.const import (
 
 from .base import Capability
 from ..utils.fuzzy_utils import get_fuzz
+from ..constants.domain_config import FLOOR_ALIASES_DE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -289,32 +290,27 @@ class EntityResolverCapability(Capability):
         floors = list(floor_reg.async_list_floors())
         needle = self._canon(floor_name)
         
-        # Common German floor aliases
-        floor_aliases = {
-            "eg": ["erdgeschoss", "ground floor", "parterre"],
-            "erdgeschoss": ["eg", "ground floor", "parterre", "unten"],
-            "og": ["obergeschoss", "first floor", "oben"],
-            "obergeschoss": ["og", "first floor", "oben", "1og", "1. og"],
-            "ug": ["untergeschoss", "basement", "keller"],
-            "untergeschoss": ["ug", "basement", "keller"],
-            "keller": ["ug", "untergeschoss", "basement"],
-            "dg": ["dachgeschoss", "attic"],
-            "dachgeschoss": ["dg", "attic", "dach"],
-        }
-        
-        # Expand needle to include aliases
+        # Expand needle to include common German floor aliases
         search_terms = {needle}
-        if needle in floor_aliases:
-            search_terms.update(floor_aliases[needle])
+        if needle in FLOOR_ALIASES_DE:
+            search_terms.update(FLOOR_ALIASES_DE[needle])
         
-        # Try exact match first
+        # First pass: exact name match
         for floor in floors:
             floor_canon = self._canon(floor.name)
             if floor_canon in search_terms:
                 _LOGGER.debug("[EntityResolver] Floor match: '%s' → '%s'", floor_name, floor.name)
                 return floor
         
-        # Try if floor name contains the search term or vice versa
+        # Second pass: check HA registered floor aliases
+        for floor in floors:
+            aliases = getattr(floor, "aliases", None) or set()
+            for alias in aliases:
+                if self._canon(alias) in search_terms or needle == self._canon(alias):
+                    _LOGGER.debug("[EntityResolver] Floor HA alias match: '%s' → '%s'", floor_name, floor.name)
+                    return floor
+        
+        # Third pass: partial match (name contains search term or vice versa)
         for floor in floors:
             floor_canon = self._canon(floor.name)
             for term in search_terms:
@@ -395,10 +391,28 @@ class EntityResolverCapability(Capability):
         area_reg = ar.async_get(self.hass)
         needle = self._canon(area_name)
         areas = area_reg.async_list_areas()
+        
+        # First pass: exact name match
         for a in areas:
             canon_name = self._canon(a.name or "")
             if canon_name == needle:
                 return a
+        
+        # Second pass: check HA aliases (e.g., "S-Zimmer" alias for "Esszimmer")
+        for a in areas:
+            aliases = getattr(a, "aliases", None) or set()
+            for alias in aliases:
+                if self._canon(alias) == needle:
+                    _LOGGER.debug("[EntityResolver] Area alias match: '%s' → '%s'", area_name, a.name)
+                    return a
+        
+        # Third pass: partial match (name contains needle or vice versa)
+        for a in areas:
+            canon_name = self._canon(a.name or "")
+            if needle in canon_name or canon_name in needle:
+                _LOGGER.debug("[EntityResolver] Area partial match: '%s' → '%s'", area_name, a.name)
+                return a
+        
         return None
 
     def _entities_in_area(self, area, domain: Optional[str]) -> List[str]:
@@ -429,16 +443,34 @@ class EntityResolverCapability(Capability):
             return []
         needle = self._canon(name)
         out: List[str] = []
+        ent_reg = er.async_get(hass)
+        
         for eid, ent in all_entities.items():
             if domain and not eid.startswith(f"{domain}."):
                 continue
             st = hass.states.get(eid)
             friendly = st and st.attributes.get("friendly_name")
+            
+            # Check friendly name
             if isinstance(friendly, str) and self._canon(friendly) == needle:
                 out.append(eid)
                 continue
+            
+            # Check object_id
             if self._canon(self._obj_id(eid)) == needle:
                 out.append(eid)
+                continue
+            
+            # Check HA entity aliases
+            entry = ent_reg.async_get(eid)
+            if entry:
+                aliases = getattr(entry, "aliases", None) or set()
+                for alias in aliases:
+                    if self._canon(alias) == needle:
+                        _LOGGER.debug("[EntityResolver] Entity alias match: '%s' → '%s'", name, eid)
+                        out.append(eid)
+                        break
+        
         return out
 
     def _collect_by_name_fuzzy(

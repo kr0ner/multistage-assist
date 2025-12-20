@@ -33,7 +33,13 @@ class MemoryCapability(Capability):
     # --- AREAS ---
     async def get_area_alias(self, text: str) -> Optional[str]:
         await self._ensure_loaded()
-        return self._data["areas"].get(text.lower().strip())
+        key = text.lower().strip()
+        result = self._data["areas"].get(key)
+        if result:
+            _LOGGER.debug("[Memory] Area alias hit: '%s' → '%s'", key, result)
+        else:
+            _LOGGER.debug("[Memory] Area alias miss: '%s' (available: %s)", key, list(self._data["areas"].keys()))
+        return result
 
     async def learn_area_alias(self, text: str, area_name: str):
         await self._ensure_loaded()

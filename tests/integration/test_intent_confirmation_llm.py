@@ -74,13 +74,13 @@ def make_input(text: str):
         ("HassSetPosition", ["Rollo Bad"], {"position": "75"}, ["75"]),  # rollo/rollladen checked separately
         # Temporary control with duration
         (
-            "HassTemporaryControl",
+            "TemporaryControl",
             ["Flur"],
             {"duration": "10 Minuten", "command": "on"},
             ["flur", "10", "minuten"],
         ),
         (
-            "HassTemporaryControl",
+            "TemporaryControl",
             ["Garage"],
             {"duration": "5 Minuten", "command": "off"},
             ["garage", "5", "minuten"],
@@ -181,7 +181,7 @@ async def test_duration_in_confirmation(confirmation_capability):
     for duration, keywords in duration_tests:
         result = await confirmation_capability.run(
             user_input,
-            intent_name="HassTemporaryControl",
+            intent_name="TemporaryControl",
             entity_ids=["light.test"],
             params={"duration": duration, "command": "on"},
         )

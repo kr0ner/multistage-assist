@@ -47,15 +47,15 @@ def make_input(text: str):
         ),
         ("Licht auf 50%", "HassLightSet", {"domain": "light", "brightness": "50"}),
         ("Licht im Bad an", "HassTurnOn", {"domain": "light", "area": "Bad"}),
-        # Duration-based (HassTemporaryControl)
+        # Duration-based (TemporaryControl)
         (
             "Licht für 10 Minuten an",
-            "HassTemporaryControl",
+            "TemporaryControl",
             {"duration": "10 Minuten", "command": "on"},
         ),
         (
             "Schalte das Licht für 5 Minuten aus",
-            "HassTemporaryControl",
+            "TemporaryControl",
             {"duration": "5 Minuten", "command": "off"},
         ),
         # Cover commands - LLM may use various intents for covers

@@ -466,11 +466,11 @@ class Stage1Processor(BaseStage):
                     # --------------------------
 
                     # --- TEMPORARY CONTROL INTERCEPT ---
-                    # HassTemporaryControl needs resolution then passes to command_processor
+                    # TemporaryControl needs resolution then passes to command_processor
                     # which handles the timebox script execution
-                    if intent_name == "HassTemporaryControl":
+                    if intent_name == "TemporaryControl":
                         _LOGGER.debug(
-                            "[Stage1] HassTemporaryControl detected with duration=%s",
+                            "[Stage1] TemporaryControl detected with duration=%s",
                             slots.get("duration"),
                         )
                         # Resolve entities first (pass ki_data to avoid duplicate LLM call)
@@ -482,7 +482,7 @@ class Stage1Processor(BaseStage):
                         res = await processor.process(
                             user_input,
                             res_data["entity_ids"],
-                            intent_name,  # Pass HassTemporaryControl
+                            intent_name,  # Pass TemporaryControl
                             {
                                 k: v
                                 for k, v in res_data["slots"].items()
@@ -701,12 +701,12 @@ class Stage1Processor(BaseStage):
             # Can't determine intent
             return None
         
-        # Check for duration (HassTemporaryControl)
+        # Check for duration (TemporaryControl)
         duration = None
         duration_match = re.search(r'für\s+(\d+)\s*(minuten?|sekunden?|stunden?)', text, re.IGNORECASE)
         if duration_match:
             duration = duration_match.group(0)
-            intent = "HassTemporaryControl"
+            intent = "TemporaryControl"
         
         # Get all entities and try fuzzy matching
         ent_reg = er.async_get(self.hass)

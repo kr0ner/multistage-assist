@@ -126,12 +126,12 @@ AREA_PHRASE_PATTERNS = {
         ("Ist {device} in {area} an", "HassGetState", {}),
         ("Brennt {device} in {area}", "HassGetState", {}),
         
-        # === HassDelayedControl - delayed on/off ===
-        ("Schalte {device} in {area} in 10 Minuten an", "HassDelayedControl", {"command": "on"}),
-        ("Schalte {device} in {area} in 10 Minuten aus", "HassDelayedControl", {"command": "off"}),
-        ("Mach {device} in {area} in 5 Minuten an", "HassDelayedControl", {"command": "on"}),
-        ("Mach {device} in {area} um 15 Uhr an", "HassDelayedControl", {"command": "on"}),
-        ("Mach {device} in {area} um 15 Uhr aus", "HassDelayedControl", {"command": "off"}),
+        # === DelayedControl - delayed on/off ===
+        ("Schalte {device} in {area} in 10 Minuten an", "DelayedControl", {"command": "on"}),
+        ("Schalte {device} in {area} in 10 Minuten aus", "DelayedControl", {"command": "off"}),
+        ("Mach {device} in {area} in 5 Minuten an", "DelayedControl", {"command": "on"}),
+        ("Mach {device} in {area} um 15 Uhr an", "DelayedControl", {"command": "on"}),
+        ("Mach {device} in {area} um 15 Uhr aus", "DelayedControl", {"command": "off"}),
     ],
     "cover": [
         # === Cover Open ===
@@ -168,9 +168,9 @@ AREA_PHRASE_PATTERNS = {
         ("{device} in {area} aus", "HassTurnOff", {}),
         ("Mach {device} in {area} aus", "HassTurnOff", {}),
         ("Ist {device} in {area} an", "HassGetState", {}),
-        # HassDelayedControl
-        ("Schalte {device} in {area} in 10 Minuten an", "HassDelayedControl", {"command": "on"}),
-        ("Schalte {device} in {area} in 10 Minuten aus", "HassDelayedControl", {"command": "off"}),
+        # DelayedControl
+        ("Schalte {device} in {area} in 10 Minuten an", "DelayedControl", {"command": "on"}),
+        ("Schalte {device} in {area} in 10 Minuten aus", "DelayedControl", {"command": "off"}),
     ],
     "fan": [
         ("Schalte {device} in {area} an", "HassTurnOn", {}),

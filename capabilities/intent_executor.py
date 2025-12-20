@@ -390,11 +390,11 @@ class IntentExecutorCapability(Capability):
             if intent_name == "HassClimateGetTemperature" and domain == "sensor":
                 effective_intent = "HassGetState"
 
-            # --- 2. TIMEBOX: HassTemporaryControl or HassTurnOn/Off with duration ---
+            # --- 2. TIMEBOX: TemporaryControl or HassTurnOn/Off with duration ---
             minutes, seconds = self._extract_duration(current_params)
             
-            # Handle HassTemporaryControl (convert to timebox)
-            if intent_name == "HassTemporaryControl":
+            # Handle TemporaryControl (convert to timebox)
+            if intent_name == "TemporaryControl":
                 command = current_params.get("command", "on")
                 action = "on" if command in ("on", "an", "ein", "auf") else "off"
                 
@@ -419,7 +419,7 @@ class IntentExecutorCapability(Capability):
                         duration_str = format_seconds_to_string(minutes * 60 + seconds)
 
                     speech = build_confirmation(
-                        "HassTemporaryControl",
+                        "TemporaryControl",
                         [name],
                         params={"duration_str": duration_str, "action": action_de}
                     )
@@ -453,7 +453,7 @@ class IntentExecutorCapability(Capability):
                     duration_str = format_seconds_to_string(minutes * 60 + seconds)
 
                 speech = build_confirmation(
-                    "HassTemporaryControl",
+                    "TemporaryControl",
                     [name],
                     params={"duration_str": duration_str, "action": action_de}
                 )
@@ -462,9 +462,9 @@ class IntentExecutorCapability(Capability):
                 results.append((eid, resp))
                 continue
 
-            # --- 2b. DELAYED CONTROL: HassDelayedControl ---
+            # --- 2b. DELAYED CONTROL: DelayedControl ---
             # Handle delayed actions (execute action after delay)
-            if intent_name == "HassDelayedControl":
+            if intent_name == "DelayedControl":
                 delay_str = current_params.get("delay", "")
                 command = current_params.get("command", "on")
                 action = "on" if command in ("on", "an", "ein", "auf") else "off"
@@ -497,7 +497,7 @@ class IntentExecutorCapability(Capability):
                     )
                     
                     speech = build_confirmation(
-                        "HassDelayedControl",
+                        "DelayedControl",
                         [name],
                         params={"delay_str": delay_display, "action": action_de}
                     )

@@ -40,8 +40,8 @@ Verfügbare Intents:
 - HassSetPosition: Position setzen (Rollo auf 50%)
 - HassGetState: Status abfragen (Ist das Licht an?)
 - HassClimateSetTemperature: Temperatur einstellen (Heizung auf 21 Grad)
-- HassTemporaryControl: Zeitlich begrenzt (für 10 Minuten an)
-- HassDelayedControl: Verzögert (in 10 Minuten aus)
+- TemporaryControl: Zeitlich begrenzt (für 10 Minuten an)
+- DelayedControl: Verzögert (in 10 Minuten aus)
 - HassTimerSet: Timer stellen
 
 Wenn der Benutzer eine allgemeine Frage stellt oder chatten möchte, antworte mit:

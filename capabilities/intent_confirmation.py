@@ -24,8 +24,8 @@ class IntentConfirmationCapability(Capability):
         "HassClimateSetTemperature": "Thermostat target temperature was changed.",
         "HassTimerSet": "A timer was successfully set.",
         "HassGetState": "A state or measurement was queried.",
-        "HassTemporaryControl": "The device was switched on/off TEMPORARILY.",
-        "HassDelayedControl": "The action will be executed AFTER a delay.",
+        "TemporaryControl": "The device was switched on/off TEMPORARILY.",
+        "DelayedControl": "The action will be executed AFTER a delay.",
         "HassVacuumStart": "Vacuum/Mop was started.",
     }
 

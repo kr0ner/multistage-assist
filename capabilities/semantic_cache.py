@@ -663,7 +663,7 @@ class SemanticCacheCapability(Capability):
             self._stats["cache_misses"] += 1
             return None
 
-        # Pre-check: Skip cache for duration patterns (HassTemporaryControl)
+        # Pre-check: Skip cache for duration patterns (TemporaryControl)
         # These need LLM to extract the exact duration value
         duration_patterns = [
             r"\bfür\s+\d+\s*(minuten?|stunden?|sekunden?)\b",
@@ -841,8 +841,8 @@ class SemanticCacheCapability(Capability):
             "HassCreateEvent",
             "HassTimerSet",
             "HassStartTimer",
-            "HassTemporaryControl",  # Duration-specific, not generalizable
-            "HassDelayedControl",    # Delay-specific, not generalizable
+            "TemporaryControl",  # Duration-specific, not generalizable
+            "DelayedControl",    # Delay-specific, not generalizable
         ):
             _LOGGER.debug("[SemanticCache] SKIP: non-repeatable intent %s", intent)
             return

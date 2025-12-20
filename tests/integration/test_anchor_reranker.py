@@ -236,7 +236,7 @@ class TestHassGetStateRealReranker:
             f"Query: '{query}' got score {score:.3f}, expected {'hit' if expected_hit else 'miss'}"
 
 
-class TestHassTemporaryControlRealReranker:
+class TestTemporaryControlRealReranker:
     """Test TemporaryControl anchor matching with real reranker."""
     
     ANCHOR = "Schalte das Licht im Büro für eine Zeit an"

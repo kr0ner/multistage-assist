@@ -28,8 +28,8 @@ _LOGGER = logging.getLogger(__name__)
 
 # Custom intents that should bypass cache (require fresh LLM processing)
 CACHE_BYPASS_INTENTS = {
-    "HassTemporaryControl",
-    "HassDelayedControl",
+    "TemporaryControl",
+    "DelayedControl",
     "HassTimerSet",
     # Future: TemporaryControl, DelayedControl, TimerSet (after rename)
 }

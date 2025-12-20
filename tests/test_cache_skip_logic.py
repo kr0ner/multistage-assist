@@ -68,16 +68,16 @@ class TestNonCacheableIntents:
     """Tests for intents that should not be cached."""
 
     def test_temporary_control_in_skip_list(self):
-        """HassTemporaryControl should be in the non-cacheable list."""
+        """TemporaryControl should be in the non-cacheable list."""
         non_cacheable = (
             "HassCalendarCreate",
             "HassCreateEvent",
             "HassTimerSet",
             "HassStartTimer",
-            "HassTemporaryControl",
+            "TemporaryControl",
         )
         
-        assert "HassTemporaryControl" in non_cacheable
+        assert "TemporaryControl" in non_cacheable
 
     def test_timer_set_in_skip_list(self):
         """HassTimerSet should be in the non-cacheable list."""
@@ -86,7 +86,7 @@ class TestNonCacheableIntents:
             "HassCreateEvent",
             "HassTimerSet",
             "HassStartTimer",
-            "HassTemporaryControl",
+            "TemporaryControl",
         )
         
         assert "HassTimerSet" in non_cacheable
@@ -98,7 +98,7 @@ class TestNonCacheableIntents:
             "HassCreateEvent",
             "HassTimerSet",
             "HassStartTimer",
-            "HassTemporaryControl",
+            "TemporaryControl",
         )
         
         assert "HassTurnOn" not in non_cacheable

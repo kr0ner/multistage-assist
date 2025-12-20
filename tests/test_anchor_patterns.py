@@ -317,7 +317,7 @@ class TestHassGetStateAnchorMisses:
             f"Expected MISS for '{query}' ({reason}) but got score {score:.3f}"
 
 
-# NOTE: HassTemporaryControl tests removed - duration patterns are now
+# NOTE: TemporaryControl tests removed - duration patterns are now
 # handled by keyword detection in semantic_cache.py, not semantic matching
 
 

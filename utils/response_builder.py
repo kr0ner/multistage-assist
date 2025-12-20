@@ -147,14 +147,14 @@ def build_confirmation(
             return f"{devices} ist auf {params['temperature']}° gesetzt."
         return f"{devices} ist eingestellt."
     
-    if intent_name == "HassTemporaryControl":
+    if intent_name == "TemporaryControl":
         duration = params.get("duration_str", "")
         action = params.get("action", "eingestellt")
         if duration:
             return f"{devices} ist für {duration} {action}."
         return f"{devices} ist temporär {action}."
     
-    if intent_name == "HassDelayedControl":
+    if intent_name == "DelayedControl":
         delay = params.get("delay_str", "")
         action = params.get("action", "eingestellt")
         if delay:

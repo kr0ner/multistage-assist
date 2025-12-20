@@ -217,7 +217,7 @@ async def test_state_query_media_playing(hass, config_entry):
 
 @pytest.mark.skip(reason="Requires complex HA intent mock setup - covered by test_scenarios.py")
 async def test_temporary_control_generates_speech(hass, config_entry):
-    """Test that HassTemporaryControl generates proper confirmation speech."""
+    """Test that TemporaryControl generates proper confirmation speech."""
     pass
 
 

@@ -420,7 +420,7 @@ async def test_scenario_temporary_control(agent, hass):
     """
     Scenario 6: Temporary Control (Duration-based)
     Input: "Schalte das Licht im Büro für 33 Sekunden an"
-    Log: Intent HassTemporaryControl with duration
+    Log: Intent TemporaryControl with duration
     """
     user_input = conversation.ConversationInput(
         text="Schalte das Licht im Büro für 33 Sekunden an",
@@ -1014,12 +1014,12 @@ async def test_scenario_nonexistent_area_escalates(agent, hass):
 
 async def test_scenario_temporary_control_calls_timebox(agent, hass):
     """
-    Scenario: HassTemporaryControl should properly call the timebox script.
+    Scenario: TemporaryControl should properly call the timebox script.
     Input: "Schalte das Licht im Büro für 3 Minuten an"
     Expected: timebox_entity_state script called with action="on"
     
     This test verifies that:
-    1. HassTemporaryControl intent is correctly identified
+    1. TemporaryControl intent is correctly identified
     2. Duration is parsed correctly
     3. timebox_entity_state script is called with proper parameters
     """

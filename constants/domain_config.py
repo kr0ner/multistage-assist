@@ -110,7 +110,7 @@ DOMAIN_CONFIG: Dict[str, Dict[str, Any]] = {
             "HassTurnOff", 
             "HassLightSet",
             "HassGetState",
-            "HassTemporaryControl",
+            "TemporaryControl",
         ],
         
         # Step configuration for relative adjustments
@@ -140,7 +140,7 @@ DOMAIN_CONFIG: Dict[str, Dict[str, Any]] = {
             "HassTurnOff", # Close
             "HassSetPosition",
             "HassGetState",
-            "HassTemporaryControl",
+            "TemporaryControl",
         ],
         
         "step": {
@@ -165,7 +165,7 @@ DOMAIN_CONFIG: Dict[str, Dict[str, Any]] = {
             "HassTurnOn",
             "HassTurnOff",
             "HassGetState",
-            "HassTemporaryControl",
+            "TemporaryControl",
         ],
         
         "step": None,  # No step support
@@ -184,7 +184,7 @@ DOMAIN_CONFIG: Dict[str, Dict[str, Any]] = {
             "HassTurnOn",
             "HassTurnOff",
             "HassGetState",
-            "HassTemporaryControl",
+            "TemporaryControl",
         ],
         
         "step": {
@@ -307,7 +307,7 @@ DOMAIN_CONFIG: Dict[str, Dict[str, Any]] = {
         "intents": [
             "HassTurnOn",
             "HassTurnOff",
-            "HassTemporaryControl",
+            "TemporaryControl",
         ],
         
         "step": None,

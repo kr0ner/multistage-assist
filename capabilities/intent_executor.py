@@ -27,6 +27,7 @@ class IntentExecutorCapability(Capability):
     BRIGHTNESS_STEP = 35  # Percentage of current brightness for step_up/step_down
     COVER_STEP = 25       # Percentage for cover step_up/step_down (0=closed, 100=open)
     TIMEBOX_SCRIPT_ENTITY_ID = "script.timebox_entity_state"
+    DELAY_SCRIPT_ENTITY_ID = "script.delay_action"
 
     def _extract_duration(self, params: Dict[str, Any]) -> tuple[int, int]:
         """Extract minutes and seconds from params. Returns (minutes, seconds)."""
@@ -35,6 +36,11 @@ class IntentExecutorCapability(Capability):
             seconds = parse_duration_string(duration_raw)
             return (seconds // 60, seconds % 60)
         return (0, 0)
+
+    def _check_script_exists(self, script_entity_id: str) -> bool:
+        """Check if a script entity exists in Home Assistant."""
+        state = self.hass.states.get(script_entity_id)
+        return state is not None
 
     async def _call_timebox_script(
         self,
@@ -48,6 +54,15 @@ class IntentExecutorCapability(Capability):
         
         Returns True on success, False on failure.
         """
+        # Check if script is installed
+        if not self._check_script_exists(self.TIMEBOX_SCRIPT_ENTITY_ID):
+            _LOGGER.error(
+                "[IntentExecutor] Script '%s' not found! "
+                "Please install it from: multistage_assist/scripts/timebox_entity_state.yaml",
+                self.TIMEBOX_SCRIPT_ENTITY_ID
+            )
+            return False
+        
         _LOGGER.debug(
             "[IntentExecutor] Calling timebox script for %s: value=%s, action=%s, duration=%dm%ds",
             entity_id,
@@ -72,6 +87,52 @@ class IntentExecutorCapability(Capability):
         except Exception as e:
             _LOGGER.error(
                 "[IntentExecutor] Timebox script failed for %s: %s", entity_id, e
+            )
+            return False
+
+    async def _call_delay_script(
+        self,
+        entity_id: str,
+        minutes: int,
+        seconds: int,
+        value: int = None,
+        action: str = None,
+    ) -> bool:
+        """Call delay_action script to delay an action.
+        
+        Returns True on success, False on failure.
+        """
+        # Check if script is installed
+        if not self._check_script_exists(self.DELAY_SCRIPT_ENTITY_ID):
+            _LOGGER.error(
+                "[IntentExecutor] Script '%s' not found! "
+                "Please install it from: multistage_assist/scripts/delay_action.yaml",
+                self.DELAY_SCRIPT_ENTITY_ID
+            )
+            return False
+        
+        _LOGGER.debug(
+            "[IntentExecutor] Calling delay script for %s: value=%s, action=%s, delay=%dm%ds",
+            entity_id,
+            value,
+            action,
+            minutes,
+            seconds,
+        )
+        data = {"target_entity": entity_id, "minutes": minutes, "seconds": seconds}
+        if value is not None:
+            data["value"] = value
+        if action is not None:
+            data["action"] = action
+
+        try:
+            await self.hass.services.async_call(
+                "script", "delay_action", data, blocking=False
+            )
+            return True
+        except Exception as e:
+            _LOGGER.error(
+                "[IntentExecutor] Delay script failed for %s: %s", entity_id, e
             )
             return False
     

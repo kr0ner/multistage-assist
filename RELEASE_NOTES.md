@@ -86,6 +86,22 @@
   - Uses `HassTurnOn` instead of `HassLightSet` when light is OFF
   - File: `intent_executor.py`
 
+- **Fixed timer/calendar JSON parsing errors**
+  - LLM was outputting all empty slots causing JSON truncation
+  - Now only outputs non-empty slots
+  - Made `HassGetState` instructions conditional on domain support
+  - File: `keyword_intent.py`
+
+- **Added delay_action script**
+  - Similar to timebox_entity_state but delays action instead of reverting
+  - Usage: Wait X minutes, then turn on/off/set value
+  - File: `scripts/delay_action.yaml`
+
+- **Added script installation checks**
+  - Error logged if `script.timebox_entity_state` or `script.delay_action` not found
+  - Error message includes install path: `multistage_assist/scripts/`
+  - File: `intent_executor.py`
+
 ### Code Cleanup
 
 - **Dead code removal**

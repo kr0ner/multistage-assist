@@ -1,0 +1,81 @@
+alias: Delay Action
+icon: mdi:timer-sand
+mode: parallel
+max: 10
+description: "Delays an action by a specified duration before executing it"
+fields:
+  target_entity:
+    description: Entity to control
+    example: light.kitchen
+  value:
+    description: The numeric value (Brightness %, Position %, Temp, Speed %)
+    example: 50
+  action:
+    description: Action to perform (on, off) - alternative to value
+    example: on
+  minutes:
+    description: Delay in minutes before action
+    example: 5
+  seconds:
+    description: Delay in seconds before action
+    example: 0
+sequence:
+  # Wait for the specified delay
+  - delay:
+      minutes: "{{ minutes | default(0) }}"
+      seconds: "{{ seconds | default(0) }}"
+  
+  # Apply the requested action after delay
+  - choose:
+      # On/Off actions (HassTurnOn/HassTurnOff)
+      - conditions:
+          - condition: template
+            value_template: "{{ action is defined and action == 'on' }}"
+        sequence:
+          - action: homeassistant.turn_on
+            target:
+              entity_id: "{{ target_entity }}"
+      - conditions:
+          - condition: template
+            value_template: "{{ action is defined and action == 'off' }}"
+        sequence:
+          - action: homeassistant.turn_off
+            target:
+              entity_id: "{{ target_entity }}"
+      # Value-based actions (brightness, position, etc.)
+      - conditions:
+          - condition: template
+            value_template: "{{ target_entity.startswith('light.') and value is defined }}"
+        sequence:
+          - action: light.turn_on
+            target:
+              entity_id: "{{ target_entity }}"
+            data:
+              brightness_pct: "{{ value }}"
+      - conditions:
+          - condition: template
+            value_template: "{{ target_entity.startswith('cover.') and value is defined }}"
+        sequence:
+          - action: cover.set_cover_position
+            target:
+              entity_id: "{{ target_entity }}"
+            data:
+              position: "{{ value }}"
+      - conditions:
+          - condition: template
+            value_template: "{{ target_entity.startswith('fan.') and value is defined }}"
+        sequence:
+          - action: fan.set_percentage
+            target:
+              entity_id: "{{ target_entity }}"
+            data:
+              percentage: "{{ value }}"
+      - conditions:
+          - condition: template
+            value_template: "{{ target_entity.startswith('climate.') and value is defined }}"
+        sequence:
+          - action: climate.set_temperature
+            target:
+              entity_id: "{{ target_entity }}"
+            data:
+              temperature: "{{ value }}"

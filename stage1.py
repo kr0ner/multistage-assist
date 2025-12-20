@@ -593,10 +593,28 @@ class Stage1Processor(BaseStage):
         return {"status": "handled", "result": final}
 
     async def _add_confirmation_if_needed(
-        self, user_input, result, intent_name, entity_ids, params=None
+        self, user_input, result, intent_name, entity_ids, params=None, verification_failures=None
     ):
         if not result or not result.response:
             return
+        
+        # If verification failed, show error instead of success confirmation
+        if verification_failures:
+            failed_names = []
+            for eid in verification_failures:
+                state = self.hass.states.get(eid)
+                if state:
+                    failed_names.append(state.attributes.get("friendly_name", eid.split(".")[-1]))
+                else:
+                    failed_names.append(eid.split(".")[-1])
+            
+            from .conversation_utils import join_names
+            names_str = join_names(failed_names)
+            error_msg = f"{names_str} reagiert nicht."
+            result.response.async_set_speech(error_msg)
+            _LOGGER.warning("[Stage1] Confirmation showing failure: %s", error_msg)
+            return
+        
         speech = (
             result.response.speech.get("plain", {}).get("speech", "")
             if result.response.speech

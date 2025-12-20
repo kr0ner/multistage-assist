@@ -264,6 +264,7 @@ class IntentExecutorCapability(Capability):
         final_executed_params = params.copy()
         final_executed_params["_prerequisites"] = executed_prerequisites  # For confirmation
         timebox_failures: List[str] = []  # Track failed timebox calls
+        verification_failures: List[str] = []  # Track entities that failed verification
 
         for eid in valid_ids:
             effective_intent = intent_name
@@ -463,11 +464,15 @@ class IntentExecutorCapability(Capability):
                         if "brightness" in current_params:
                             expected_brightness = current_params["brightness"]
                     
-                    await self._verify_execution(
+                    verified = await self._verify_execution(
                         eid, effective_intent, 
                         expected_state=expected_state,
                         expected_brightness=expected_brightness
                     )
+                    
+                    # Track verification failures
+                    if not verified:
+                        verification_failures.append(eid)
                     
             except Exception as e:
                 _LOGGER.warning("[IntentExecutor] Error on %s: %s", eid, e)
@@ -582,6 +587,7 @@ class IntentExecutorCapability(Capability):
                 continue_conversation=False,
             ),
             "executed_params": final_executed_params,
+            "verification_failures": verification_failures,
         }
 
     async def _verify_execution(

@@ -149,23 +149,41 @@ class CommandProcessorCapability(Capability):
 
         # USE EXECUTED PARAMS if available (contains actual brightness values)
         final_params = exec_data.get("executed_params", params)
-
-        # Confirmation
-        speech = (
-            result_obj.response.speech.get("plain", {}).get("speech", "")
-            if result_obj.response.speech
-            else ""
-        )
-        if not speech or speech.strip() == "Okay.":
-            # Pass final_params instead of original params
-            conf_data = await self.confirmation.run(
-                user_input,
-                intent_name=intent_name,
-                entity_ids=entity_ids,
-                params=final_params,
+        
+        # Check for verification failures - show error instead of success confirmation
+        verification_failures = exec_data.get("verification_failures", [])
+        if verification_failures:
+            # Generate error message for failed devices
+            from ..conversation_utils import join_names
+            failed_names = []
+            for eid in verification_failures:
+                state = self.hass.states.get(eid)
+                if state:
+                    failed_names.append(state.attributes.get("friendly_name", eid.split(".")[-1]))
+                else:
+                    failed_names.append(eid.split(".")[-1])
+            
+            names_str = join_names(failed_names)
+            error_msg = f"{names_str} reagiert nicht."
+            result_obj.response.async_set_speech(error_msg)
+            _LOGGER.warning("[CommandProcessor] Verification failed for: %s", failed_names)
+        else:
+            # Confirmation only if verification succeeded
+            speech = (
+                result_obj.response.speech.get("plain", {}).get("speech", "")
+                if result_obj.response.speech
+                else ""
             )
-            if conf_data.get("message"):
-                result_obj.response.async_set_speech(conf_data["message"])
+            if not speech or speech.strip() == "Okay.":
+                # Pass final_params instead of original params
+                conf_data = await self.confirmation.run(
+                    user_input,
+                    intent_name=intent_name,
+                    entity_ids=entity_ids,
+                    params=final_params,
+                )
+                if conf_data.get("message"):
+                    result_obj.response.async_set_speech(conf_data["message"])
 
         # Inject Learning Question (Same as before)
         pending_data = None
@@ -185,9 +203,9 @@ class CommandProcessorCapability(Capability):
 
         # --- Semantic Cache Storage ---
         # Only cache if:
-        # 1. Execution was verified successful (no error flag)
+        # 1. Execution was verified successful (no error flag, no verification failures)
         # 2. Command did NOT come from cache (avoid re-caching potentially wrong entries)
-        if self.semantic_cache and not exec_data.get("error") and not from_cache:
+        if self.semantic_cache and not exec_data.get("error") and not verification_failures and not from_cache:
             try:
                 await self.semantic_cache.store(
                     text=user_input.text,

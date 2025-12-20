@@ -135,6 +135,54 @@ class IntentExecutorCapability(Capability):
                 "[IntentExecutor] Delay script failed for %s: %s", entity_id, e
             )
             return False
+
+    def _parse_delay_or_time(self, delay_str: str) -> tuple[int, int]:
+        """Parse delay string ('10 Minuten') or time string ('15:30', '15 Uhr').
+        
+        Returns (minutes, seconds) for delay.
+        For time strings, calculates delay from now to target time.
+        If target time is in the past, schedules for next day.
+        """
+        import re
+        from datetime import datetime, timedelta
+        
+        if not delay_str:
+            return (0, 0)
+        
+        delay_str = delay_str.strip().lower()
+        
+        # Try parsing as time (HH:MM or HH Uhr)
+        time_match = re.match(r'^(\d{1,2}):(\d{2})(?:\s*uhr)?$', delay_str)
+        if not time_match:
+            time_match = re.match(r'^(\d{1,2})\s*uhr$', delay_str)
+            if time_match:
+                hour = int(time_match.group(1))
+                minute = 0
+            else:
+                # Not a time, try parsing as duration
+                total_seconds = parse_duration_string(delay_str)
+                return (total_seconds // 60, total_seconds % 60)
+        else:
+            hour = int(time_match.group(1))
+            minute = int(time_match.group(2)) if time_match.lastindex >= 2 else 0
+        
+        # Calculate delay from now to target time
+        now = datetime.now()
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        
+        # If target time is in the past, schedule for tomorrow
+        if target <= now:
+            target += timedelta(days=1)
+        
+        delta = target - now
+        total_seconds = int(delta.total_seconds())
+        
+        _LOGGER.debug(
+            "[IntentExecutor] Parsed time '%s' -> target %s, delay=%d seconds",
+            delay_str, target.strftime("%H:%M"), total_seconds
+        )
+        
+        return (total_seconds // 60, total_seconds % 60)
     
     # Intent to action mapping for Knowledge Graph
     INTENT_TO_ACTION = {
@@ -413,6 +461,53 @@ class IntentExecutorCapability(Capability):
                 
                 results.append((eid, resp))
                 continue
+
+            # --- 2b. DELAYED CONTROL: HassDelayedControl ---
+            # Handle delayed actions (execute action after delay)
+            if intent_name == "HassDelayedControl":
+                delay_str = current_params.get("delay", "")
+                command = current_params.get("command", "on")
+                action = "on" if command in ("on", "an", "ein", "auf") else "off"
+                
+                # Parse delay (duration like "10 Minuten" or time like "15:30")
+                delay_minutes, delay_seconds = self._parse_delay_or_time(delay_str)
+                
+                if delay_minutes > 0 or delay_seconds > 0:
+                    success = await self._call_delay_script(
+                        eid, delay_minutes, delay_seconds, action=action
+                    )
+                    if not success:
+                        timebox_failures.append(eid)
+                    
+                    _LOGGER.debug(
+                        "[IntentExecutor] DelayedControl %s on %s in %dm%ds (success=%s)",
+                        action, eid, delay_minutes, delay_seconds, success
+                    )
+                    
+                    resp = ha_intent.IntentResponse(language=language)
+                    resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
+                    
+                    # Generate confirmation speech
+                    state_obj = hass.states.get(eid)
+                    name = state_obj.attributes.get("friendly_name", eid) if state_obj else eid
+                    
+                    action_de = "an" if action == "on" else "aus"
+                    delay_display = delay_str if delay_str else format_seconds_to_string(
+                        delay_minutes * 60 + delay_seconds
+                    )
+                    
+                    speech = build_confirmation(
+                        "HassDelayedControl",
+                        [name],
+                        params={"delay_str": delay_display, "action": action_de}
+                    )
+                    resp.async_set_speech(speech)
+                    
+                    results.append((eid, resp))
+                    continue
+                else:
+                    # No delay - convert to regular on/off
+                    effective_intent = "HassTurnOn" if action == "on" else "HassTurnOff"
 
             # --- 3. LIGHT LOGIC ---
             # Handle brightness from either 'brightness' or 'command' slot

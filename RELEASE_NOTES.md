@@ -102,6 +102,13 @@
   - Error message includes install path: `multistage_assist/scripts/`
   - File: `intent_executor.py`
 
+- **Added HassDelayedControl intent**
+  - "Schalte IN 10 Minuten das Licht aus" → delays action by 10 minutes
+  - "Mach UM 15:30 das Licht an" → schedules action for 15:30 (today/tomorrow)
+  - Uses `delay_action` script for execution
+  - Never cached in user query cache
+  - Files: `keyword_intent.py`, `intent_executor.py`, `semantic_cache_builder.py`
+
 ### Code Cleanup
 
 - **Dead code removal**

@@ -154,6 +154,13 @@ def build_confirmation(
             return f"{devices} ist für {duration} {action}."
         return f"{devices} ist temporär {action}."
     
+    if intent_name == "HassDelayedControl":
+        delay = params.get("delay_str", "")
+        action = params.get("action", "eingestellt")
+        if delay:
+            return f"{devices} wird in {delay} {action}geschaltet."
+        return f"{devices} wird verzögert {action}geschaltet."
+    
     if intent_name == "HassVacuumStart":
         mode = params.get("mode", "")
         area = params.get("area", "")

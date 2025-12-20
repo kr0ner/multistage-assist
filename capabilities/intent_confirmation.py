@@ -25,6 +25,7 @@ class IntentConfirmationCapability(Capability):
         "HassTimerSet": "A timer was successfully set.",
         "HassGetState": "A state or measurement was queried.",
         "HassTemporaryControl": "The device was switched on/off TEMPORARILY.",
+        "HassDelayedControl": "The action will be executed AFTER a delay.",
         "HassVacuumStart": "Vacuum/Mop was started.",
     }
 

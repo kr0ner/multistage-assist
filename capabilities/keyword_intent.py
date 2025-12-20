@@ -49,9 +49,20 @@ class KeywordIntentCapability(Capability):
 
     # Common rule for temp control
     _TEMP_RULE = """
-- 'HassTemporaryControl': Use this if a DURATION is specified (e.g. "für 10 Minuten").
+- 'HassTemporaryControl': Use this if a DURATION is specified with "für" (e.g. "für 10 Minuten").
   - 'duration': The duration string (e.g. "10 Minuten").
   - 'command': "on" (an/ein/auf) or "off" (aus/zu).
+"""
+
+    # Rule for delayed/scheduled control
+    _DELAYED_RULE = """
+- 'HassDelayedControl': Use this if action should be DELAYED/SCHEDULED:
+  - Keywords: "in X Minuten", "um X Uhr" (NOT "für" - that's temporary!)
+  - 'delay': The delay/time string (e.g. "10 Minuten", "15:30", "15 Uhr").
+  - 'command': "on" (an/ein/auf) or "off" (aus/zu).
+  - Examples:
+    - "Schalte IN 10 Minuten das Licht aus" → HassDelayedControl, delay="10 Minuten"
+    - "Mach UM 15 Uhr das Licht an" → HassDelayedControl, delay="15 Uhr"
 """
 
     INTENT_DATA = {
@@ -62,9 +73,10 @@ class KeywordIntentCapability(Capability):
                 "HassLightSet",
                 "HassGetState",
                 "HassTemporaryControl",
+                "HassDelayedControl",
             ],
             "rules": "brightness: 'step_up'/'step_down' if no number. 0-100 otherwise."
-            + _TEMP_RULE,
+            + _TEMP_RULE + _DELAYED_RULE,
         },
         "cover": {
             "intents": [
@@ -73,8 +85,9 @@ class KeywordIntentCapability(Capability):
                 "HassSetPosition",
                 "HassGetState",
                 "HassTemporaryControl",
+                "HassDelayedControl",
             ],
-            "rules": _TEMP_RULE,
+            "rules": _TEMP_RULE + _DELAYED_RULE,
         },
         "switch": {
             "intents": [
@@ -82,8 +95,9 @@ class KeywordIntentCapability(Capability):
                 "HassTurnOff",
                 "HassGetState",
                 "HassTemporaryControl",
+                "HassDelayedControl",
             ],
-            "rules": _TEMP_RULE,
+            "rules": _TEMP_RULE + _DELAYED_RULE,
         },
         "fan": {
             "intents": [
@@ -91,8 +105,9 @@ class KeywordIntentCapability(Capability):
                 "HassTurnOff",
                 "HassGetState",
                 "HassTemporaryControl",
+                "HassDelayedControl",
             ],
-            "rules": _TEMP_RULE,
+            "rules": _TEMP_RULE + _DELAYED_RULE,
         },
         "media_player": {
             "intents": ["HassTurnOn", "HassTurnOff", "HassGetState"],
@@ -128,10 +143,12 @@ class KeywordIntentCapability(Capability):
                 "HassTurnOn",
                 "HassTurnOff",
                 "HassTemporaryControl",
+                "HassDelayedControl",
             ],
             "rules": """- 'name': The automation/device name.
-- If DURATION specified, use HassTemporaryControl with 'duration' and 'command' slots.
-""" + _TEMP_RULE,
+- If DURATION specified with "für", use HassTemporaryControl.
+- If DELAYED with "in X Minuten" or "um X Uhr", use HassDelayedControl.
+""" + _TEMP_RULE + _DELAYED_RULE,
         },
     }
 

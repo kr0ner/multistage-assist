@@ -52,6 +52,16 @@
   - Detects question type from user input keywords and entity count
   - File: `intent_executor.py`
 
+- **Fixed floor-based entity filtering**
+  - "Öffne alle Rollläden im Erdgeschoss" now correctly filters to Erdgeschoss only
+  - Added German floor aliases: EG↔Erdgeschoss, OG↔Obergeschoss, UG↔Untergeschoss, etc.
+  - File: `entity_resolver.py`
+
+- **Fixed empty slot validation errors**
+  - LLM returning `device_class: ""` caused "Received invalid slot info" HA errors
+  - Now skips empty string slots before passing to Home Assistant
+  - File: `intent_executor.py`
+
 ### Code Cleanup
 
 - **Dead code removal**

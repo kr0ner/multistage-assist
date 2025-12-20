@@ -281,14 +281,48 @@ class EntityResolverCapability(Capability):
         ]
 
     def _find_floor(self, floor_name: str):
-        """Find floor by name (alias resolution happens earlier via memory/LLM)."""
+        """Find floor by name with alias resolution and fuzzy matching."""
         if not floor_name:
             return None
+        
         floor_reg = fr.async_get(self.hass)
+        floors = list(floor_reg.async_list_floors())
         needle = self._canon(floor_name)
-        for floor in floor_reg.async_list_floors():
-            if self._canon(floor.name) == needle:
+        
+        # Common German floor aliases
+        floor_aliases = {
+            "eg": ["erdgeschoss", "ground floor", "parterre"],
+            "erdgeschoss": ["eg", "ground floor", "parterre", "unten"],
+            "og": ["obergeschoss", "first floor", "oben"],
+            "obergeschoss": ["og", "first floor", "oben", "1og", "1. og"],
+            "ug": ["untergeschoss", "basement", "keller"],
+            "untergeschoss": ["ug", "basement", "keller"],
+            "keller": ["ug", "untergeschoss", "basement"],
+            "dg": ["dachgeschoss", "attic"],
+            "dachgeschoss": ["dg", "attic", "dach"],
+        }
+        
+        # Expand needle to include aliases
+        search_terms = {needle}
+        if needle in floor_aliases:
+            search_terms.update(floor_aliases[needle])
+        
+        # Try exact match first
+        for floor in floors:
+            floor_canon = self._canon(floor.name)
+            if floor_canon in search_terms:
+                _LOGGER.debug("[EntityResolver] Floor match: '%s' → '%s'", floor_name, floor.name)
                 return floor
+        
+        # Try if floor name contains the search term or vice versa
+        for floor in floors:
+            floor_canon = self._canon(floor.name)
+            for term in search_terms:
+                if term in floor_canon or floor_canon in term:
+                    _LOGGER.debug("[EntityResolver] Floor partial match: '%s' → '%s'", floor_name, floor.name)
+                    return floor
+        
+        _LOGGER.debug("[EntityResolver] No floor found for '%s'", floor_name)
         return None
 
     def _is_entity_on_floor(self, entity_id: str, floor_id: str) -> bool:

@@ -439,6 +439,9 @@ class IntentExecutorCapability(Capability):
             for k, v in current_params.items():
                 if k in self.RESOLUTION_KEYS or k == "name":
                     continue
+                # Skip empty string values - they cause HA intent validation errors
+                if v == "" or v is None:
+                    continue
                 slots[k] = {"value": v}
 
             _LOGGER.debug("[IntentExecutor] Executing %s on %s", effective_intent, eid)

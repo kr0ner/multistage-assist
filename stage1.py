@@ -21,6 +21,7 @@ from .capabilities.command_processor import CommandProcessorCapability
 from .capabilities.vacuum import VacuumCapability
 from .capabilities.calendar import CalendarCapability
 from .capabilities.semantic_cache import SemanticCacheCapability
+from .capabilities.step_control import StepControlCapability
 
 from .conversation_utils import (
     make_response,
@@ -54,6 +55,7 @@ class Stage1Processor(BaseStage):
         VacuumCapability,
         CalendarCapability,
         SemanticCacheCapability,  # Semantic command cache
+        StepControlCapability,    # Generic step up/down control
     ]
 
     def __init__(self, hass, config):

@@ -713,14 +713,31 @@ class SemanticCacheCapability(Capability):
         # Hybrid search: combine semantic + BM25 keyword scores
         if self.hybrid_enabled and self._bm25_index is not None:
             bm25_scores = self._get_bm25_scores(query_norm)
-            # Weighted combination: alpha * semantic + (1-alpha) * keyword
-            hybrid_scores = (self.hybrid_alpha * similarities + 
-                           (1 - self.hybrid_alpha) * bm25_scores)
-            _LOGGER.debug(
-                "DEBUG: Hybrid search - semantic max: %.3f, BM25 max: %.3f, hybrid max: %.3f",
-                np.max(similarities), np.max(bm25_scores), np.max(hybrid_scores)
-            )
-            similarities = hybrid_scores
+            
+            # Safety check: BM25 index must match cache size
+            # If stale (e.g., cache grew after index was built), skip hybrid
+            if len(bm25_scores) != len(similarities):
+                _LOGGER.warning(
+                    "[SemanticCache] BM25 index stale (size %d != cache %d), rebuilding...",
+                    len(bm25_scores), len(similarities)
+                )
+                self._build_bm25_index()
+                bm25_scores = self._get_bm25_scores(query_norm)
+            
+            # Only combine if shapes now match
+            if len(bm25_scores) == len(similarities):
+                # Weighted combination: alpha * semantic + (1-alpha) * keyword
+                hybrid_scores = (self.hybrid_alpha * similarities + 
+                               (1 - self.hybrid_alpha) * bm25_scores)
+                _LOGGER.debug(
+                    "DEBUG: Hybrid search - semantic max: %.3f, BM25 max: %.3f, hybrid max: %.3f",
+                    np.max(similarities), np.max(bm25_scores), np.max(hybrid_scores)
+                )
+                similarities = hybrid_scores
+            else:
+                _LOGGER.warning(
+                    "[SemanticCache] BM25 shape still mismatched, using vector-only search"
+                )
 
         # Get top-k candidates above loose threshold
         candidates: List[Tuple[float, int, CacheEntry]] = []

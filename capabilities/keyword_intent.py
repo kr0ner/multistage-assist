@@ -169,21 +169,26 @@ class KeywordIntentCapability(Capability):
             return {}
 
         meta = self.INTENT_DATA.get(domain) or {}
+        intents = meta.get('intents', [])
+        
+        # Build conditional instructions
+        get_state_instructions = ""
+        if "HassGetState" in intents:
+            get_state_instructions = """
+- For HassGetState: use 'state' slot to capture the QUERIED state:
+  - "Sind alle Lichter aus?" → {{"state": "off"}}
+  - "Sind alle Lichter an?" → {{"state": "on"}}
+  - "Ist das Rollo geschlossen?" → {{"state": "closed"}}
+  - "Ist das Rollo offen?" → {{"state": "open"}}"""
 
         system = f"""Select Home Assistant intent for domain '{domain}'.
-Allowed: {', '.join(meta.get('intents', []))}
-Slots: area, name, domain, floor, device_class, duration, command, mode, scope, state.
+Allowed: {', '.join(intents)}
+Slots (only include if non-empty): area, name, domain, floor, duration, command.
 Rules: {meta.get('rules', '')}
 
 IMPORTANT:
 - Only fill 'name' if a SPECIFIC device is named (e.g., "Schreibtischlampe", "Deckenleuchte").
-- If generic words (Licht, Lampe, Rollo), leave 'name' EMPTY.
-- For HassGetState: use 'state' slot to capture the QUERIED state:
-  - "Sind alle Lichter aus?" → {{"state": "off"}}  (user asks about OFF state)
-  - "Sind alle Lichter an?" → {{"state": "on"}}    (user asks about ON state)
-  - "Welche Lichter sind an?" → {{"state": "on"}}
-  - "Ist das Rollo geschlossen?" → {{"state": "closed"}}
-  - "Ist das Rollo offen?" → {{"state": "open"}}
+- If generic words (Licht, Lampe, Rollo), leave 'name' EMPTY.{get_state_instructions}
 - **FLOOR vs AREA** (CRITICAL):
   - Use 'floor' for: Erdgeschoss, Obergeschoss, Untergeschoss, Keller, EG, OG, UG, oben, unten, erster/zweiter Stock
   - Use 'area' for rooms: Küche, Bad, Büro, Wohnzimmer, Schlafzimmer

@@ -25,6 +25,7 @@ class IntentExecutorCapability(Capability):
 
     RESOLUTION_KEYS = {"area", "floor", "name", "entity_id"}
     BRIGHTNESS_STEP = 35  # Percentage of current brightness for step_up/step_down
+    COVER_STEP = 25       # Percentage for cover step_up/step_down (0=closed, 100=open)
     TIMEBOX_SCRIPT_ENTITY_ID = "script.timebox_entity_state"
 
     def _extract_duration(self, params: Dict[str, Any]) -> tuple[int, int]:
@@ -403,7 +404,39 @@ class IntentExecutorCapability(Capability):
                         current_params.pop("brightness", None)
                         current_params.pop("command", None)
 
-            # --- 4. TIMEBOX: Cover/Fan/Climate intents ---
+            # --- 4. COVER: Step up/down logic (RELATIVE position adjustments) ---
+            # step_up = open more (increase position), step_down = close more (decrease position)
+            if effective_intent == "HassSetPosition":
+                cmd = current_params.get("command")
+                if cmd in ("step_up", "step_down"):
+                    state_obj = hass.states.get(eid)
+                    if state_obj:
+                        # Cover position: 0 = closed, 100 = fully open
+                        cur_pos = state_obj.attributes.get("current_position", 0) or 0
+                        
+                        if cmd == "step_up":
+                            # Open more
+                            new_pos = min(100, cur_pos + self.COVER_STEP)
+                        else:
+                            # Close more
+                            new_pos = max(0, cur_pos - self.COVER_STEP)
+                        
+                        current_params["position"] = new_pos
+                        current_params.pop("command", None)  # Remove command, we now have position
+                        final_executed_params["position"] = new_pos
+                        _LOGGER.debug(
+                            "[IntentExecutor] Cover %s on %s: %d%% -> %d%%",
+                            cmd, eid, cur_pos, new_pos
+                        )
+                    else:
+                        # Can't get state, use reasonable defaults
+                        if cmd == "step_up":
+                            current_params["position"] = 50  # Open halfway
+                        else:
+                            current_params["position"] = 0   # Close completely
+                        current_params.pop("command", None)
+
+            # --- 5. TIMEBOX: Cover/Fan/Climate intents ---
             minutes, seconds = self._extract_duration(current_params)
             if minutes > 0 or seconds > 0:
                 value_param = None

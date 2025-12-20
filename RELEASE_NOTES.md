@@ -76,6 +76,11 @@
   - Added `_extract_nouns()` helpers in `domain_config.py`, `keyword_intent.py`
   - Files: `entity_keywords.py`, `semantic_cache_builder.py`, `domain_config.py`, `keyword_intent.py`
 
+- **Added cover step_up/step_down commands**
+  - "Fahre den Rollladen weiter runter/hoch" now works (relative position ±25%)
+  - IntentExecutor calculates new position from current for `HassSetPosition`
+  - File: `intent_executor.py`
+
 ### Code Cleanup
 
 - **Dead code removal**

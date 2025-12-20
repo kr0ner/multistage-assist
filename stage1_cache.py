@@ -1,0 +1,185 @@
+"""Stage 1: Semantic Cache-based intent resolution.
+
+Stage1 uses the semantic cache to fast-track commands that have been
+successfully executed before. This provides instant responses for
+repeated or similar commands without LLM calls.
+
+Flow:
+1. Use ClarificationCapability to split/clean user input
+2. For each command: lookup in SemanticCacheCapability
+3. Bypass cache for custom intents (TemporaryControl, DelayedControl, TimerSet)
+4. Return StageResult.success if cache hit, otherwise escalate to Stage2
+"""
+
+import logging
+from typing import Any, Dict, List, Optional
+
+from homeassistant.components import conversation
+
+from .base_stage import BaseStage
+from .capabilities.clarification import ClarificationCapability
+from .capabilities.semantic_cache import SemanticCacheCapability
+from .capabilities.memory import MemoryCapability
+from .stage_result import StageResult
+from .conversation_utils import with_new_text
+
+_LOGGER = logging.getLogger(__name__)
+
+
+# Custom intents that should bypass cache (require fresh LLM processing)
+CACHE_BYPASS_INTENTS = {
+    "HassTemporaryControl",
+    "HassDelayedControl",
+    "HassTimerSet",
+    # Future: TemporaryControl, DelayedControl, TimerSet (after rename)
+}
+
+
+class Stage1CacheProcessor(BaseStage):
+    """Stage 1: Semantic cache lookup for fast command execution."""
+
+    name = "stage1_cache"
+    capabilities = [
+        ClarificationCapability,
+        SemanticCacheCapability,
+        MemoryCapability,
+    ]
+
+    def __init__(self, hass, config):
+        super().__init__(hass, config)
+        
+        # Cache-only mode - if enabled and cache misses, we escalate directly
+        self._cache_only_mode = config.get("skip_stage1_llm", False)
+        if self._cache_only_mode:
+            _LOGGER.info("[Stage1Cache] Running in cache-only mode")
+
+    async def _normalize_area_aliases(self, user_input) -> conversation.ConversationInput:
+        """Preprocess user input to normalize common area aliases using memory.
+        
+        E.g., "bad" → "Badezimmer", "ezi" → "Esszimmer"
+        """
+        text = user_input.text
+        words = text.lower().split()
+
+        memory_cap = self.get("memory")
+        
+        for word in words:
+            clean_word = word.strip(".,!?")
+            if not clean_word:
+                continue
+
+            normalized = await memory_cap.get_area_alias(clean_word)
+            if normalized:
+                _LOGGER.debug("[Stage1Cache] Alias: '%s' → '%s'", clean_word, normalized)
+                import re
+                pattern = re.compile(re.escape(clean_word), re.IGNORECASE)
+                text = pattern.sub(normalized, text, count=1)
+
+        if text != user_input.text:
+            _LOGGER.debug("[Stage1Cache] Normalized: %s → %s", user_input.text, text)
+            return with_new_text(user_input, text)
+        return user_input
+
+    async def process(
+        self,
+        user_input: conversation.ConversationInput,
+        context: Optional[Dict[str, Any]] = None
+    ) -> StageResult:
+        """Process user input using semantic cache lookup.
+        
+        Args:
+            user_input: ConversationInput from Home Assistant
+            context: Optional context from Stage0 (NLU data)
+            
+        Returns:
+            StageResult with status indicating outcome
+        """
+        context = context or {}
+        
+        _LOGGER.debug("[Stage1Cache] Input='%s'", user_input.text)
+
+        # 1. Normalize area aliases
+        user_input = await self._normalize_area_aliases(user_input)
+
+        # 2. Use clarification to split multi-commands
+        clarification_cap = self.get("clarification")
+        commands = await clarification_cap.run(user_input)
+        
+        if not commands:
+            commands = [user_input.text]
+        
+        # For now, handle only single commands in cache
+        # Multi-command sequences escalate to Stage2
+        if len(commands) > 1:
+            _LOGGER.debug("[Stage1Cache] Multi-command detected (%d) → escalate", len(commands))
+            return StageResult.escalate(
+                context={**context, "commands": commands, "multi_command": True},
+                raw_text=user_input.text,
+            )
+
+        # 3. Check if the command should bypass cache
+        # (Context may already have NLU intent from Stage0)
+        nlu_intent = context.get("nlu_intent", "")
+        if nlu_intent in CACHE_BYPASS_INTENTS:
+            _LOGGER.debug("[Stage1Cache] Bypass cache for intent '%s' → escalate", nlu_intent)
+            return StageResult.escalate(
+                context={**context, "cache_bypassed": True, "bypass_reason": "custom_intent"},
+                raw_text=user_input.text,
+            )
+
+        # 4. Semantic cache lookup
+        if not self.has("semantic_cache"):
+            _LOGGER.debug("[Stage1Cache] No semantic cache configured → escalate")
+            return StageResult.escalate(context=context, raw_text=user_input.text)
+
+        cache = self.get("semantic_cache")
+        cached = await cache.lookup(user_input.text)
+
+        if not cached:
+            _LOGGER.debug("[Stage1Cache] Cache MISS → escalate")
+            return StageResult.escalate(
+                context={**context, "cache_miss": True},
+                raw_text=user_input.text,
+            )
+
+        # 5. Cache HIT - check if disambiguation was required
+        _LOGGER.info(
+            "[Stage1Cache] Cache HIT (%.3f): %s → %s",
+            cached["score"], cached["intent"], cached["entity_ids"]
+        )
+
+        # Check user said "alle" to skip disambiguation even if cached required it
+        text_lower = user_input.text.lower()
+        user_wants_all = any(word in text_lower for word in ["alle ", "allen ", "alles "])
+
+        if cached.get("required_disambiguation") and not user_wants_all:
+            # Need disambiguation - escalate to Stage2 which handles it
+            _LOGGER.debug("[Stage1Cache] Cached command needs disambiguation → escalate")
+            return StageResult.escalate(
+                context={
+                    **context,
+                    "cached": cached,
+                    "needs_disambiguation": True,
+                },
+                raw_text=user_input.text,
+            )
+
+        # 6. Success! Ready for execution
+        return StageResult.success(
+            intent=cached["intent"],
+            entity_ids=cached["entity_ids"],
+            params={
+                k: v for k, v in cached.get("slots", {}).items()
+                if k not in ("name", "entity_id")
+            },
+            context={
+                **context,
+                "from_cache": True,
+                "cache_score": cached["score"],
+            },
+            raw_text=user_input.text,
+        )
+
+
+# Alias for backward compatibility during migration
+Stage1Processor = Stage1CacheProcessor

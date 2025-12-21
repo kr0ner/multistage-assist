@@ -25,7 +25,6 @@ from .const import (
     CONF_DEBUG_CACHE_HITS,
     CONF_DEBUG_LLM_PROMPTS,
     CONF_DEBUG_INTENT_RESOLUTION,
-    CONF_USE_NEW_PIPELINE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -47,7 +46,6 @@ EXPERT_SCHEMA = vol.Schema({
     vol.Optional(CONF_DEBUG_CACHE_HITS): vol.Boolean(),
     vol.Optional(CONF_DEBUG_LLM_PROMPTS): vol.Boolean(),
     vol.Optional(CONF_DEBUG_INTENT_RESOLUTION): vol.Boolean(),
-    vol.Optional(CONF_USE_NEW_PIPELINE): vol.Boolean(),
 })
 
 CONFIG_SCHEMA = vol.Schema(

@@ -3,26 +3,34 @@
 from unittest.mock import MagicMock, AsyncMock, patch
 import pytest
 from homeassistant.components import conversation
+from homeassistant.helpers import intent
 
 from multistage_assist.conversation import MultiStageAssistAgent
+from multistage_assist.stage_result import StageResult
+from multistage_assist.execution_pipeline import ExecutionResult
 
 
 @pytest.fixture
 def mock_stages():
-    """Mock the stages."""
+    """Mock the stages with process() interface."""
     stage0 = MagicMock()
-    stage0.run = AsyncMock()
+    stage0.process = AsyncMock()
     stage0.has_pending = MagicMock(return_value=False)
 
     stage1 = MagicMock()
-    stage1.run = AsyncMock()
+    stage1.process = AsyncMock()
     stage1.has_pending = MagicMock(return_value=False)
+    stage1.has = MagicMock(return_value=False)
 
     stage2 = MagicMock()
-    stage2.run = AsyncMock()
+    stage2.process = AsyncMock()
     stage2.has_pending = MagicMock(return_value=False)
 
-    return [stage0, stage1, stage2]
+    stage3 = MagicMock()
+    stage3.process = AsyncMock()
+    stage3.has_pending = MagicMock(return_value=False)
+
+    return [stage0, stage1, stage2, stage3]
 
 
 async def test_pipeline_success_stage0(hass, config_entry, mock_stages):
@@ -38,19 +46,29 @@ async def test_pipeline_success_stage0(hass, config_entry, mock_stages):
         language="en",
     )
 
-    # Stage 0 handles it
-    mock_stages[0].run.return_value = {
-        "status": "handled",
-        "result": conversation.ConversationResult(
-            response=intent.IntentResponse(language="en")
-        ),
-    }
+    # Stage 0 returns success with intent
+    resp = intent.IntentResponse(language="en")
+    mock_stages[0].process.return_value = StageResult.success(
+        intent="HassTurnOn",
+        entity_ids=["light.test"],
+        params={},
+        context={},
+        raw_text="Turn on the light",
+    )
 
-    result = await agent.async_process(user_input)
+    # Mock execution pipeline
+    with patch.object(agent._execution_pipeline, 'execute') as mock_exec:
+        mock_exec.return_value = ExecutionResult(
+            success=True,
+            response=conversation.ConversationResult(response=resp),
+            pending_data=None,
+        )
+        
+        result = await agent.async_process(user_input)
 
-    assert result is not None
-    mock_stages[0].run.assert_called_once()
-    mock_stages[1].run.assert_not_called()
+        assert result is not None
+        mock_stages[0].process.assert_called_once()
+        mock_exec.assert_called_once()
 
 
 async def test_pipeline_escalation(hass, config_entry, mock_stages):
@@ -67,24 +85,32 @@ async def test_pipeline_escalation(hass, config_entry, mock_stages):
     )
 
     # Stage 0 escalates
-    mock_stages[0].run.return_value = {
-        "status": "escalate",
-        "result": "intermediate_result",
-    }
-    # Stage 1 handles
-    mock_stages[1].run.return_value = {
-        "status": "handled",
-        "result": conversation.ConversationResult(
-            response=intent.IntentResponse(language="en")
-        ),
-    }
+    mock_stages[0].process.return_value = StageResult.escalate(
+        context={"test": "data"},
+        raw_text="Complex query",
+    )
+    # Stage 1 returns success
+    resp = intent.IntentResponse(language="en")
+    mock_stages[1].process.return_value = StageResult.success(
+        intent="HassGetState",
+        entity_ids=["sensor.test"],
+        params={},
+        context={},
+        raw_text="Complex query",
+    )
 
-    result = await agent.async_process(user_input)
+    with patch.object(agent._execution_pipeline, 'execute') as mock_exec:
+        mock_exec.return_value = ExecutionResult(
+            success=True,
+            response=conversation.ConversationResult(response=resp),
+            pending_data=None,
+        )
+        
+        result = await agent.async_process(user_input)
 
-    assert result is not None
-    mock_stages[0].run.assert_called_once()
-    mock_stages[1].run.assert_called_once_with(user_input, "intermediate_result")
-    mock_stages[2].run.assert_not_called()
+        assert result is not None
+        mock_stages[0].process.assert_called_once()
+        mock_stages[1].process.assert_called_once()
 
 
 async def test_fallback(hass, config_entry, mock_stages):
@@ -100,10 +126,12 @@ async def test_fallback(hass, config_entry, mock_stages):
         language="en",
     )
 
-    # All stages escalate or return None
-    mock_stages[0].run.return_value = {"status": "escalate", "result": None}
-    mock_stages[1].run.return_value = {"status": "escalate", "result": None}
-    mock_stages[2].run.return_value = {"status": "escalate", "result": None}
+    # All stages escalate
+    for stage in mock_stages:
+        stage.process.return_value = StageResult.escalate(
+            context={},
+            raw_text="Unknown command",
+        )
 
     with patch(
         "multistage_assist.conversation.conversation.async_converse"
@@ -116,6 +144,3 @@ async def test_fallback(hass, config_entry, mock_stages):
 
         assert result is not None
         mock_converse.assert_called_once()
-
-
-from homeassistant.helpers import intent

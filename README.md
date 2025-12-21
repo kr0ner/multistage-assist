@@ -13,15 +13,17 @@
 | Stage | Purpose | Technology |
 |-------|---------|------------|
 | **Stage 0** | Fast path - instant NLU | Home Assistant built-in |
-| **Stage 1** | Smart orchestration | Local LLM (Ollama) |
-| **Stage 2** | Chat fallback | Google Gemini |
+| **Stage 1** | Semantic cache lookup | Cached command replay |
+| **Stage 2** | Local LLM intent | Ollama (qwen3:4b) |
+| **Stage 3** | Cloud fallback + chat | Google Gemini |
 
 ## Key Features
 
-- **Semantic Command Cache** - Instant replay of learned commands
+- **Semantic Command Cache** - Instant replay of learned commands with reranker validation
 - **Adaptive Learning** - Remembers your custom room/device names
 - **Temporary Controls** - "Turn on light for 10 minutes"
 - **Natural German Responses** - Optimized for German language
+- **Typo Tolerance** - Handles minor spelling mistakes
 
 ## Quick Start
 

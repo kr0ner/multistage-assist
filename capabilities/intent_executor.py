@@ -356,9 +356,24 @@ class IntentExecutorCapability(Capability):
 
                 # If filtering results in empty list, report that
                 if not valid_ids:
+                    # Domain-specific device names and state words
+                    domain = all_entity_ids[0].split(".")[0] if all_entity_ids else params.get("domain", "")
+                    
+                    from ..utils.response_builder import STATE_DESCRIPTIONS_DE
+                    state_word = STATE_DESCRIPTIONS_DE.get(domain, {}).get(requested_state, requested_state)
+                    
+                    device_names = {
+                        "light": "Lichter",
+                        "cover": "Rollläden", 
+                        "switch": "Schalter",
+                        "fan": "Ventilatoren",
+                        "media_player": "Geräte",
+                    }
+                    device_name = device_names.get(domain, "Geräte")
+                    
                     resp = ha_intent.IntentResponse(language=language)
                     resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
-                    resp.async_set_speech(f"Keine Geräte sind {requested_state}.")
+                    resp.async_set_speech(f"Keine {device_name} sind {state_word}.")
                     return {
                         "result": ConversationResult(
                             response=resp,

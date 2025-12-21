@@ -294,6 +294,11 @@ GLOBAL_PHRASE_PATTERNS = {
         ("Mach alle Lichter heller", "HassLightSet", {"command": "step_up"}),
         ("Mach alle Lichter dunkler", "HassLightSet", {"command": "step_down"}),
         ("Dimme alle Lichter auf 50 Prozent", "HassLightSet", {"brightness": 50}),
+        # State queries
+        ("Welche Lichter sind an?", "HassGetState", {"state": "on"}),
+        ("Welche Lichter sind aus?", "HassGetState", {"state": "off"}),
+        ("Sind alle Lichter an?", "HassGetState", {"state": "on"}),
+        ("Sind alle Lichter aus?", "HassGetState", {"state": "off"}),
     ],
     "cover": [
         ("Schließe alle Rollläden", "HassTurnOff", {}),  # Close = TurnOff
@@ -301,6 +306,13 @@ GLOBAL_PHRASE_PATTERNS = {
         ("Fahre alle Rollläden weiter hoch", "HassSetPosition", {"command": "step_up"}),
         ("Fahre alle Rollläden weiter runter", "HassSetPosition", {"command": "step_down"}),
         ("Stelle alle Rollläden auf 50 Prozent", "HassSetPosition", {"position": 50}),
+        # State queries
+        ("Welche Rollläden sind offen?", "HassGetState", {"state": "open"}),
+        ("Welche Rollläden sind geschlossen?", "HassGetState", {"state": "closed"}),
+        ("Welche Rollläden sind zu?", "HassGetState", {"state": "closed"}),
+        ("Sind alle Rollläden offen?", "HassGetState", {"state": "open"}),
+        ("Sind alle Rollläden geschlossen?", "HassGetState", {"state": "closed"}),
+        ("Sind alle Rollläden zu?", "HassGetState", {"state": "closed"}),
     ],
     "switch": [
         ("Schalte alle Schalter aus", "HassTurnOff", {}),

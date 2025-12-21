@@ -12,7 +12,7 @@ from .const import (
     CONF_STAGE1_PORT,
     CONF_STAGE1_MODEL,
     CONF_GOOGLE_API_KEY,
-    CONF_STAGE2_MODEL,
+    CONF_STAGE3_MODEL,
     CONF_EMBEDDING_IP,
     CONF_EMBEDDING_PORT,
     CONF_EMBEDDING_MODEL,
@@ -55,9 +55,9 @@ class MultiStageAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_STAGE1_PORT, default=11434): int,
                 vol.Optional(CONF_STAGE1_MODEL, default="qwen3:4b-instruct"): str,
                 
-                # Stage 2 (Google Gemini Chat)
+                # Stage 3 (Google Gemini Chat)
                 vol.Required(CONF_GOOGLE_API_KEY): str,
-                vol.Optional(CONF_STAGE2_MODEL, default="gemini-2.5-flash"): str,
+                vol.Optional(CONF_STAGE3_MODEL, default="gemini-2.5-flash"): str,
                 
                 # Embedding (Semantic Cache) - defaults to stage1 settings
                 vol.Optional(CONF_EMBEDDING_IP, default=""): str,  # Empty = use stage1_ip
@@ -119,7 +119,7 @@ class MultiStageAssistOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_STAGE1_MODEL, default=current_config.get(CONF_STAGE1_MODEL, "qwen3:4b-instruct")): str,
                 
                 vol.Required(CONF_GOOGLE_API_KEY, default=current_config.get(CONF_GOOGLE_API_KEY, "")): str,
-                vol.Optional(CONF_STAGE2_MODEL, default=current_config.get(CONF_STAGE2_MODEL, "gemini-2.5-flash")): str,
+                vol.Optional(CONF_STAGE3_MODEL, default=current_config.get(CONF_STAGE3_MODEL, "gemini-2.5-flash")): str,
                 
                 # Embedding config
                 vol.Optional(CONF_EMBEDDING_IP, default=current_emb_ip): str,

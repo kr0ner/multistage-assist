@@ -18,7 +18,7 @@ from homeassistant.components import conversation
 from .base_stage import BaseStage
 from .capabilities.keyword_intent import KeywordIntentCapability
 from .capabilities.entity_resolver import EntityResolverCapability
-from .capabilities.area_alias import AreaAliasCapability
+from .capabilities.area_resolver import AreaResolverCapability as AreaAliasCapability
 from .capabilities.memory import MemoryCapability
 from .capabilities.clarification import ClarificationCapability
 from .capabilities.multi_turn_base import MultiTurnCapability
@@ -165,7 +165,7 @@ class Stage2LLMProcessor(BaseStage):
 
         # 4. Entity resolution
         resolver = self.get("entity_resolver")
-        entities_for_resolver = {**slots}
+        entities_for_resolver = {**slots, "intent": intent_name}
         if domain:
             entities_for_resolver["domain"] = domain
             

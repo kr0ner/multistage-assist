@@ -108,7 +108,7 @@ Examples:
         Use AreaAliasCapability to normalize 'Bad' -> 'Badezimmer'.
         This ensures the script receives the correct HA area name.
         """
-        from .area_alias import AreaAliasCapability
+        from .area_resolver import AreaResolverCapability as AreaAliasCapability
         from homeassistant.helpers import area_registry as ar
 
         # Check for exact match in registry first to save LLM call

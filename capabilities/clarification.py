@@ -35,9 +35,6 @@ Output: ["Schalte Licht im Bad an", "Fahre Rollo runter"]
 Input: "Im Büro ist es zu dunkel"
 Output: ["Mache das Licht im Büro heller"]
 
-Input: "Zu hell hier"
-Output: ["Mache das Licht dunkler"]
-
 Input: "Es ist zu hell im Wohnzimmer"
 Output: ["Mache das Licht im Wohnzimmer dunkler"]
 
@@ -81,9 +78,8 @@ Output: ["Schalte alle Lichter im Erdgeschoss aus", "Schalte alle Lichter im ers
         
         # Calendar and timer commands should NEVER be split (unless they have compound separators)
         # The LLM confuses time ranges like "15 Uhr bis 18 Uhr" as two separate events
-        calendar_keywords = ["termin", "kalender", "event", "eintrag"]
-        timer_keywords = ["timer", "wecker", "erinnerung"]
-        is_calendar_or_timer = any(kw in text_lower for kw in calendar_keywords + timer_keywords)
+        from ..constants.entity_keywords import CALENDAR_KEYWORDS, TIMER_KEYWORDS
+        is_calendar_or_timer = any(kw in text_lower for kw in CALENDAR_KEYWORDS + TIMER_KEYWORDS)
         
         # Only bypass for calendar/timer if there's NO compound separator (und/and)
         # "Timer für 10 Minuten und Licht aus" should still be split

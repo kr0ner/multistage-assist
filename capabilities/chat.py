@@ -6,7 +6,7 @@ from typing import Any, Dict, List, TYPE_CHECKING
 from homeassistant.components import conversation
 from custom_components.multistage_assist.const import (
     CONF_GOOGLE_API_KEY,
-    CONF_STAGE2_MODEL,
+    CONF_STAGE3_MODEL,
 )
 
 # Import from utils
@@ -39,7 +39,7 @@ Decimals use commas. Units written out. Years as words.
     def __init__(self, hass, config):
         super().__init__(hass, config)
         self.api_key = config.get(CONF_GOOGLE_API_KEY)
-        self.model_name = config.get(CONF_STAGE2_MODEL, "gemini-1.5-flash")
+        self.model_name = config.get(CONF_STAGE3_MODEL, "gemini-1.5-flash")
         self._client_wrapper = None
         self._init_lock = asyncio.Lock()
 

@@ -134,7 +134,9 @@ class Stage0Processor(BaseStage):
 
         # 3. Entity resolution
         resolver = EntityResolverCapability(self.hass, self.config)
-        resolved = await resolver.run(user_input, entities=norm_entities)
+        # Pass intent for capability filtering (e.g., HassLightSet filters non-dimmable)
+        entities_for_resolver = {**norm_entities, "intent": intent_name}
+        resolved = await resolver.run(user_input, entities=entities_for_resolver)
         resolved_ids = (resolved or {}).get("resolved_ids", [])
         
         _LOGGER.debug(

@@ -1,6 +1,14 @@
-import asyncio
+"""Entity resolver capability.
+
+Resolves entities from NLU slots using:
+- Area/floor-based lookup
+- Name matching (exact and fuzzy)
+- Device class filtering
+- Knowledge graph dependency filtering
+- Capability filtering (e.g., dimmability)
+"""
+
 import logging
-import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from homeassistant.core import HomeAssistant
@@ -12,54 +20,22 @@ from homeassistant.helpers import (
 )
 from homeassistant.components.homeassistant.exposed_entities import async_should_expose
 from homeassistant.components.conversation import DOMAIN as CONVERSATION_DOMAIN
-from homeassistant.const import (
-    UnitOfTemperature,
-    UnitOfPower,
-    UnitOfEnergy,
-    PERCENTAGE,
-)
 
 from .base import Capability
+from .area_resolver import AreaResolverCapability
 from ..utils.fuzzy_utils import get_fuzz
-from ..constants.domain_config import FLOOR_ALIASES_DE
+from ..utils.german_utils import canonicalize
+from ..constants.entity_keywords import GENERIC_NAMES
+from ..constants.sensor_units import DEVICE_CLASS_UNITS
 
 _LOGGER = logging.getLogger(__name__)
 
-DEVICE_CLASS_UNITS = {
-    "temperature": {
-        UnitOfTemperature.CELSIUS,
-        UnitOfTemperature.FAHRENHEIT,
-        UnitOfTemperature.KELVIN,
-    },
-    "power": {UnitOfPower.WATT, UnitOfPower.KILO_WATT},
-    "energy": {UnitOfEnergy.WATT_HOUR, UnitOfEnergy.KILO_WATT_HOUR},
-    "humidity": {PERCENTAGE},
-    "battery": {PERCENTAGE},
-    "illuminance": {"lx", "lm"},
-    "pressure": {"hPa", "mbar", "bar", "psi"},
-}
-
-GENERIC_NAMES = {
-    "licht",
-    "lichter",
-    "lampe",
-    "lampen",
-    "leuchte",
-    "leuchten",
-    "gerät",
-    "geräte",
-    "ding",
-    "alles",
-    "alle",
-    "etwas",
-}
-
 
 class EntityResolverCapability(Capability):
+    """Resolve entities from NLU slots with area/floor and fuzzy matching."""
+    
     name = "entity_resolver"
-    description = (
-        "Resolve entities from NLU slots; enrich with area/floor + fuzzy matching."
-    )
+    description = "Resolve entities from NLU slots; enrich with area/floor + fuzzy matching."
 
     _FUZZ_STRONG = 92
     _FUZZ_FALLBACK = 84
@@ -67,13 +43,15 @@ class EntityResolverCapability(Capability):
 
     def __init__(self, hass, config):
         super().__init__(hass, config)
-        self.memory = None  # Will be set by Stage1
+        self.memory = None  # Injected by caller
+        self._area_resolver = AreaResolverCapability(hass, config)
 
     def set_memory(self, memory_cap):
-        """Allow Stage1 to inject memory capability for alias resolution"""
+        """Inject memory capability for alias resolution."""
         self.memory = memory_cap
 
     def _all_entities(self) -> Dict[str, Any]:
+        """Get all non-disabled entities."""
         ent_reg = er.async_get(self.hass)
         all_entities: Dict[str, Any] = {
             e.entity_id: e for e in ent_reg.entities.values() if not e.disabled_by
@@ -86,6 +64,15 @@ class EntityResolverCapability(Capability):
     async def run(
         self, user_input, *, entities: Dict[str, Any] | None = None, **_: Any
     ) -> Dict[str, Any]:
+        """Resolve entities from NLU slot data.
+        
+        Args:
+            user_input: ConversationInput
+            entities: Dict of NLU slots
+            
+        Returns:
+            Dict with "resolved_ids" and "filtered_by_deps"
+        """
         hass: HomeAssistant = self.hass
         slots = entities or {}
 
@@ -96,26 +83,20 @@ class EntityResolverCapability(Capability):
         area_hint = self._first_str(slots, "area", "room")
         floor_hint = self._first_str(slots, "floor", "level")
 
-        # === Memory-based alias resolution (before fuzzy matching) ===
+        # === Memory-based alias resolution ===
         if area_hint and self.memory:
             memory_area = await self.memory.get_area_alias(area_hint)
             if memory_area:
-                _LOGGER.debug(
-                    "[EntityResolver] Memory hit: '%s' → '%s'", area_hint, memory_area
-                )
-                area_hint = memory_area  # Use memory-mapped value
+                _LOGGER.debug("[EntityResolver] Memory hit: '%s' → '%s'", area_hint, memory_area)
+                area_hint = memory_area
 
         if floor_hint and self.memory:
             memory_floor = await self.memory.get_floor_alias(floor_hint)
             if memory_floor:
-                _LOGGER.debug(
-                    "[EntityResolver] Memory hit (floor): '%s' → '%s'",
-                    floor_hint,
-                    memory_floor,
-                )
+                _LOGGER.debug("[EntityResolver] Memory hit (floor): '%s' → '%s'", floor_hint, memory_floor)
                 floor_hint = memory_floor
-        # === End memory resolution ===
 
+        # Ignore generic names
         if thing_name and thing_name.lower().strip() in GENERIC_NAMES:
             _LOGGER.debug("[EntityResolver] Ignoring generic name '%s'.", thing_name)
             thing_name = None
@@ -123,14 +104,16 @@ class EntityResolverCapability(Capability):
         resolved: List[str] = []
         seen: Set[str] = set()
 
+        # Direct entity ID
         if raw_entity_id and self._state_exists(raw_entity_id):
             resolved.append(raw_entity_id)
             seen.add(raw_entity_id)
 
-        area_obj = self._find_area(area_hint) if area_hint else None
-        floor_obj = self._find_floor(floor_hint) if floor_hint else None
+        # Use area_resolver for area/floor lookup
+        area_obj = self._area_resolver.find_area(area_hint) if area_hint else None
+        floor_obj = self._area_resolver.find_floor(floor_hint) if floor_hint else None
 
-        # Area-based Lookup
+        # Area-based lookup
         area_entities: List[str] = []
         if area_obj:
             area_entities = self._entities_in_area(area_obj, domain)
@@ -140,7 +123,7 @@ class EntityResolverCapability(Capability):
                         resolved.append(eid)
                         seen.add(eid)
 
-        # Name-based Lookup
+        # Name-based lookup
         if thing_name:
             all_entities = self._all_entities()
             exact = self._collect_by_name_exact(hass, thing_name, domain, all_entities)
@@ -162,44 +145,37 @@ class EntityResolverCapability(Capability):
                     resolved.append(eid)
                     seen.add(eid)
 
-        # "All Domain" Fallback
+        # "All Domain" fallback
         if not thing_name and not area_hint and domain:
-            _LOGGER.debug(
-                "[EntityResolver] No name/area specified. Fetching ALL entities for domain '%s'",
-                domain,
-            )
+            _LOGGER.debug("[EntityResolver] No name/area. Fetching ALL entities for domain '%s'", domain)
             all_domain_entities = self._collect_all_domain_entities(domain)
             for eid in all_domain_entities:
                 if eid not in seen:
                     resolved.append(eid)
                     seen.add(eid)
 
-        # Filter by Floor
+        # Filter by floor
         if floor_obj:
             resolved = [
-                eid
-                for eid in resolved
+                eid for eid in resolved
                 if self._is_entity_on_floor(eid, floor_obj.floor_id)
             ]
 
-        # Filter by Device Class
+        # Filter by device class
         if target_device_class:
             resolved = [
-                eid
-                for eid in resolved
+                eid for eid in resolved
                 if self._match_device_class_or_unit(eid, target_device_class)
             ]
 
-        # Filter Exposure
+        # Filter by exposure
         pre_count = len(resolved)
         resolved = [
-            eid
-            for eid in resolved
+            eid for eid in resolved
             if async_should_expose(hass, CONVERSATION_DOMAIN, eid)
         ]
 
-        # Phase 1: Filter by Knowledge Graph usability (dependencies)
-        # Entities with unmet dependencies (e.g., Ambilight when TV off) are filtered
+        # Filter by knowledge graph dependencies
         filtered_by_deps = []
         try:
             from ..utils.knowledge_graph import get_knowledge_graph
@@ -214,7 +190,7 @@ class EntityResolverCapability(Capability):
         except Exception as e:
             _LOGGER.debug("[EntityResolver] Knowledge graph filtering failed: %s", e)
 
-        # Filter by Capability (e.g., dimmability for HassLightSet)
+        # Filter by capability (e.g., dimmability for HassLightSet)
         intent = self._first_str(slots, "intent")
         if intent == "HassLightSet" and domain == "light":
             before_cap = len(resolved)
@@ -226,28 +202,24 @@ class EntityResolverCapability(Capability):
                 )
 
         _LOGGER.debug(
-            "[EntityResolver] Final Result: %d entities (pre-filter: %d, filtered by deps: %d)",
-            len(resolved),
-            pre_count,
-            len(filtered_by_deps),
+            "[EntityResolver] Final: %d entities (pre-filter: %d, filtered by deps: %d)",
+            len(resolved), pre_count, len(filtered_by_deps),
         )
         return {"resolved_ids": resolved, "filtered_by_deps": filtered_by_deps}
 
+    # --- Helper Methods ---
+    
     def _is_light_dimmable(self, entity_id: str) -> bool:
-        """Check if a light entity supports dimming (not onoff-only)."""
+        """Check if a light entity supports dimming."""
         state = self.hass.states.get(entity_id)
         if not state:
             return False
         modes = state.attributes.get("supported_color_modes", [])
-        # Empty or anything other than just "onoff" is dimmable
         return not modes or modes != ["onoff"]
 
-    # --- NEW HELPER ---
-    def _entities_in_area_by_name(
-        self, area_name: str, domain: str = None
-    ) -> List[Dict[str, str]]:
+    def _entities_in_area_by_name(self, area_name: str, domain: str = None) -> List[Dict[str, str]]:
         """Return list of {id, friendly_name} for all entities in an area."""
-        area = self._find_area(area_name)
+        area = self._area_resolver.find_area(area_name)
         if not area:
             return []
 
@@ -260,9 +232,9 @@ class EntityResolverCapability(Capability):
                 results.append({"id": eid, "friendly_name": name})
         return results
 
-    # ----------- Existing Helpers -----------
     @staticmethod
     def _first_str(d: Dict[str, Any], *keys: str) -> Optional[str]:
+        """Extract first string value from dict."""
         for k in keys:
             v = d.get(k)
             if isinstance(v, dict):
@@ -281,50 +253,12 @@ class EntityResolverCapability(Capability):
             if state.entity_id.startswith(f"{domain}.")
         ]
 
-    def _find_floor(self, floor_name: str):
-        """Find floor by name with alias resolution and fuzzy matching."""
-        if not floor_name:
-            return None
-        
-        floor_reg = fr.async_get(self.hass)
-        floors = list(floor_reg.async_list_floors())
-        needle = self._canon(floor_name)
-        
-        # Expand needle to include common German floor aliases
-        search_terms = {needle}
-        if needle in FLOOR_ALIASES_DE:
-            search_terms.update(FLOOR_ALIASES_DE[needle])
-        
-        # First pass: exact name match
-        for floor in floors:
-            floor_canon = self._canon(floor.name)
-            if floor_canon in search_terms:
-                _LOGGER.debug("[EntityResolver] Floor match: '%s' → '%s'", floor_name, floor.name)
-                return floor
-        
-        # Second pass: check HA registered floor aliases
-        for floor in floors:
-            aliases = getattr(floor, "aliases", None) or set()
-            for alias in aliases:
-                if self._canon(alias) in search_terms or needle == self._canon(alias):
-                    _LOGGER.debug("[EntityResolver] Floor HA alias match: '%s' → '%s'", floor_name, floor.name)
-                    return floor
-        
-        # Third pass: partial match (name contains search term or vice versa)
-        for floor in floors:
-            floor_canon = self._canon(floor.name)
-            for term in search_terms:
-                if term in floor_canon or floor_canon in term:
-                    _LOGGER.debug("[EntityResolver] Floor partial match: '%s' → '%s'", floor_name, floor.name)
-                    return floor
-        
-        _LOGGER.debug("[EntityResolver] No floor found for '%s'", floor_name)
-        return None
-
     def _is_entity_on_floor(self, entity_id: str, floor_id: str) -> bool:
+        """Check if entity is on the specified floor."""
         ent_reg = er.async_get(self.hass)
         dev_reg = dr.async_get(self.hass)
         area_reg = ar.async_get(self.hass)
+        
         entry = ent_reg.async_get(entity_id)
         area_id = None
         if entry:
@@ -335,26 +269,30 @@ class EntityResolverCapability(Capability):
                     area_id = dev.area_id
         if not area_id:
             return False
+            
         area = area_reg.async_get_area(area_id)
-        if area and area.floor_id == floor_id:
-            return True
-        return False
+        return area and area.floor_id == floor_id
 
     def _match_device_class_or_unit(self, entity_id: str, target_class: str) -> bool:
+        """Match entity by device class or unit of measurement."""
         if not target_class:
             return True
         target_class = target_class.lower().strip()
         domain = entity_id.split(".", 1)[0].lower()
+        
         if target_class == domain:
             return True
         if target_class == "light" and domain in ("light", "switch", "input_boolean"):
             return True
+            
         state = self.hass.states.get(entity_id)
         if not state:
             return False
+            
         dc = state.attributes.get("device_class")
         if dc and dc.lower() == target_class:
             return True
+            
         unit = state.attributes.get("unit_of_measurement")
         expected_units = DEVICE_CLASS_UNITS.get(target_class)
         if unit and expected_units and unit in expected_units:
@@ -363,74 +301,32 @@ class EntityResolverCapability(Capability):
 
     @staticmethod
     def _looks_like_entity_id(text: str) -> bool:
+        import re
         s = text.strip().lower()
         return "." in s and re.match(r"^[a-z0-9_]+\.[a-z0-9_]+$", s) is not None
-
-    @staticmethod
-    def _canon(s: Optional[str]) -> str:
-        if not s:
-            return ""
-        t = s.lower()
-        t = (
-            t.replace("ä", "ae")
-            .replace("ö", "oe")
-            .replace("ü", "ue")
-            .replace("ß", "ss")
-        )
-        t = re.sub(r"[^\w\s]+", " ", t)
-        t = re.sub(r"\s+", " ", t).strip()
-        return t
 
     @staticmethod
     def _obj_id(eid: str) -> str:
         return eid.split(".", 1)[1] if "." in eid else eid
 
-    def _find_area(self, area_name: Optional[str]):
-        if not area_name:
-            return None
-        area_reg = ar.async_get(self.hass)
-        needle = self._canon(area_name)
-        areas = area_reg.async_list_areas()
-        
-        # First pass: exact name match
-        for a in areas:
-            canon_name = self._canon(a.name or "")
-            if canon_name == needle:
-                return a
-        
-        # Second pass: check HA aliases (e.g., "S-Zimmer" alias for "Esszimmer")
-        for a in areas:
-            aliases = getattr(a, "aliases", None) or set()
-            for alias in aliases:
-                if self._canon(alias) == needle:
-                    _LOGGER.debug("[EntityResolver] Area alias match: '%s' → '%s'", area_name, a.name)
-                    return a
-        
-        # Third pass: partial match (name contains needle or vice versa)
-        for a in areas:
-            canon_name = self._canon(a.name or "")
-            if needle in canon_name or canon_name in needle:
-                _LOGGER.debug("[EntityResolver] Area partial match: '%s' → '%s'", area_name, a.name)
-                return a
-        
-        return None
-
     def _entities_in_area(self, area, domain: Optional[str]) -> List[str]:
+        """Get all entities in an area."""
         dev_reg = dr.async_get(self.hass)
         ent_reg = er.async_get(self.hass)
-        canon_area = self._canon(area.name)
+        canon_area = canonicalize(area.name)
         out: List[str] = []
+        
         for ent in ent_reg.entities.values():
             dev = dev_reg.devices.get(ent.device_id) if ent.device_id else None
             has_any_area = bool(ent.area_id or (dev and dev.area_id))
-            in_area = ent.area_id == area.id or (
-                dev is not None and dev.area_id == area.id
-            )
+            in_area = ent.area_id == area.id or (dev is not None and dev.area_id == area.id)
+            
             if not in_area and not has_any_area:
-                name_match = self._canon(ent.original_name or "")
-                eid_match = self._canon(ent.entity_id)
+                name_match = canonicalize(ent.original_name or "")
+                eid_match = canonicalize(ent.entity_id)
                 if canon_area and (canon_area in name_match or canon_area in eid_match):
                     in_area = True
+                    
             if not in_area:
                 continue
             if domain and ent.domain != domain:
@@ -439,9 +335,10 @@ class EntityResolverCapability(Capability):
         return out
 
     def _collect_by_name_exact(self, hass, name, domain, all_entities) -> List[str]:
+        """Collect entities by exact name match."""
         if not name:
             return []
-        needle = self._canon(name)
+        needle = canonicalize(name)
         out: List[str] = []
         ent_reg = er.async_get(hass)
         
@@ -451,22 +348,19 @@ class EntityResolverCapability(Capability):
             st = hass.states.get(eid)
             friendly = st and st.attributes.get("friendly_name")
             
-            # Check friendly name
-            if isinstance(friendly, str) and self._canon(friendly) == needle:
+            if isinstance(friendly, str) and canonicalize(friendly) == needle:
                 out.append(eid)
                 continue
             
-            # Check object_id
-            if self._canon(self._obj_id(eid)) == needle:
+            if canonicalize(self._obj_id(eid)) == needle:
                 out.append(eid)
                 continue
             
-            # Check HA entity aliases
             entry = ent_reg.async_get(eid)
             if entry:
                 aliases = getattr(entry, "aliases", None) or set()
                 for alias in aliases:
-                    if self._canon(alias) == needle:
+                    if canonicalize(alias) == needle:
                         _LOGGER.debug("[EntityResolver] Entity alias match: '%s' → '%s'", name, eid)
                         out.append(eid)
                         break
@@ -476,9 +370,11 @@ class EntityResolverCapability(Capability):
     def _collect_by_name_fuzzy(
         self, hass, name, domain, fuzz_mod, all_entities, allowed=None
     ) -> List[str]:
-        needle = self._canon(name)
+        """Collect entities by fuzzy name match."""
+        needle = canonicalize(name)
         if not needle:
             return []
+            
         scored: List[Tuple[str, int, str]] = []
         for eid, ent in all_entities.items():
             if not eid.startswith(f"{domain}."):
@@ -487,16 +383,16 @@ class EntityResolverCapability(Capability):
                 continue
             st = hass.states.get(eid)
             friendly = st and st.attributes.get("friendly_name")
-            cand1 = self._canon(friendly) if isinstance(friendly, str) else ""
-            cand2 = self._canon(self._obj_id(eid))
+            cand1 = canonicalize(friendly) if isinstance(friendly, str) else ""
+            cand2 = canonicalize(self._obj_id(eid))
             s1 = fuzz_mod.token_set_ratio(needle, cand1) if cand1 else 0
             s2 = fuzz_mod.token_set_ratio(needle, cand2) if cand2 else 0
             score = max(s1, s2)
             if score >= self._FUZZ_STRONG or score >= self._FUZZ_FALLBACK:
                 label = friendly or eid
                 scored.append((eid, score, label))
+                
         if not scored:
             return []
         scored.sort(key=lambda x: (-x[1], len(str(x[2]))))
-        top = [eid for (eid, _, _) in scored[: self._FUZZ_MAX_ADD]]
-        return top
+        return [eid for (eid, _, _) in scored[:self._FUZZ_MAX_ADD]]

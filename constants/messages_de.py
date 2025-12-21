@@ -17,7 +17,47 @@ Usage:
     # Returns: "Das habe ich nicht gefunden."
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
+
+
+# --- Global Scope Keywords ---
+# Words that indicate "all areas" or "whole house" scope
+GLOBAL_KEYWORDS: Set[str] = {
+    "haus",
+    "wohnung", 
+    "daheim",
+    "zuhause",
+    "überall",
+    "alles",
+    "ganze haus",
+    "ganzes haus",
+    "alle bereiche",
+    "alle räume",
+}
+
+
+# --- Selection Keywords ---
+# Keywords for all/none selection in disambiguation
+ALL_KEYWORDS: Set[str] = {"alle", "alles", "beide", "beiden", "beides"}
+NONE_KEYWORDS: Set[str] = {"keine", "keines", "keinen", "nichts", "nein", "nee", "keins"}
+
+
+# --- German Ordinal Mappings ---
+# Maps ordinal words to numeric values. -1 means "last".
+ORDINAL_MAP: Dict[str, int] = {
+    # Words (all genders/cases)
+    "erste": 1, "ersten": 1, "erstes": 1, "erster": 1,
+    "zweite": 2, "zweiten": 2, "zweites": 2, "zweiter": 2,
+    "dritte": 3, "dritten": 3, "drittes": 3, "dritter": 3,
+    "vierte": 4, "vierten": 4, "viertes": 4, "vierter": 4,
+    "fünfte": 5, "fünften": 5, "fünftes": 5, "fünfter": 5,
+    "sechste": 6, "sechsten": 6, "sechstes": 6, "sechster": 6,
+    "siebte": 7, "siebten": 7, "siebtes": 7, "siebter": 7,
+    "achte": 8, "achten": 8, "achtes": 8, "achter": 8,
+    "neunte": 9, "neunten": 9, "neuntes": 9, "neunter": 9,
+    "zehnte": 10, "zehnten": 10, "zehntes": 10, "zehnter": 10,
+    "letzte": -1, "letzten": -1, "letztes": -1, "letzter": -1,  # -1 = last
+}
 
 
 # --- Error Messages ---

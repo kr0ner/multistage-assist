@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from .base import Capability
 from .keyword_intent import KeywordIntentCapability
 from .entity_resolver import EntityResolverCapability
-from .area_alias import AreaAliasCapability
+from .area_resolver import AreaResolverCapability as AreaAliasCapability
 from .memory import MemoryCapability
 
 _LOGGER = logging.getLogger(__name__)
@@ -119,9 +119,9 @@ JSON: {"entity_id": <string or null>}
         # Skip this if name_slot is present - we'll resolve the entity by name directly
         if not area_slot and not floor_slot and not name_slot:
             # Check for global scope keywords - no need for LLM call
+            from ..constants.messages_de import GLOBAL_KEYWORDS
             text_lower = user_input.text.lower()
-            global_keywords = ["alle ", "alles ", "sämtliche ", "überall", "ganzes haus", "ganze wohnung"]
-            is_global_scope = any(kw in text_lower for kw in global_keywords)
+            is_global_scope = any(kw in text_lower for kw in GLOBAL_KEYWORDS)
             
             if is_global_scope:
                 _LOGGER.debug("[IntentResolution] Global scope detected, skipping area_alias LLM")

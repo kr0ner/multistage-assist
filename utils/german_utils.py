@@ -86,6 +86,36 @@ def remove_articles_and_prepositions(text: str) -> str:
     return " ".join(filtered)
 
 
+def canonicalize(text: str) -> str:
+    """Canonicalize text for fuzzy matching.
+    
+    Performs:
+    - Lowercase conversion
+    - German umlaut normalization (ä→ae, ö→oe, ü→ue, ß→ss)
+    - Punctuation removal
+    - Whitespace normalization
+    
+    Args:
+        text: Input text
+        
+    Returns:
+        Canonicalized text for comparison
+        
+    Examples:
+        canonicalize("Küche") -> "kueche"
+        canonicalize("Gäste-Bad") -> "gaeste bad"
+        canonicalize("  Büro  ") -> "buero"
+    """
+    if not text:
+        return ""
+    
+    t = text.lower()
+    t = t.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+    t = re.sub(r"[^\w\s]+", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
 # --- Affirmative/Negative Detection ---
 
 AFFIRMATIVE_WORDS: Set[str] = {

@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from homeassistant.components import conversation
 
-from multistage_assist.capabilities.area_alias import AreaAliasCapability
+from multistage_assist.capabilities.area_resolver import AreaResolverCapability as AreaAliasCapability
 from tests.integration import get_llm_config
 
 

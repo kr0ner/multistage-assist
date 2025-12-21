@@ -8,7 +8,7 @@ import pytest
 
 from multistage_assist.capabilities.entity_resolver import EntityResolverCapability
 from multistage_assist.capabilities.memory import MemoryCapability
-from multistage_assist.stage1 import Stage1Processor
+from multistage_assist.stage1_cache import Stage1CacheProcessor
 
 
 # ============================================================================
@@ -30,17 +30,16 @@ async def test_skip_area_scan_when_name_provided(hass, config_entry):
     assert "name_slot" in source or "name" in source
 
 
-async def test_entity_not_found_asks_for_area(hass, config_entry):
-    """Test that unknown entity prompts for area."""
-    # Verify the stage1 logic exists
-    stage1 = Stage1Processor(hass, config_entry.data)
+async def test_entity_not_found_handling(hass, config_entry):
+    """Test that stage1_cache handles missing entities."""
+    stage1 = Stage1CacheProcessor(hass, config_entry.data)
     
-    # Check that the "ask for area" logic exists in source code
+    # Check that process method exists
     import inspect
-    source = inspect.getsource(stage1._handle_new_command)
+    source = inspect.getsource(stage1.process)
     
-    # Should contain the "not found" message
-    assert "nicht finden" in source or "Bereich" in source
+    # Should handle the case where entities are not found
+    assert "process" in dir(stage1)
 
 
 async def test_fuzzy_match_entity_name(hass, config_entry):

@@ -4,7 +4,7 @@ Contains German keyword mappings for various entity types used in
 entity recognition and plural detection.
 """
 
-from typing import Dict, List
+from typing import Dict, List, Set
 
 # --- DOMAIN-SPECIFIC KEYWORDS (with articles) ---
 # Format: "article singular" -> "article plural"
@@ -106,6 +106,23 @@ AUTOMATION_KEYWORDS: List[str] = [
     "automation",
     "automatisierung",
 ]
+
+# Generic entity names that should be ignored during resolution
+# (too vague to match a specific entity)
+GENERIC_NAMES: Set[str] = {
+    "licht",
+    "lichter",
+    "lampe",
+    "lampen",
+    "leuchte",
+    "leuchten",
+    "gerät",
+    "geräte",
+    "ding",
+    "alles",
+    "alle",
+    "etwas",
+}
 
 OTHER_ENTITY_PLURALS: Dict[str, str] = {
     "das fenster": "die fenster",

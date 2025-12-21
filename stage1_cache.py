@@ -137,41 +137,40 @@ class Stage1CacheProcessor(BaseStage):
 
         if not cached:
             _LOGGER.debug("[Stage1Cache] Cache MISS → escalate")
+            # Include clarified command(s) so Stage2 can use them
             return StageResult.escalate(
-                context={**context, "cache_miss": True},
+                context={**context, "cache_miss": True, "commands": commands},
                 raw_text=user_input.text,
             )
 
-        # 5. Cache HIT - check if disambiguation was required
+        # 5. Cache HIT
         _LOGGER.info(
             "[Stage1Cache] Cache HIT (%.3f): %s → %s",
             cached["score"], cached["intent"], cached["entity_ids"]
         )
 
-        # Check user said "alle" to skip disambiguation even if cached required it
-        text_lower = user_input.text.lower()
-        user_wants_all = any(word in text_lower for word in ["alle ", "allen ", "alles "])
-
-        if cached.get("required_disambiguation") and not user_wants_all:
-            # Need disambiguation - escalate to Stage2 which handles it
-            _LOGGER.debug("[Stage1Cache] Cached command needs disambiguation → escalate")
-            return StageResult.escalate(
-                context={
-                    **context,
-                    "cached": cached,
-                    "needs_disambiguation": True,
-                },
-                raw_text=user_input.text,
-            )
+        # NOTE: Disambiguation is handled by ExecutionPipeline, not here.
+        # Stage1 just returns success with entities - pipeline handles the rest.
 
         # 6. Success! Ready for execution
+        # Merge cache slots with NLU entities (NLU takes priority for state queries)
+        cache_slots = {
+            k: v for k, v in cached.get("slots", {}).items()
+            if k not in ("name", "entity_id")
+        }
+        
+        # Merge NLU entities into params (NLU freshly parsed the "aus"/"an" state)
+        nlu_entities = context.get("nlu_entities", {})
+        if nlu_entities:
+            # State is particularly important - use NLU's interpretation
+            if "state" in nlu_entities:
+                cache_slots["state"] = nlu_entities["state"]
+                _LOGGER.debug("[Stage1Cache] Using NLU state='%s' instead of cache", nlu_entities["state"])
+        
         return StageResult.success(
             intent=cached["intent"],
             entity_ids=cached["entity_ids"],
-            params={
-                k: v for k, v in cached.get("slots", {}).items()
-                if k not in ("name", "entity_id")
-            },
+            params=cache_slots,
             context={
                 **context,
                 "from_cache": True,

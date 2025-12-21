@@ -44,12 +44,17 @@ Return a JSON object: { "match": <string_candidate_name_or_GLOBAL_or_null> }
     async def run(
         self, 
         user_input, 
-        search_text: str = None, 
+        search_text: str = None,
+        area_name: str = None,  # Convenience alias for search_text
         mode: str = "area", # "area" or "floor"
         **_: Any
     ) -> Dict[str, Any]:
         
-        text = (search_text or user_input.text or "").strip()
+        # Support both search_text and area_name kwargs
+        query = search_text or area_name
+        if not query and user_input is not None:
+            query = getattr(user_input, "text", "") or ""
+        text = (query or "").strip()
         if not text:
             return {"area": None} # Legacy key return for compatibility
 

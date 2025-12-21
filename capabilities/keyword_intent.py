@@ -159,8 +159,45 @@ class KeywordIntentCapability(Capability):
         }
     }
 
+    def _fuzzy_match(self, word: str, keyword: str, max_distance: int = 2) -> bool:
+        """Check if word matches keyword within edit distance.
+        
+        Handles typos like:
+        - Character swaps: "lihct" → "licht"
+        - Missing chars: "rolläden" → "rollläden"
+        - Extra chars: "lichtt" → "licht"
+        
+        Only for words of similar length to avoid false positives.
+        """
+        # Length check - avoid matching short words to long ones
+        if abs(len(word) - len(keyword)) > max_distance:
+            return False
+        
+        # Minimum length to apply fuzzy (avoid matching "an" to "auf")
+        if len(keyword) < 5:
+            return word == keyword
+        
+        # Simple Levenshtein distance
+        if len(word) > len(keyword):
+            word, keyword = keyword, word
+        
+        distances = range(len(word) + 1)
+        for i2, c2 in enumerate(keyword):
+            new_distances = [i2 + 1]
+            for i1, c1 in enumerate(word):
+                if c1 == c2:
+                    new_distances.append(distances[i1])
+                else:
+                    new_distances.append(1 + min((distances[i1], distances[i1 + 1], new_distances[-1])))
+            distances = new_distances
+        
+        return distances[-1] <= max_distance
+
     def _detect_domain(self, text: str) -> Optional[str]:
         t = text.lower()
+        words = t.split()
+        
+        # First pass: exact substring match
         matches = [
             d for d, kws in self.DOMAIN_KEYWORDS.items() if any(k in t for k in kws)
         ]
@@ -168,7 +205,6 @@ class KeywordIntentCapability(Capability):
             return matches[0]
         if "climate" in matches and "sensor" in matches:
             return "climate"
-        # Calendar before timer - calendar keywords are more specific
         if "calendar" in matches:
             return "calendar"
         if "timer" in matches:
@@ -177,6 +213,15 @@ class KeywordIntentCapability(Capability):
             return "vacuum"
         if matches:
             return matches[0]
+        
+        # Second pass: fuzzy match for typo tolerance
+        for word in words:
+            for domain, keywords in self.DOMAIN_KEYWORDS.items():
+                for kw in keywords:
+                    if self._fuzzy_match(word, kw):
+                        _LOGGER.debug("[KeywordIntent] Fuzzy match: '%s' → '%s' (domain=%s)", word, kw, domain)
+                        return domain
+        
         return None
 
     async def run(self, user_input, **_: Any) -> Dict[str, Any]:

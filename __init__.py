@@ -17,6 +17,15 @@ from .const import (
     CONF_HYBRID_NGRAM_SIZE,
     CONF_VECTOR_THRESHOLD,
     CONF_VECTOR_TOP_K,
+    CONF_CACHE_REGENERATE_ON_STARTUP,
+    CONF_CACHE_MAX_ENTRIES,
+    CONF_SKIP_STAGE1_LLM,
+    CONF_LLM_TIMEOUT,
+    CONF_LLM_MAX_RETRIES,
+    CONF_DEBUG_CACHE_HITS,
+    CONF_DEBUG_LLM_PROMPTS,
+    CONF_DEBUG_INTENT_RESOLUTION,
+    CONF_USE_NEW_PIPELINE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,6 +39,15 @@ EXPERT_SCHEMA = vol.Schema({
     vol.Optional(CONF_HYBRID_NGRAM_SIZE): vol.All(vol.Coerce(int), vol.Range(min=1, max=5)),
     vol.Optional(CONF_VECTOR_THRESHOLD): vol.All(vol.Coerce(float), vol.Range(min=0.0, max=1.0)),
     vol.Optional(CONF_VECTOR_TOP_K): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
+    vol.Optional(CONF_CACHE_REGENERATE_ON_STARTUP): vol.Boolean(),
+    vol.Optional(CONF_CACHE_MAX_ENTRIES): vol.All(vol.Coerce(int), vol.Range(min=100, max=100000)),
+    vol.Optional(CONF_SKIP_STAGE1_LLM): vol.Boolean(),
+    vol.Optional(CONF_LLM_TIMEOUT): vol.All(vol.Coerce(int), vol.Range(min=5, max=300)),
+    vol.Optional(CONF_LLM_MAX_RETRIES): vol.All(vol.Coerce(int), vol.Range(min=0, max=10)),
+    vol.Optional(CONF_DEBUG_CACHE_HITS): vol.Boolean(),
+    vol.Optional(CONF_DEBUG_LLM_PROMPTS): vol.Boolean(),
+    vol.Optional(CONF_DEBUG_INTENT_RESOLUTION): vol.Boolean(),
+    vol.Optional(CONF_USE_NEW_PIPELINE): vol.Boolean(),
 })
 
 CONFIG_SCHEMA = vol.Schema(

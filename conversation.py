@@ -139,10 +139,20 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
             if result.status == "success":
                 # Execute via unified pipeline
                 if result.intent:
+                    # Only update cache for Stage2/Stage3 resolutions (new learnings)
+                    # Skip cache update for:
+                    # - from_cache: already in cache
+                    # - from_nlu: Stage0 NLU handled it (builtin HA patterns)
+                    # - Early stages (Stage0, Stage1) don't produce new learnings
+                    skip_cache = (
+                        result.context.get("from_cache", False) or
+                        result.context.get("from_nlu", False) or
+                        stage.__class__.__name__ in ("Stage0Processor", "Stage1CacheProcessor")
+                    )
                     exec_result = await self._execution_pipeline.execute(
                         user_input,
                         result,
-                        from_cache=result.context.get("from_cache", False),
+                        from_cache=skip_cache,
                     )
                     if exec_result.success:
                         return exec_result.response

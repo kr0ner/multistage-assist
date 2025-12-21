@@ -139,7 +139,16 @@ class CommandProcessorCapability(Capability):
             user_input, intent_name=intent_name, entity_ids=entity_ids, params=params
         )
 
+        _LOGGER.debug(
+            "[CommandProcessor] IntentExecutor returned: %s",
+            {k: v for k, v in (exec_data or {}).items() if k != "result"}
+        )
+
         if not exec_data or "result" not in exec_data:
+            _LOGGER.error(
+                "[CommandProcessor] IntentExecutor failed - exec_data=%s",
+                exec_data
+            )
             return {
                 "status": "error",
                 "result": await error_response(user_input, "Fehler."),

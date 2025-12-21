@@ -74,18 +74,59 @@ class ExecutionPipeline:
         if not stage_result.intent:
             raise ValueError("ExecutionPipeline requires intent to be set")
 
+        # Handle empty entity_ids - generate user-facing error
         if not stage_result.entity_ids:
-            _LOGGER.warning("[ExecutionPipeline] No entity_ids provided, this may fail")
+            area = stage_result.params.get("requested_area", "")
+            device_class = stage_result.params.get("requested_device_class", "")
+            
+            # Build helpful error message
+            if device_class and area:
+                error_msg = f"Es gibt keinen {device_class}-Sensor in {area}."
+            elif area:
+                error_msg = f"Kein passendes Gerät in {area} gefunden."
+            else:
+                error_msg = "Kein passendes Gerät gefunden."
+            
+            _LOGGER.warning("[ExecutionPipeline] No entities to execute on: %s", error_msg)
+            
+            from .conversation_utils import make_response
+            return ExecutionResult(
+                success=False,
+                response=await make_response(error_msg, user_input),
+                pending_data=None,
+            )
+
+        _LOGGER.debug(
+            "[ExecutionPipeline] Executing intent='%s' on %d entities: %s",
+            stage_result.intent, len(stage_result.entity_ids), stage_result.entity_ids[:3]
+        )
+        _LOGGER.debug("[ExecutionPipeline] Params: %s", stage_result.params)
 
         # Delegate to existing CommandProcessor
-        result = await self._processor.process(
-            user_input=user_input,
-            candidates=stage_result.entity_ids,
-            intent_name=stage_result.intent,
-            params=stage_result.params,
-            learning_data=stage_result.context.get("learning_data"),
-            from_cache=from_cache,
-        )
+        try:
+            result = await self._processor.process(
+                user_input=user_input,
+                candidates=stage_result.entity_ids,
+                intent_name=stage_result.intent,
+                params=stage_result.params,
+                learning_data=stage_result.context.get("learning_data"),
+                from_cache=from_cache,
+            )
+        except Exception as e:
+            _LOGGER.exception("[ExecutionPipeline] CommandProcessor.process() failed: %s", e)
+            return ExecutionResult(
+                success=False,
+                response=None,
+                pending_data=None,
+            )
+
+        _LOGGER.debug("[ExecutionPipeline] Result status='%s'", result.get("status"))
+        
+        if result.get("status") != "handled":
+            _LOGGER.warning(
+                "[ExecutionPipeline] Unexpected status '%s': %s", 
+                result.get("status"), result.get("error", "no error info")
+            )
 
         return ExecutionResult(
             success=result.get("status") == "handled",

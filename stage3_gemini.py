@@ -45,10 +45,10 @@ Verfügbare Intents:
 - HassTimerSet: Timer stellen
 
 Wenn der Benutzer eine allgemeine Frage stellt oder chatten möchte, antworte mit:
-{"mode": "chat", "response": "Deine Antwort hier"}
+{{"mode": "chat", "response": "Deine Antwort hier"}}
 
 Bei einem Smart Home Befehl, antworte mit:
-{"mode": "intent", "intent": "IntentName", "area": "Bereich", "domain": "light/cover/switch/climate", "params": {}}
+{{"mode": "intent", "intent": "IntentName", "area": "Bereich", "domain": "light/cover/switch/climate", "params": {{}}}}
 
 Verfügbare Bereiche: {areas}
 Verfügbare Etagen: {floors}
@@ -88,11 +88,13 @@ class Stage3GeminiProcessor(BaseStage):
         floors = []
         
         try:
-            area_registry = self.hass.helpers.area_registry.async_get(self.hass)
+            from homeassistant.helpers import area_registry as ar, floor_registry as fr
+            
+            area_registry = ar.async_get(self.hass)
             for area in area_registry.async_list_areas():
                 areas.append(area.name)
                 
-            floor_registry = self.hass.helpers.floor_registry.async_get(self.hass)
+            floor_registry = fr.async_get(self.hass)
             for floor in floor_registry.async_list_floors():
                 floors.append(floor.name)
         except Exception as e:

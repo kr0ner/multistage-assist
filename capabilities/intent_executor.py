@@ -785,11 +785,14 @@ class IntentExecutorCapability(Capability):
                         # All match - simple "Ja"
                         speech_text = f"Ja, alle sind {positive_word}."
                     else:
-                        # Some don't match - list the NOT matching ones
-                        if len(not_matching) <= 3:
+                        # Some don't match - report the ones that DON'T match the query
+                        # "Sind alle aus?" + 1 light is ON → "Nein, Flur ist noch an"
+                        # not_matching = lights that are NOT in the expected state (i.e., the opposite)
+                        if len(not_matching) == 1:
+                            speech_text = f"Nein, {not_matching[0]} ist noch {opposite_word}."
+                        elif len(not_matching) <= 3:
                             exceptions = join_names(not_matching)
-                            verb = "ist" if len(not_matching) == 1 else "sind"
-                            speech_text = f"Nein, {exceptions} {verb} noch {opposite_word}."
+                            speech_text = f"Nein, {exceptions} sind noch {opposite_word}."
                         else:
                             speech_text = f"Nein, {len(not_matching)} sind noch {opposite_word}."
                 

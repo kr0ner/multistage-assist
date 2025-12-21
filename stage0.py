@@ -183,12 +183,15 @@ class Stage0Processor(BaseStage):
                 raw_text=user_input.text,
             )
 
-        # 6. Multiple entities → escalate for disambiguation
+        # 6. Multiple entities → success (ExecutionPipeline handles disambiguation)
         _LOGGER.debug(
-            "[Stage0] %d candidates → escalate for disambiguation.",
+            "[Stage0] %d candidates → success (disambiguation in ExecutionPipeline)",
             len(resolved_ids)
         )
-        return StageResult.escalate(
+        return StageResult.success(
+            intent=intent_name,
+            entity_ids=resolved_ids,
+            params=self._extract_params(norm_entities),
             context=enriched_context,
             raw_text=user_input.text,
         )

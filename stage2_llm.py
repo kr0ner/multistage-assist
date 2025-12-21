@@ -129,6 +129,16 @@ class Stage2LLMProcessor(BaseStage):
                 raw_text=user_input.text,
             )
 
+        # 1.5 Use clarified command if Stage1Cache already ran clarification
+        # Clarification converts "Im Büro ist es zu dunkel" → "Mache das Licht im Büro heller"
+        clarified_commands = context.get("commands", [])
+        if clarified_commands and len(clarified_commands) == 1:
+            clarified_text = clarified_commands[0]
+            if clarified_text != user_input.text:
+                _LOGGER.debug("[Stage2LLM] Using clarified: '%s' → '%s'", 
+                             user_input.text, clarified_text)
+                user_input = with_new_text(user_input, clarified_text)
+
         # 2. Use keyword_intent to parse intent
         ki_data = await self.use("keyword_intent", user_input) or {}
         intent_name = ki_data.get("intent")
@@ -166,14 +176,25 @@ class Stage2LLMProcessor(BaseStage):
                      len(resolved_ids), resolved_ids)
 
         if not resolved_ids:
-            _LOGGER.debug("[Stage2LLM] No entities resolved → escalate")
-            return StageResult.escalate(
+            # Intent resolved but no matching entities found
+            # Return success with empty entities - ExecutionPipeline handles error response
+            _LOGGER.debug("[Stage2LLM] No entities resolved → success (ExecutionPipeline handles)")
+            execution_params = {k: v for k, v in slots.items() 
+                               if k not in {"area", "room", "floor", "name", "entity", 
+                                           "device", "label", "domain", "device_class", "entity_id"}}
+            return StageResult.success(
+                intent=intent_name,
+                entity_ids=[],  # Empty - ExecutionPipeline will handle
+                params={
+                    **execution_params,
+                    "requested_area": slots.get("area"),
+                    "requested_device_class": slots.get("device_class"),
+                },
                 context={
                     **context,
-                    "intent": intent_name,
-                    "slots": slots,
                     "domain": domain,
-                    "no_entities": True,
+                    "from_llm": True,
+                    "no_entities_found": True,
                 },
                 raw_text=user_input.text,
             )

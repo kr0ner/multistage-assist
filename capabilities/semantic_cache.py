@@ -1,22 +1,13 @@
 """Semantic Command Cache Capability.
 
-Uses a two-stage retrieval pipeline:
-1. Fast vector search via Ollama embeddings (bge-m3)
-2. Precise reranking via CrossEncoder (bge-reranker-base)
-
-This approach correctly distinguishes between:
-- Similar commands with different actions ("Licht an" vs "Licht aus")
-- Similar commands in different rooms ("Küche Licht" vs "Büro Licht")
-- Semantically equivalent variations ("Mach Licht an" vs "Schalte Lampe ein")
+Uses external add-on for cache lookup (vector search + reranking).
+Stores new user-learned entries locally, which the add-on watches and reloads.
 
 Config options:
-    cache_enabled: Enable semantic cache (default: True, ~1GB RAM)
-    embedding_model: Ollama embedding model (default: bge-m3)
-    reranker_model: CrossEncoder model (default: BAAI/bge-reranker-base)
-    reranker_enabled: Use reranker for validation (default: True)
-    reranker_threshold: Min reranker score for cache hit (default: 0.5)
-    vector_search_threshold: Loose filter for candidates (default: 0.4)
-    vector_search_top_k: Candidates to rerank (default: 5)
+    cache_enabled: Enable semantic cache (default: True)
+    reranker_ip: Add-on hostname (default: localhost)
+    reranker_port: Add-on port (default: 9876)
+    reranker_enabled: Use cache lookup (default: True)
 """
 
 import asyncio
@@ -26,87 +17,45 @@ import os
 import re
 import time
 from dataclasses import asdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
+import aiohttp
 import numpy as np
 
-# BM25 for hybrid search (keyword + semantic)
-try:
-    from rank_bm25 import BM25Okapi
-    BM25_AVAILABLE = True
-except ImportError:
-    BM25_AVAILABLE = False
-    _LOGGER = logging.getLogger(__name__)
-    _LOGGER.warning("[SemanticCache] rank_bm25 not installed - hybrid search disabled")
-
 from .base import Capability
-from .semantic_cache_builder import SemanticCacheBuilder
 from ..utils.semantic_cache_types import (
     CacheEntry,
-    DEFAULT_EMBEDDING_MODEL,
-    DEFAULT_RERANKER_MODEL,
-    DEFAULT_RERANKER_THRESHOLD,
-    DEFAULT_VECTOR_THRESHOLD,
-    DEFAULT_VECTOR_TOP_K,
-    DEFAULT_MAX_ENTRIES,
     MIN_CACHE_WORDS,
-    DOMAIN_THRESHOLDS,
+    DEFAULT_MAX_ENTRIES,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
+# Bypass patterns - commands that should skip cache lookup
+DURATION_PATTERNS = [
+    r"\bfür\s+\d+\s*(minuten?|stunden?|sekunden?)\b",
+    r"\bfür\s+(eine?|kurze?)\s*(zeit|weile)\b",
+    r"\btemporär\b",
+    r"\bvorübergehend\b",
+    r"\bzeitlich\s+begrenzt\b",
+]
 
-# German tokenizer for BM25 with optional n-gram support
-def _tokenize_german(text: str, ngram_size: int = 1) -> List[str]:
-    """Tokenize German text for BM25 keyword matching.
-    
-    Args:
-        text: Input text to tokenize
-        ngram_size: Maximum n-gram size (1=words only, 2=words+bigrams, etc.)
-    
-    Handles German specifics:
-    - Lowercasing with umlauts preserved
-    - Removes punctuation but keeps compound words
-    - Keeps action keywords like 'an', 'aus' as separate tokens
-    - Optionally generates n-grams for phrase-level matching
-    """
-    text = text.lower()
-    # Remove punctuation except hyphens (for compound words)
-    text = re.sub(r'[^\w\s-]', ' ', text)
-    # Split into words
-    words = text.split()
-    # Filter very short tokens except important ones
-    important_shorts = {'an', 'aus', 'auf', 'zu', 'ab', 'um', 'im', 'in'}
-    words = [t for t in words if len(t) > 1 or t in important_shorts]
-    
-    if ngram_size <= 1:
-        return words
-    
-    # Generate n-grams (bigrams, trigrams, etc.)
-    tokens = words.copy()  # Start with unigrams
-    for n in range(2, ngram_size + 1):
-        for i in range(len(words) - n + 1):
-            ngram = " ".join(words[i:i+n])
-            tokens.append(ngram)
-    
-    return tokens
-
-
-
+IMPLICIT_PATTERNS = [
+    r"\bzu\s+dunkel\b",
+    r"\bzu\s+hell\b",
+    r"\bzu\s+kalt\b",
+    r"\bzu\s+warm\b",
+    r"\bzu\s+heiß\b",
+    r"\bes\s+ist\s+(dunkel|hell)\b",
+    r"\b(dunkel|hell)\s+hier\b",
+]
 
 
 class SemanticCacheCapability(Capability):
-    """
-    Two-stage semantic cache for fast command resolution.
-
-    Stage 1: Vector search via Ollama embeddings (fast, broad matching)
-    Stage 2: CrossEncoder reranking (precise semantic validation)
-
-    RAM Usage: ~1GB total (~700MB embedding via Ollama + ~300MB reranker)
-    """
+    """Semantic cache with add-on lookup and local storage for learning."""
 
     name = "semantic_cache"
-    description = "Two-stage semantic caching with reranker validation"
+    description = "Semantic caching via add-on API with local learning"
 
     def __init__(self, hass, config):
         super().__init__(hass, config)
@@ -119,687 +68,141 @@ class SemanticCacheCapability(Capability):
             "total_lookups": 0,
             "cache_hits": 0,
             "cache_misses": 0,
-            "reranker_blocks": 0,
-            "anchor_escalations": 0,  # Queries escalated due to anchor match
+            "api_errors": 0,
         }
         self._loaded = False
-        self._anchors_initialized = False  # True after anchors generated
         self._embedding_dim: Optional[int] = None
-        self._reranker = None  # Lazy loaded
 
-        # Embedding config (via Ollama)
-        self.embedding_ip = config.get(
-            "embedding_ip", config.get("stage1_ip", "localhost")
-        )
-        self.embedding_port = config.get(
-            "embedding_port", config.get("stage1_port", 11434)
-        )
-        self.embedding_model = config.get("embedding_model", DEFAULT_EMBEDDING_MODEL)
-
-        # Reranker config
-        # Mode: "local" = use sentence-transformers, "api" = use HTTP API, "auto" = try local first
-        self.reranker_mode = config.get("reranker_mode", "auto")
-        self.reranker_model = config.get("reranker_model", DEFAULT_RERANKER_MODEL)
-        self.reranker_ip = config.get("reranker_ip", "localhost")
-        self.reranker_port = config.get("reranker_port", 9876)
+        # Add-on config - handles both lookup and embeddings
+        self.addon_ip = config.get("reranker_ip", "localhost")
+        self.addon_port = config.get("reranker_port", 9876)
         self.reranker_enabled = config.get("reranker_enabled", True)
-        self.reranker_threshold = config.get(
-            "reranker_threshold", DEFAULT_RERANKER_THRESHOLD
-        )
-        self._reranker = None  # Lazy loaded for local mode
-        self._reranker_mode_resolved = None  # Actual mode after detection
-
-        # Vector search config
-        self.vector_threshold = config.get(
-            "vector_search_threshold", DEFAULT_VECTOR_THRESHOLD
-        )
-        self.vector_top_k = config.get("vector_search_top_k", DEFAULT_VECTOR_TOP_K)
 
         # Cache settings
         self.max_entries = config.get("cache_max_entries", DEFAULT_MAX_ENTRIES)
-        # Enabled by default - note: requires ~1GB RAM for embedding + reranker
         self.enabled = config.get("cache_enabled", True)
 
-        # BM25 Hybrid Search config
-        # Alpha: weight for semantic score (1-alpha = BM25 weight)
-        # 0.7 = 70% semantic + 30% keyword
-        self.hybrid_alpha = config.get("hybrid_alpha", 0.7)
-        self.hybrid_enabled = config.get("hybrid_enabled", True) and BM25_AVAILABLE
-        # N-gram size: 1=word-level only, 2=includes bigrams, 3=includes trigrams
-        # Higher values enable phrase-level matching but increase index size
-        self.hybrid_ngram_size = config.get("hybrid_ngram_size", 2)  # Default: bigrams
-        self._bm25_index = None  # Lazy built when cache loads
-        self._bm25_corpus = []  # Tokenized anchor texts
-
         _LOGGER.info(
-            "[SemanticCache] Configured: enabled=%s, embedding=%s, reranker=%s (mode=%s)",
+            "[SemanticCache] Configured: enabled=%s, add-on=%s:%s",
             self.enabled,
-            self.embedding_model,
-            (
-                self.reranker_model
-                if self.reranker_mode != "api"
-                else f"{self.reranker_ip}:{self.reranker_port}"
-            ),
-            self.reranker_mode,
+            self.addon_ip,
+            self.addon_port,
         )
 
     async def async_startup(self):
-        """Initialize cache at integration startup (non-blocking)."""
+        """Initialize cache at integration startup."""
         if not self.enabled:
             return
         
-        # Load existing cache (fast - just read from disk)
+        # Load existing user-learned cache (for store() duplicate check)
         await self._load_cache()
         
-        # Try to load pre-verified entries from cache file
-        if await self._load_anchor_cache():
-            self._anchors_initialized = True
-            if self._cache:
-                self._embeddings_matrix = np.array([e.embedding for e in self._cache])
-            _LOGGER.info("[SemanticCache] Startup complete: %d entries ready", len(self._cache))
+        # Initialize anchor cache via builder
+        from .semantic_cache_builder import SemanticCacheBuilder
+        builder = SemanticCacheBuilder(
+            self.hass, 
+            self.config, 
+            self._get_embedding, 
+            self._normalize_numeric_value
+        )
+        
+        # Try to load existing anchors
+        success, anchors = await builder.load_anchor_cache()
+        if success and anchors:
+            _LOGGER.info("[SemanticCache] Loaded %d anchors from cache", len(anchors))
         else:
-            # No cache - schedule background generation
-            _LOGGER.info("[SemanticCache] No cache found, generating in background...")
-            self.hass.async_create_task(self._generate_entries_background())
+            # Generate anchors in background (non-blocking)
+            _LOGGER.info("[SemanticCache] Generating anchors in background...")
+            asyncio.create_task(self._generate_anchors_background(builder))
+        
+        _LOGGER.info("[SemanticCache] Startup complete: %d user entries loaded", len(self._cache))
 
-    @property
-    def _ollama_url(self) -> str:
-        """Get Ollama embeddings API URL."""
-        return f"http://{self.embedding_ip}:{self.embedding_port}/api/embeddings"
-
-    @property
-    def _reranker_url(self) -> str:
-        """Get reranker API URL."""
-        return f"http://{self.reranker_ip}:{self.reranker_port}/rerank"
-
-    async def _get_embedding(self, text: str) -> Optional[np.ndarray]:
-        """Get embedding for text via Ollama API."""
-        import aiohttp
-
+    async def _generate_anchors_background(self, builder):
+        """Generate anchors in background task."""
         try:
-            payload = {
-                "model": self.embedding_model,
-                "prompt": text,
-            }
-
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self._ollama_url,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        _LOGGER.error(
-                            "[SemanticCache] Ollama API error %d: %s",
-                            response.status,
-                            error_text[:200],
-                        )
-                        return None
-
-                    data = await response.json()
-                    embedding = data.get("embedding")
-
-                    if embedding is None:
-                        _LOGGER.error("[SemanticCache] No embedding in response")
-                        return None
-
-                    if self._embedding_dim is None:
-                        self._embedding_dim = len(embedding)
-                        _LOGGER.debug(
-                            "[SemanticCache] Embedding dim: %d", self._embedding_dim
-                        )
-
-                    return np.array(embedding, dtype=np.float32)
-
-        except asyncio.TimeoutError:
-            _LOGGER.warning("[SemanticCache] Ollama API timeout")
-            return None
+            anchors = await builder.generate_anchors()
+            if anchors:
+                await builder.save_anchor_cache(anchors)
+                _LOGGER.info("[SemanticCache] Generated %d anchors", len(anchors))
         except Exception as e:
-            _LOGGER.error("[SemanticCache] Failed to get embedding: %s", e)
-            return None
+            _LOGGER.error("[SemanticCache] Anchor generation failed: %s", e)
 
-    async def _load_cache(self):
-        """Load cache from disk."""
-        if self._loaded:
-            return
+    def _addon_url(self, endpoint: str) -> str:
+        """Get add-on API URL for given endpoint."""
+        return f"http://{self.addon_ip}:{self.addon_port}{endpoint}"
 
-        if not os.path.exists(self._cache_file):
-            self._loaded = True
-            return
-
-        try:
-
-            def _read():
-                with open(self._cache_file, "r") as f:
-                    return json.load(f)
-
-            data = await self.hass.async_add_executor_job(_read)
-
-            for entry_data in data.get("entries", []):
-                # Sanitize removed fields to avoid TypeErrors
-                entry_data.pop("is_anchor", None)
-                self._cache.append(CacheEntry(**entry_data))
-
-            # Merge loaded stats with defaults to ensure all keys exist
-            loaded_stats = data.get("stats", {})
-            self._stats.update(loaded_stats)
-
-            if self._cache:
-                self._embeddings_matrix = np.array([e.embedding for e in self._cache])
-                self._embedding_dim = len(self._cache[0].embedding)
-                # Build BM25 index for hybrid search
-                self._build_bm25_index()
-
-            _LOGGER.info("[SemanticCache] Loaded %d cached commands", len(self._cache))
-        except Exception as e:
-            _LOGGER.warning("[SemanticCache] Failed to load cache: %s", e)
-
-        self._loaded = True
-
-    async def _load_anchor_cache(self) -> bool:
-        """Load anchor cache from disk using builder."""
-        builder = SemanticCacheBuilder(
-            self.hass,
-            self.config,
-            self._get_embedding,
-            self._normalize_numeric_value,
-        )
-        success, entries = await builder.load_anchor_cache()
-        if success:
-            self._cache.extend(entries)
-        return success
-
-    async def _save_anchor_cache(self, anchors: list):
-        """Save anchor entries using builder."""
-        builder = SemanticCacheBuilder(
-            self.hass,
-            self.config,
-            self._get_embedding,
-            self._normalize_numeric_value,
-        )
-        await builder.save_anchor_cache(anchors)
-
-    async def _generate_entries_background(self):
-        """Generate pre-verified entries in background (non-blocking startup)."""
-        try:
-            await self._initialize_anchors()
-            _LOGGER.info("[SemanticCache] Background generation complete: %d entries", len(self._cache))
-        except Exception as e:
-            _LOGGER.error("[SemanticCache] Background generation failed: %s", e)
-
-    async def _initialize_anchors(self):
-        """Generate semantic anchor entries using builder."""
-        if self._anchors_initialized:
-            return
-
-        # Try loading from cache first
-        if await self._load_anchor_cache():
-            self._anchors_initialized = True
-            if self._cache:
-                self._embeddings_matrix = np.array([e.embedding for e in self._cache])
-                self._build_bm25_index()  # Rebuild BM25 index for hybrid search
-            return
-
-        # Generate new anchors using builder
-        builder = SemanticCacheBuilder(
-            self.hass,
-            self.config,
-            self._get_embedding,
-            self._normalize_numeric_value,
-        )
-        new_anchors = await builder.generate_anchors()
-
-        # Add to cache and save
-        self._cache.extend(new_anchors)
-        await self._save_anchor_cache(new_anchors)
-
-        # Rebuild embeddings matrix
-        if self._cache:
-            self._embeddings_matrix = np.array([e.embedding for e in self._cache])
-            self._build_bm25_index()  # Build BM25 index for hybrid search
-
-        self._anchors_initialized = True
-        _LOGGER.info("[SemanticCache] Created and cached %d semantic anchors", len(new_anchors))
-
-    def _normalize_numeric_value(self, text: str) -> Tuple[str, List[Any]]:
-        """
-        Normalize numeric values in text for generalized cache lookup.
-        Returns: (normalized_text, extracted_values)
-        
-        Example: "Setze Rollo auf 75%" -> ("Setze Rollo auf 50 Prozent", [75])
-        """
-        import re
-        extracted = []
-        
-        # Helper to replace and capture
-        def replace_percent(match):
-            val = match.group(1)
-            extracted.append(int(val))
-            return "50 Prozent"
-
-        def replace_temp(match):
-            val = match.group(1)
-            # Handle float or int
-            try:
-                if "." in val or "," in val:
-                    extracted.append(float(val.replace(",", ".")))
-                else:
-                    extracted.append(int(val))
-            except ValueError:
-                pass
-            return "21 Grad"
-            
-        # 1. Percentages: "75%", "75 %", "75 Prozent"
-        text_norm = re.sub(r"(\d+)\s*(?:%|Prozent|prozent)", replace_percent, text, flags=re.IGNORECASE)
-        
-        # 2. Temperatures: "23.5 Grad", "23°", "23 Grad"
-        if text_norm == text: # Only apply if percent didn't match (simplification)
-            text_norm = re.sub(r"(\d+(?:[.,]\d+)?)\s*(?:Grad|°|grad)", replace_temp, text_norm)
-            
-        return text_norm, extracted
-
-    async def _save_cache(self):
-        """Persist cache to disk (only user-learned entries, not pre-generated)."""
-        # Filter out pre-generated entries - they have their own cache (anchors.json)
-        user_entries = [e for e in self._cache if not e.generated]
-
-        data = {
-            "version": 4,
-            "embedding_model": self.embedding_model,
-            "reranker_model": self.reranker_model,
-            "entries": [asdict(e) for e in user_entries],
-            "stats": self._stats,
-        }
-
-        try:
-
-            def _write():
-                with open(self._cache_file, "w") as f:
-                    json.dump(data, f, indent=2)
-
-            await self.hass.async_add_executor_job(_write)
-        except Exception as e:
-            _LOGGER.error("[SemanticCache] Failed to save cache: %s", e)
-
-    def _cosine_similarity(self, query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
-        """Compute cosine similarity between query and all cached embeddings."""
-        query_norm = query / (np.linalg.norm(query) + 1e-10)
-        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-        matrix_norm = matrix / (norms + 1e-10)
-        return np.dot(matrix_norm, query_norm)
-
-    def _build_bm25_index(self):
-        """Build BM25 index from cached anchor texts for hybrid search."""
-        if not self.hybrid_enabled or not self._cache:
-            return
-        
-        # Tokenize all anchor texts with configured n-gram size
-        self._bm25_corpus = [
-            _tokenize_german(entry.text, self.hybrid_ngram_size) 
-            for entry in self._cache
-        ]
-        
-        # Build BM25 index
-        self._bm25_index = BM25Okapi(self._bm25_corpus)
-        
-        ngram_desc = "words" if self.hybrid_ngram_size == 1 else f"up to {self.hybrid_ngram_size}-grams"
-        _LOGGER.info(
-            "[SemanticCache] Built BM25 index for %d entries (alpha=%.2f, %s)",
-            len(self._bm25_corpus), self.hybrid_alpha, ngram_desc
-        )
-
-    def _get_bm25_scores(self, query: str) -> np.ndarray:
-        """Get BM25 scores for query against all cached entries.
-        
-        Returns normalized scores in range [0, 1].
-        """
-        if self._bm25_index is None:
-            return np.zeros(len(self._cache))
-        
-        # Tokenize query with same n-gram size as index
-        tokens = _tokenize_german(query, self.hybrid_ngram_size)
-        scores = np.array(self._bm25_index.get_scores(tokens))
-        
-        # Normalize to [0, 1] using min-max scaling
-        if scores.max() > 0:
-            scores = scores / scores.max()
-        
-        return scores
-
-    async def _rerank_candidates(
-        self, query: str, candidates: List[Tuple[float, int, CacheEntry]]
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Rerank candidates using reranker API.
-
-        Args:
-            query: User query text
-            candidates: List of (vector_score, index, entry) tuples
-
-        Returns:
-            Best match dict with reranker score, or None if all below threshold
-        """
-        if not self.reranker_enabled:
-            return None
-
-        # Determine mode: auto tries local first
-        mode = self.reranker_mode
-        if mode == "auto" and self._reranker_mode_resolved is None:
-            # Try to load local model
-            try:
-                from sentence_transformers import CrossEncoder
-
-                self._reranker = CrossEncoder(self.reranker_model, max_length=512)
-                self._reranker_mode_resolved = "local"
-                _LOGGER.info(
-                    "[SemanticCache] Using local reranker: %s", self.reranker_model
-                )
-            except ImportError:
-                self._reranker_mode_resolved = "api"
-                _LOGGER.info(
-                    "[SemanticCache] sentence-transformers not available, using API mode"
-                )
-        elif mode in ("local", "api"):
-            self._reranker_mode_resolved = mode
-
-        effective_mode = self._reranker_mode_resolved or mode
-
-        try:
-            if effective_mode == "local":
-                return await self._rerank_local(query, candidates)
-            else:
-                return await self._rerank_api(query, candidates)
-        except Exception as e:
-            _LOGGER.error("[SemanticCache] Reranker failed: %s", e)
-            return None
-
-    async def _rerank_local(
-        self, query: str, candidates: List[Tuple[float, int, CacheEntry]]
-    ) -> Optional[Dict[str, Any]]:
-        """Rerank using local sentence-transformers model."""
-        if self._reranker is None:
-            try:
-                from sentence_transformers import CrossEncoder
-
-                self._reranker = CrossEncoder(self.reranker_model, max_length=512)
-            except ImportError:
-                _LOGGER.error("[SemanticCache] sentence-transformers not installed")
-                return None
-
-        pairs = [[query, c[2].text] for c in candidates]
-
-        # Run prediction (sync, but fast)
-        scores = self._reranker.predict(pairs)
-        probs = 1 / (1 + np.exp(-scores))  # Sigmoid
-
-        best_idx = int(np.argmax(probs))
-        best_prob = float(probs[best_idx])
-
-        _LOGGER.debug(
-            "[SemanticCache] Local reranker scores: %s (best: %.4f)",
-            [f"{p:.3f}" for p in probs],
-            best_prob,
-        )
-
-        return self._process_rerank_result(candidates, best_idx, best_prob)
-
-    async def _rerank_api(
-        self, query: str, candidates: List[Tuple[float, int, CacheEntry]]
-    ) -> Optional[Dict[str, Any]]:
-        """Rerank using HTTP API."""
-        import aiohttp
-
-        payload = {
-            "query": query,
-            "candidates": [c[2].text for c in candidates],
-        }
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                self._reranker_url,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as response:
-                if response.status != 200:
-                    _LOGGER.warning(
-                        "[SemanticCache] Reranker API error: %s", await response.text()
-                    )
-                    return None
-
-                data = await response.json()
-                scores = data.get("scores", [])
-
-                if not scores:
-                    _LOGGER.warning("[SemanticCache] No scores from reranker API")
-                    return None
-
-        best_idx = int(data.get("best_index", 0))
-        best_prob = float(data.get("best_score", 0))
-
-        _LOGGER.debug(
-            "[SemanticCache] API reranker scores: %s (best: %.4f)",
-            [f"{p:.3f}" for p in scores],
-            best_prob,
-        )
-        # Log reranker results with intent for each candidate
-        for i, (score, (_, _, entry)) in enumerate(zip(scores, candidates)):
-            marker = "→ BEST" if i == best_idx else ""
-            _LOGGER.debug(
-                "[SemanticCache] Reranked %d: score=%.3f, intent=%s, text='%s' %s",
-                i + 1, score, entry.intent, entry.text[:40], marker
-            )
-
-        return self._process_rerank_result(candidates, best_idx, best_prob)
-
-    def _process_rerank_result(
-        self,
-        candidates: List[Tuple[float, int, CacheEntry]],
-        best_idx: int,
-        best_prob: float,
-    ) -> Optional[Dict[str, Any]]:
-        """Process reranker result and handle anchors."""
-        _, cache_idx, entry = candidates[best_idx]
-        
-        # Get domain-specific threshold
-        domain = None
-        if entry.entity_ids:
-            # Entity IDs are formatted as "domain.entity_name"
-            domain = entry.entity_ids[0].split(".")[0] if "." in entry.entity_ids[0] else None
-        threshold = DOMAIN_THRESHOLDS.get(domain, self.reranker_threshold)
-        
-        if best_prob >= threshold:
-            return self._make_result(entry, best_prob, cache_idx, is_reranked=True)
-
-        self._stats["reranker_blocks"] += 1
-        _LOGGER.debug(
-            "[SemanticCache] Reranker BLOCKED: best score %.4f < threshold %.4f (domain=%s)",
-            best_prob,
-            threshold,
-            domain,
-        )
-        return None
-
-    def _make_result(
-        self, entry: CacheEntry, score: float, cache_idx: int, is_reranked: bool = False
-    ) -> Dict[str, Any]:
-        """Create result dict from cache entry."""
-        entry.hits += 1
-        entry.last_hit = time.strftime("%Y-%m-%dT%H:%M:%S")
-
-        return {
-            "intent": entry.intent,
-            "entity_ids": entry.entity_ids,
-            "slots": entry.slots,
-            "score": score,
-            "required_disambiguation": entry.required_disambiguation,
-            "disambiguation_options": entry.disambiguation_options,
-            "original_text": entry.text,
-            "reranked": is_reranked,
-        }
+    def _should_bypass(self, text: str) -> bool:
+        """Check if query should bypass cache lookup."""
+        text_lower = text.lower()
+        for pattern in DURATION_PATTERNS + IMPLICIT_PATTERNS:
+            if re.search(pattern, text_lower):
+                _LOGGER.debug("[SemanticCache] Bypass pattern detected: %s", text[:50])
+                return True
+        return False
 
     async def lookup(self, text: str) -> Optional[Dict[str, Any]]:
-        """
-        Two-stage cache lookup.
-
-        Stage 1: Fast vector search to find top-k candidates
-        Stage 2: Precise reranking to validate semantic match
-
+        """Lookup command via add-on API.
+        
+        Args:
+            text: User command text
+            
         Returns:
             Dict with {intent, entity_ids, slots, score, ...} or None
         """
-        if not self.enabled:
+        if not self.enabled or not self.reranker_enabled:
             return None
 
-        # Strict Requirement: If reranker is disabled, cache is unreliable (no vector-only fallback)
-        if not self.reranker_enabled:
+        # Check bypass patterns locally (faster than API call)
+        if self._should_bypass(text):
             return None
-
-        # Ensure cache is loaded (fast, from disk)
-        await self._load_cache()
-        
-        # If still initializing in background, cache miss gracefully
-        if not self._anchors_initialized or not self._cache or self._embeddings_matrix is None:
-            self._stats["cache_misses"] += 1
-            return None
-
-        # Pre-check: Skip cache for duration patterns (TemporaryControl)
-        # These need LLM to extract the exact duration value
-        duration_patterns = [
-            r"\bfür\s+\d+\s*(minuten?|stunden?|sekunden?)\b",
-            r"\bfür\s+(eine?|kurze?)\s*(zeit|weile)\b",
-            r"\btemporär\b",
-            r"\bvorübergehend\b",
-            r"\bzeitlich\s+begrenzt\b",
-        ]
-        # Implicit brightness/temperature patterns - need clarification to determine direction
-        # "zu dunkel" → step_up, "zu hell" → step_down (can't determine from cached slot)
-        implicit_patterns = [
-            r"\bzu\s+dunkel\b",
-            r"\bzu\s+hell\b",
-            r"\bzu\s+kalt\b",
-            r"\bzu\s+warm\b",
-            r"\bzu\s+heiß\b",
-            r"\bes\s+ist\s+(dunkel|hell)\b",
-            r"\b(dunkel|hell)\s+hier\b",
-        ]
-        import re
-        text_lower = text.lower()
-        for pattern in duration_patterns + implicit_patterns:
-            if re.search(pattern, text_lower):
-                _LOGGER.debug(
-                    "[SemanticCache] Bypass pattern detected, skipping cache: %s",
-                    text[:50]
-                )
-                return None
 
         self._stats["total_lookups"] += 1
 
-        # Normalize query for Generalized Number Matching
-        query_norm, query_values = self._normalize_numeric_value(text)
-        if query_norm != text:
-             _LOGGER.debug("[SemanticCache] Generalized Lookup: '%s' -> '%s' [%s]", text, query_norm, query_values)
+        try:
+            timeout = aiohttp.ClientTimeout(total=5)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                    self._addon_url("/lookup"),
+                    json={"query": text},
+                ) as resp:
+                    if resp.status != 200:
+                        _LOGGER.warning(
+                            "[SemanticCache] Lookup API returned %d", resp.status
+                        )
+                        self._stats["api_errors"] += 1
+                        return None
+                    data = await resp.json()
+        except asyncio.TimeoutError:
+            _LOGGER.warning("[SemanticCache] Lookup API timeout")
+            self._stats["api_errors"] += 1
+            return None
+        except Exception as e:
+            _LOGGER.warning("[SemanticCache] Lookup API error: %s", e)
+            self._stats["api_errors"] += 1
+            return None
+
+        if not data.get("found"):
+            self._stats["cache_misses"] += 1
+            _LOGGER.debug("[SemanticCache] MISS: %s (score=%.2f)", text[:40], data.get("score", 0))
+            return None
+
+        self._stats["cache_hits"] += 1
         
-        # Stage 1: Vector search
-        _LOGGER.debug("DEBUG: Starting vector search for '%s' (norm: '%s')", text, query_norm)
-        query_emb = await self._get_embedding(query_norm)
-        if query_emb is None:
-            self._stats["cache_misses"] += 1
-            return None
-
-        similarities = self._cosine_similarity(query_emb, self._embeddings_matrix)
-        _LOGGER.debug("DEBUG: Similarities calculated. Max: %s", np.max(similarities))
-
-        # Hybrid search: combine semantic + BM25 keyword scores
-        if self.hybrid_enabled and self._bm25_index is not None:
-            bm25_scores = self._get_bm25_scores(query_norm)
-            
-            # Safety check: BM25 index must match cache size
-            # If stale (e.g., cache grew after index was built), skip hybrid
-            if len(bm25_scores) != len(similarities):
-                _LOGGER.warning(
-                    "[SemanticCache] BM25 index stale (size %d != cache %d), rebuilding...",
-                    len(bm25_scores), len(similarities)
-                )
-                self._build_bm25_index()
-                bm25_scores = self._get_bm25_scores(query_norm)
-            
-            # Only combine if shapes now match
-            if len(bm25_scores) == len(similarities):
-                # Weighted combination: alpha * semantic + (1-alpha) * keyword
-                hybrid_scores = (self.hybrid_alpha * similarities + 
-                               (1 - self.hybrid_alpha) * bm25_scores)
-                _LOGGER.debug(
-                    "DEBUG: Hybrid search - semantic max: %.3f, BM25 max: %.3f, hybrid max: %.3f",
-                    np.max(similarities), np.max(bm25_scores), np.max(hybrid_scores)
-                )
-                similarities = hybrid_scores
-            else:
-                _LOGGER.warning(
-                    "[SemanticCache] BM25 shape still mismatched, using vector-only search"
-                )
-
-        # Get top-k candidates above loose threshold
-        candidates: List[Tuple[float, int, CacheEntry]] = []
-        for idx, score in enumerate(similarities):
-            if score >= self.vector_threshold:
-                candidates.append((float(score), idx, self._cache[idx]))
-
-        _LOGGER.debug("DEBUG: Found %d candidates above threshold %s", len(candidates), self.vector_threshold)
-
-        # Sort by score descending
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        candidates = candidates[: self.vector_top_k]
-
-        if not candidates:
-            _LOGGER.debug(
-                "[SemanticCache] MISS: no candidates above threshold %.2f",
-                self.vector_threshold,
-            )
-            self._stats["cache_misses"] += 1
-            return None
-
-        _LOGGER.debug(
-            "[SemanticCache] Vector search found %d candidates (top: %.3f)",
-            len(candidates),
-            candidates[0][0],
+        result = {
+            "intent": data["intent"],
+            "entity_ids": data.get("entity_ids", []),
+            "slots": data.get("slots", {}),
+            "score": data.get("score", 0),
+            "original_text": data.get("original_text", ""),
+            "source": "anchor" if data.get("is_anchor") else "learned",
+        }
+        
+        _LOGGER.info(
+            "[SemanticCache] HIT: '%s' → %s (score=%.2f, source=%s)",
+            text[:40], result["intent"], result["score"], result["source"]
         )
-
-        # Stage 2: Reranking
-        best_result = await self._rerank_candidates(query_norm, candidates)
-
-        if best_result:
-            self._stats["cache_hits"] += 1
-            
-            # generalized number injection:
-            # If we extracted values from query, overwrite the cached slot values
-            if query_values:
-                val = query_values[0] # Assume primary value
-                slots = best_result.get("slots", {})
-                
-                # Update known numeric slots
-                updated = False
-                for key in ["position", "brightness", "temperature", "volume_level", "humidity"]:
-                    if key in slots:
-                        _LOGGER.debug("[SemanticCache] Injecting dynamic value %s into slot '%s'", val, key)
-                        slots[key] = val
-                        updated = True
-                
-                if updated:
-                    best_result["slots"] = slots
-
-            _LOGGER.info(
-                "[SemanticCache] HIT (score=%.3f, reranked=%s): '%s' -> '%s' [%s]",
-                best_result["score"],
-                best_result.get("reranked", False),
-                text[:40],
-                best_result["intent"],
-                best_result["entity_ids"][0] if best_result["entity_ids"] else "?",
-            )
-            return best_result
-
-        self._stats["cache_misses"] += 1
-        return None
+        
+        return result
 
     async def store(
         self,
@@ -812,9 +215,9 @@ class SemanticCacheCapability(Capability):
         verified: bool = True,
         is_disambiguation_response: bool = False,
     ):
-        """
-        Cache a successful command resolution.
-
+        """Cache a successful command resolution.
+        
+        Stores to disk; add-on watches file and reloads automatically.
         Only call this AFTER verified successful execution.
         """
         if not self.enabled:
@@ -841,18 +244,17 @@ class SemanticCacheCapability(Capability):
             "HassCreateEvent",
             "HassTimerSet",
             "HassStartTimer",
-            "TemporaryControl",  # Duration-specific, not generalizable
-            "DelayedControl",    # Delay-specific, not generalizable
+            "TemporaryControl",
+            "DelayedControl",
         ):
             _LOGGER.debug("[SemanticCache] SKIP: non-repeatable intent %s", intent)
             return
 
-        # Normalize text for Generalized Number Matching
-        # We store the normalized version (e.g. "50 Prozent") so it matches future queries
+        # Normalize text for generalized matching
         text_norm, _ = self._normalize_numeric_value(text)
         if text_norm != text:
-             _LOGGER.debug("[SemanticCache] Generalized Storage: Storing '%s' as '%s'", text, text_norm)
-             text = text_norm
+            _LOGGER.debug("[SemanticCache] Generalized: '%s' → '%s'", text, text_norm)
+            text = text_norm
 
         await self._load_cache()
 
@@ -874,8 +276,7 @@ class SemanticCacheCapability(Capability):
                 await self._save_cache()
                 return
 
-        # Filter out runtime-computed values that shouldn't be cached
-        # brightness is calculated at execution time for step_up/step_down
+        # Filter out runtime-computed values
         filtered_slots = {
             k: v for k, v in (slots or {}).items()
             if k not in ("brightness", "_prerequisites")
@@ -904,52 +305,131 @@ class SemanticCacheCapability(Capability):
         # LRU eviction
         if len(self._cache) > self.max_entries:
             self._cache.sort(key=lambda e: e.last_hit, reverse=True)
-            removed = self._cache[self.max_entries :]
-            self._cache = self._cache[: self.max_entries]
+            removed = self._cache[self.max_entries:]
+            self._cache = self._cache[:self.max_entries]
             self._embeddings_matrix = np.array([e.embedding for e in self._cache])
             _LOGGER.debug("[SemanticCache] Evicted %d old entries", len(removed))
 
         await self._save_cache()
 
         _LOGGER.info(
-            "[SemanticCache] Stored: '%s' -> %s [%s]",
+            "[SemanticCache] Stored: '%s' → %s [%s]",
             text[:40],
             intent,
             entity_ids[0] if entity_ids else "?",
         )
 
-    async def get_stats(self) -> Dict[str, Any]:
-        """Return cache statistics."""
-        await self._load_cache()
-        anchor_count = sum(1 for e in self._cache if e.generated)
-        real_count = len(self._cache) - anchor_count
-        return {
-            **self._stats,
-            "cache_size": len(self._cache),
-            "anchor_count": anchor_count,
-            "real_entries": real_count,
-            "hit_rate": (
-                self._stats["cache_hits"] / self._stats["total_lookups"] * 100
-                if self._stats["total_lookups"] > 0
-                else 0
-            ),
-            "embedding_model": self.embedding_model,
-            "reranker_host": f"{self.reranker_ip}:{self.reranker_port}",
-            "reranker_enabled": self.reranker_enabled,
-            "embedding_host": f"{self.embedding_ip}:{self.embedding_port}",
+    # --- Helper Methods ---
+
+    async def _get_embedding(self, text: str) -> Optional[np.ndarray]:
+        """Get embedding for text via add-on /embed/text API."""
+        try:
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                    self._addon_url("/embed/text"),
+                    json={"text": text},
+                ) as resp:
+                    if resp.status != 200:
+                        _LOGGER.warning("[SemanticCache] Embed API returned %d", resp.status)
+                        return None
+                    data = await resp.json()
+                    embedding = np.array(data["embedding"], dtype=np.float32)
+                    if self._embedding_dim is None:
+                        self._embedding_dim = data.get("dim", len(embedding))
+                    return embedding
+        except Exception as e:
+            _LOGGER.warning("[SemanticCache] Embed error: %s", e)
+            return None
+
+    async def _load_cache(self):
+        """Load user-learned cache from disk."""
+        if self._loaded:
+            return
+
+        if not os.path.exists(self._cache_file):
+            self._loaded = True
+            return
+
+        try:
+            def _read():
+                with open(self._cache_file, "r") as f:
+                    return json.load(f)
+
+            data = await self.hass.async_add_executor_job(_read)
+
+            for item in data.get("entries", []):
+                try:
+                    entry = CacheEntry(**item)
+                    self._cache.append(entry)
+                except Exception:
+                    continue
+
+            if self._cache:
+                self._embeddings_matrix = np.array([e.embedding for e in self._cache])
+                self._embedding_dim = self._embeddings_matrix.shape[1]
+
+            self._loaded = True
+            _LOGGER.info("[SemanticCache] Loaded %d user entries", len(self._cache))
+        except Exception as e:
+            _LOGGER.warning("[SemanticCache] Failed to load cache: %s", e)
+            self._loaded = True
+
+    async def _save_cache(self):
+        """Persist cache to disk. Add-on watches and reloads automatically."""
+        # Only save user-learned entries (not generated/anchors)
+        user_entries = [e for e in self._cache if not getattr(e, 'generated', False)]
+
+        data = {
+            "version": 5,
+            "entries": [asdict(e) for e in user_entries],
+            "stats": self._stats,
         }
 
-    async def clear(self):
-        """Clear all cached entries (including anchors - they'll be regenerated)."""
-        self._cache = []
-        self._embeddings_matrix = None
-        self._anchors_initialized = False
-        self._stats = {
-            "total_lookups": 0,
-            "cache_hits": 0,
-            "cache_misses": 0,
-            "reranker_blocks": 0,
-            "anchor_escalations": 0,
+        try:
+            def _write():
+                with open(self._cache_file, "w") as f:
+                    json.dump(data, f, indent=2)
+
+            await self.hass.async_add_executor_job(_write)
+        except Exception as e:
+            _LOGGER.error("[SemanticCache] Failed to save cache: %s", e)
+
+    def _cosine_similarity(self, query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+        """Compute cosine similarity between query and cached embeddings."""
+        query_norm = query / (np.linalg.norm(query) + 1e-10)
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        matrix_norm = matrix / (norms + 1e-10)
+        return np.dot(matrix_norm, query_norm)
+
+    def _normalize_numeric_value(self, text: str) -> tuple:
+        """Normalize numeric values for generalized cache matching.
+        
+        Returns: (normalized_text, extracted_values)
+        """
+        extracted = []
+
+        def replace_percent(match):
+            val = int(match.group(1))
+            extracted.append(val)
+            return "50 Prozent"
+
+        def replace_temp(match):
+            val = int(match.group(1))
+            extracted.append(val)
+            return "20 Grad"
+
+        text_norm = re.sub(r"(\d+)\s*%", replace_percent, text)
+        text_norm = re.sub(r"(\d+)\s*(prozent|Prozent)", replace_percent, text_norm)
+        text_norm = re.sub(r"(\d+)\s*(grad|Grad)", replace_temp, text_norm)
+
+        return text_norm, extracted
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get cache statistics."""
+        return {
+            **self._stats,
+            "user_entries": len(self._cache),
+            "enabled": self.enabled,
+            "addon_url": f"{self.reranker_ip}:{self.reranker_port}",
         }
-        await self._save_cache()
-        _LOGGER.info("[SemanticCache] Cache cleared")

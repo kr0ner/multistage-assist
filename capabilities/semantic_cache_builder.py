@@ -348,14 +348,13 @@ class SemanticCacheBuilder:
         Args:
             hass: Home Assistant instance
             config: Configuration dict
-            get_embedding_func: Async function to get embeddings
+            get_embedding_func: Async function to get embeddings (calls add-on)
             normalize_func: Function to normalize numeric values in text
         """
         self.hass = hass
         self.config = config
         self._get_embedding = get_embedding_func
         self._normalize_numeric_value = normalize_func
-        self.embedding_model = config.get("embedding_model", "bge-m3")
 
     async def load_anchor_cache(self) -> Tuple[bool, List[CacheEntry]]:
         """Load anchor cache from disk.
@@ -376,12 +375,7 @@ class SemanticCacheBuilder:
 
             data = await self.hass.async_add_executor_job(_read)
             
-            # Check if anchor cache is compatible
-            if data.get("embedding_model") != self.embedding_model:
-                _LOGGER.info("[SemanticCache] Anchor model mismatch, regenerating")
-                return False, []
-            
-            # Load anchors
+            # Load anchors (add-on handles model consistency)
             entries = []
             for entry_data in data.get("anchors", []):
                 # Sanitize removed fields
@@ -401,8 +395,7 @@ class SemanticCacheBuilder:
         )
         
         data = {
-            "version": 1,
-            "embedding_model": self.embedding_model,
+            "version": 2,
             "anchors": [asdict(e) for e in anchors],
         }
 

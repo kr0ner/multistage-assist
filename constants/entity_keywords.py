@@ -27,8 +27,8 @@ COVER_KEYWORDS: Dict[str, str] = {
 }
 
 SWITCH_KEYWORDS: Dict[str, str] = {
+    "die steckdose": "die steckdosen",  # Most common in smart home context
     "der schalter": "die schalter",
-    "die steckdose": "die steckdosen",
     "der zwischenstecker": "die zwischenstecker",
     "der strom": "der strom",
 }

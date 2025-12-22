@@ -105,12 +105,12 @@ AREA_PHRASE_PATTERNS = {
         ("Deaktiviere Beleuchtung in {area}", "HassTurnOff", {}),
         ("Deaktiviere {device} in {area}", "HassTurnOff", {}),
         ("{device} in {area} ausschalten", "HassTurnOff", {}),
-        ("Ausschalten {device} in {area}", "HassTurnOff", {}),
         ("Mach mal {device} in {area} aus", "HassTurnOff", {}),
         
         # === HassLightSet - formal brightness patterns ===
-        ("Erhöhe die Helligkeit von {device} in {area}", "HassLightSet", {"command": "step_up"}),
-        ("Reduziere die Helligkeit von {device} in {area}", "HassLightSet", {"command": "step_down"}),
+        # Use dative case after 'von': "von dem Licht"
+        ("Erhöhe die Helligkeit von {device_dat} in {area}", "HassLightSet", {"command": "step_up"}),
+        ("Reduziere die Helligkeit von {device_dat} in {area}", "HassLightSet", {"command": "step_down"}),
         ("Dimme {device} in {area} auf 50 Prozent", "HassLightSet", {"brightness": 50}),
         # Informal brightness patterns - "heller/dunkler" variations
         ("Mach {device} in {area} heller", "HassLightSet", {"command": "step_up"}),
@@ -122,9 +122,9 @@ AREA_PHRASE_PATTERNS = {
         ("{device} heller in {area}", "HassLightSet", {"command": "step_up"}),
         ("{device} dunkler in {area}", "HassLightSet", {"command": "step_down"}),
         
-        # === HassGetState ===
-        ("Ist {device} in {area} an", "HassGetState", {}),
-        ("Brennt {device} in {area}", "HassGetState", {}),
+        # === HassGetState (nominative + question mark) ===
+        ("Ist {device_nom} in {area} an?", "HassGetState", {}),
+        ("Brennt {device_nom} in {area}?", "HassGetState", {}),
         
         # === DelayedControl - delayed on/off ===
         ("Schalte {device} in {area} in 10 Minuten an", "DelayedControl", {"command": "on"}),
@@ -264,13 +264,13 @@ def _get_first_plural(keywords_dict):
     return next(iter(keywords_dict.values()))
 
 # Import german_utils helpers for article case conversion
-from ..utils.german_utils import nominative_to_accusative, capitalize_article_phrase
+from ..utils.german_utils import nominative_to_accusative, nominative_to_dative, capitalize_article_phrase
 
 
 def _get_device_words(domain: str):
-    """Get device words for a domain (nominative, accusative, plural).
+    """Get device words for a domain in all grammatical cases.
     
-    Returns tuple of (singular_nominative, singular_accusative, plural) 
+    Returns tuple of (nominative, accusative, dative, plural) 
     all properly capitalized.
     
     Uses entity_keywords.py as source of truth.
@@ -287,7 +287,8 @@ def _get_device_words(domain: str):
     
     if domain not in keyword_maps:
         # Fallback for domains without keyword mapping
-        return (f"das {domain.title()}", f"das {domain.title()}", f"die {domain.title()}s")
+        fallback = f"das {domain.title()}"
+        return (fallback, fallback, fallback, f"die {domain.title()}s")
     
     keywords = keyword_maps[domain]
     singular_nom = _get_first_keyword(keywords)  # e.g. "der rollladen"
@@ -297,27 +298,31 @@ def _get_device_words(domain: str):
     singular_nom = capitalize_article_phrase(singular_nom)  # "der Rollladen"
     plural = capitalize_article_phrase(plural)              # "die Rollläden"
     
-    # Derive accusative from nominative
+    # Derive accusative and dative from nominative
     singular_acc = nominative_to_accusative(singular_nom)   # "den Rollladen"
+    singular_dat = nominative_to_dative(singular_nom)       # "dem Rollladen"
     
-    return (singular_nom, singular_acc, plural)
+    return (singular_nom, singular_acc, singular_dat, plural)
 
 
 # Build device word dictionaries dynamically from entity_keywords
 DOMAIN_DEVICE_WORDS = {}           # Plural (for area/floor scope)
 DOMAIN_DEVICE_WORDS_SINGULAR = {}  # Singular accusative (for commands)
 DOMAIN_DEVICE_WORDS_NOMINATIVE = {} # Singular nominative (for questions)
+DOMAIN_DEVICE_WORDS_DATIVE = {}     # Singular dative (for "von dem Licht")
 
 for _domain in ["light", "cover", "climate", "switch", "fan", "media_player", "sensor"]:
-    _nom, _acc, _plural = _get_device_words(_domain)
+    _nom, _acc, _dat, _plural = _get_device_words(_domain)
     DOMAIN_DEVICE_WORDS[_domain] = _plural
     DOMAIN_DEVICE_WORDS_SINGULAR[_domain] = _acc
     DOMAIN_DEVICE_WORDS_NOMINATIVE[_domain] = _nom
+    DOMAIN_DEVICE_WORDS_DATIVE[_domain] = _dat
 
 # Add automation (not in entity_keywords)
 DOMAIN_DEVICE_WORDS["automation"] = "die Automatisierungen"
 DOMAIN_DEVICE_WORDS_SINGULAR["automation"] = "die Automatisierung"
 DOMAIN_DEVICE_WORDS_NOMINATIVE["automation"] = "die Automatisierung"
+DOMAIN_DEVICE_WORDS_DATIVE["automation"] = "der Automatisierung"
 
 # GLOBAL-SCOPE patterns: Domain-wide commands without area restriction
 # ⚠️ RULE: 1 ENTRY per domain + intent (same as AREA and ENTITY patterns)
@@ -636,11 +641,17 @@ class SemanticCacheBuilder:
         for pattern_tuple in area_patterns:
             pattern, intent, extra_slots = pattern_tuple
             
-            # Get nominative form for questions
+            # Get all case forms for device word
             device_nom = DOMAIN_DEVICE_WORDS_NOMINATIVE.get(domain, device_word)
+            device_dat = DOMAIN_DEVICE_WORDS_DATIVE.get(domain, device_word)
             
             try:
-                text = pattern.format(area=area_name, device=device_word, device_nom=device_nom)
+                text = pattern.format(
+                    area=area_name, 
+                    device=device_word, 
+                    device_nom=device_nom,
+                    device_dat=device_dat
+                )
             except KeyError:
                 continue
             
@@ -736,14 +747,16 @@ class SemanticCacheBuilder:
                 if intent == "HassLightSet" and not is_dimmable:
                     continue
                 
-                # Get nominative form for questions
+                # Get all case forms for device word
                 device_nom = DOMAIN_DEVICE_WORDS_NOMINATIVE.get(domain, device_word)
+                device_dat = DOMAIN_DEVICE_WORDS_DATIVE.get(domain, device_word)
                 
                 try:
                     text = pattern.format(
                         area=area_name,
                         device=device_word,
                         device_nom=device_nom,
+                        device_dat=device_dat,
                         entity_name=entity_name,
                     )
                 except KeyError:
@@ -786,12 +799,18 @@ class SemanticCacheBuilder:
         for pattern_tuple in area_patterns:
             pattern, intent, extra_slots = pattern_tuple
             
-            # Get nominative form for questions
+            # Get all case forms for device word
             device_nom = DOMAIN_DEVICE_WORDS_NOMINATIVE.get(domain, device_word)
+            device_dat = DOMAIN_DEVICE_WORDS_DATIVE.get(domain, device_word)
             
             try:
                 # Reuse area patterns - substitute {area} with floor_name
-                text = pattern.format(area=floor_name, device=device_word, device_nom=device_nom)
+                text = pattern.format(
+                    area=floor_name, 
+                    device=device_word, 
+                    device_nom=device_nom,
+                    device_dat=device_dat
+                )
             except KeyError:
                 continue
             

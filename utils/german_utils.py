@@ -54,6 +54,46 @@ def nominative_to_accusative(phrase: str) -> str:
     return " ".join(words)
 
 
+def nominative_to_dative(phrase: str) -> str:
+    """Convert nominative article to dative case.
+    
+    German dative: der → dem, das → dem, die → der (singular fem) / den (plural).
+    Used after prepositions like 'von', 'mit', 'bei', etc.
+    
+    Args:
+        phrase: Phrase starting with article, e.g. "das Licht"
+        
+    Returns:
+        Phrase with dative article, e.g. "dem Licht"
+        
+    Examples:
+        nominative_to_dative("das Licht") -> "dem Licht"  (neutral)
+        nominative_to_dative("der Rollladen") -> "dem Rollladen"  (masculine)
+        nominative_to_dative("die Lampe") -> "der Lampe"  (feminine singular)
+    """
+    if not phrase:
+        return phrase
+    
+    words = phrase.split()
+    if not words:
+        return phrase
+    
+    article = words[0].lower()
+    # Note: Can't distinguish feminine singular "die" from plural "die"
+    # Assume singular for entity patterns
+    dative_map = {
+        "der": "dem",  # Masculine
+        "das": "dem",  # Neutral
+        "die": "der",  # Feminine singular (plural would be "den")
+    }
+    
+    if article in dative_map:
+        new_article = dative_map[article]
+        words[0] = new_article if words[0].islower() else new_article.capitalize()
+    
+    return " ".join(words)
+
+
 def capitalize_article_phrase(phrase: str) -> str:
     """Capitalize an article+noun phrase properly for German.
     

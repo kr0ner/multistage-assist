@@ -22,6 +22,64 @@ GERMAN_PREPOSITIONS: Set[str] = {
 }
 
 
+def nominative_to_accusative(phrase: str) -> str:
+    """Convert nominative article to accusative case.
+    
+    German accusative rule: only masculine articles change (der → den).
+    Neutral (das) and feminine/plural (die) stay the same.
+    
+    Args:
+        phrase: Phrase starting with article, e.g. "der Rollladen"
+        
+    Returns:
+        Phrase with accusative article, e.g. "den Rollladen"
+        
+    Examples:
+        nominative_to_accusative("der Rollladen") -> "den Rollladen"
+        nominative_to_accusative("das Licht") -> "das Licht"
+        nominative_to_accusative("die Lampe") -> "die Lampe"
+    """
+    if not phrase:
+        return phrase
+    
+    words = phrase.split()
+    if not words:
+        return phrase
+    
+    article = words[0].lower()
+    if article == "der":
+        # Masculine nominative → accusative
+        words[0] = "den" if words[0].islower() else "Den"
+    
+    return " ".join(words)
+
+
+def capitalize_article_phrase(phrase: str) -> str:
+    """Capitalize an article+noun phrase properly for German.
+    
+    Keeps article lowercase but capitalizes the noun.
+    
+    Args:
+        phrase: e.g. "der rollladen" or "die rollläden"
+        
+    Returns:
+        Properly capitalized phrase: "der Rollladen", "die Rollläden"
+    """
+    if not phrase:
+        return phrase
+    
+    words = phrase.split()
+    if len(words) < 2:
+        return phrase
+    
+    # Article stays as-is, capitalize rest
+    result = [words[0]]  # Keep article case
+    for word in words[1:]:
+        result.append(word.capitalize())
+    
+    return " ".join(result)
+
+
 def remove_articles(text: str) -> str:
     """Remove German articles from text.
     

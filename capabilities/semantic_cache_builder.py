@@ -148,9 +148,9 @@ AREA_PHRASE_PATTERNS = {
         ("Fahre {device} in {area} weiter hoch", "HassSetPosition", {"command": "step_up"}),
         ("Fahre {device} in {area} weiter runter", "HassSetPosition", {"command": "step_down"}),
         ("Stelle {device} in {area} auf 50 Prozent", "HassSetPosition", {"position": 50}),
-        # === Cover State ===
-        ("Ist {device} in {area} offen", "HassGetState", {}),
-        ("Sind {device} in {area} offen", "HassGetState", {}),
+        # === Cover State (nominative + question mark) ===
+        ("Ist {device_nom} in {area} offen?", "HassGetState", {}),
+        ("Sind {device} in {area} offen?", "HassGetState", {}),
     ],
     "climate": [
         ("Schalte {device} in {area} an", "HassTurnOn", {}),
@@ -190,6 +190,10 @@ AREA_PHRASE_PATTERNS = {
 }
 
 # ENTITY-SCOPE patterns: {device} + {entity_name} + {area} → single entity
+# For rooms with multiple entities of same domain, e.g.:
+#   "Öffne den Rollladen Büro Nord im Büro" (specific)
+#   vs "Öffne die Rollläden im Büro" (all in area)
+# NOTE: {device} = accusative case, {device_nom} = nominative case (for questions)
 ENTITY_PHRASE_PATTERNS = {
     "light": [
         ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
@@ -198,23 +202,23 @@ ENTITY_PHRASE_PATTERNS = {
         ("Erhöhe die Helligkeit von {device} {entity_name} in {area}", "HassLightSet", {"command": "step_up"}),
         ("Reduziere die Helligkeit von {device} {entity_name} in {area}", "HassLightSet", {"command": "step_down"}),
         ("Dimme {device} {entity_name} in {area} auf 50 Prozent", "HassLightSet", {"brightness": 50}),
-        # Informal brightness patterns - "heller/dunkler" variations
+        # Informal brightness patterns
         ("Mach {device} {entity_name} in {area} heller", "HassLightSet", {"command": "step_up"}),
         ("Mach {device} {entity_name} in {area} dunkler", "HassLightSet", {"command": "step_down"}),
         ("{device} {entity_name} in {area} heller", "HassLightSet", {"command": "step_up"}),
         ("{device} {entity_name} in {area} dunkler", "HassLightSet", {"command": "step_down"}),
-        # State query
-        ("Ist {device} {entity_name} in {area} an", "HassGetState", {}),
+        # State query (nominative case + question mark)
+        ("Ist {device_nom} {entity_name} in {area} an?", "HassGetState", {}),
     ],
     "cover": [
-        # Entity patterns use singular device word: "den Rollladen {entity_name}"
         ("Öffne {device} {entity_name} in {area}", "HassTurnOn", {}),
         ("Schließe {device} {entity_name} in {area}", "HassTurnOff", {}),
         ("Fahre {device} {entity_name} in {area} weiter hoch", "HassSetPosition", {"command": "step_up"}),
         ("Fahre {device} {entity_name} in {area} weiter runter", "HassSetPosition", {"command": "step_down"}),
         ("Stelle {device} {entity_name} in {area} auf 50 Prozent", "HassSetPosition", {"position": 50}),
-        ("Ist {device} {entity_name} in {area} offen", "HassGetState", {"state": "open"}),
-        ("Ist {device} {entity_name} in {area} geschlossen", "HassGetState", {"state": "closed"}),
+        # State queries (nominative case + question mark)
+        ("Ist {device_nom} {entity_name} in {area} offen?", "HassGetState", {"state": "open"}),
+        ("Ist {device_nom} {entity_name} in {area} geschlossen?", "HassGetState", {"state": "closed"}),
     ],
     "climate": [
         ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
@@ -224,7 +228,7 @@ ENTITY_PHRASE_PATTERNS = {
     "switch": [
         ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
         ("Schalte {device} {entity_name} in {area} aus", "HassTurnOff", {}),
-        ("Ist {device} {entity_name} in {area} an", "HassGetState", {}),
+        ("Ist {device_nom} {entity_name} in {area} an?", "HassGetState", {}),
     ],
     "fan": [
         ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
@@ -259,30 +263,61 @@ def _get_first_plural(keywords_dict):
     """Get first keyword's plural form with article."""
     return next(iter(keywords_dict.values()))
 
-# Generic device words by domain (plural form for area/floor scope)
-# Auto-generated from entity_keywords with articles
-DOMAIN_DEVICE_WORDS = {
-    "light": _get_first_keyword(LIGHT_KEYWORDS),        # "das licht"
-    "cover": _get_first_plural(COVER_KEYWORDS),         # "die rollläden" (plural for area scope)
-    "climate": _get_first_keyword(CLIMATE_KEYWORDS),    # "das thermostat"
-    "switch": _get_first_keyword(SWITCH_KEYWORDS),      # "der schalter"
-    "fan": _get_first_keyword(FAN_KEYWORDS),            # "der ventilator"
-    "media_player": _get_first_keyword(MEDIA_KEYWORDS), # "der tv"
-    "sensor": _get_first_keyword(SENSOR_KEYWORDS),      # "der sensor"
-    "automation": "die Automatisierung",
-}
+# Import german_utils helpers for article case conversion
+from ..utils.german_utils import nominative_to_accusative, capitalize_article_phrase
 
-# Singular device words for entity-scope patterns (single entity)
-DOMAIN_DEVICE_WORDS_SINGULAR = {
-    "light": _get_first_keyword(LIGHT_KEYWORDS),        # "das licht"
-    "cover": _get_first_keyword(COVER_KEYWORDS),        # "der rollladen" (singular!)
-    "climate": _get_first_keyword(CLIMATE_KEYWORDS),
-    "switch": _get_first_keyword(SWITCH_KEYWORDS),
-    "fan": _get_first_keyword(FAN_KEYWORDS),
-    "media_player": _get_first_keyword(MEDIA_KEYWORDS),
-    "sensor": _get_first_keyword(SENSOR_KEYWORDS),
-    "automation": "die Automatisierung",
-}
+
+def _get_device_words(domain: str):
+    """Get device words for a domain (nominative, accusative, plural).
+    
+    Returns tuple of (singular_nominative, singular_accusative, plural) 
+    all properly capitalized.
+    
+    Uses entity_keywords.py as source of truth.
+    """
+    keyword_maps = {
+        "light": LIGHT_KEYWORDS,
+        "cover": COVER_KEYWORDS,
+        "climate": CLIMATE_KEYWORDS,
+        "switch": SWITCH_KEYWORDS,
+        "fan": FAN_KEYWORDS,
+        "media_player": MEDIA_KEYWORDS,
+        "sensor": SENSOR_KEYWORDS,
+    }
+    
+    if domain not in keyword_maps:
+        # Fallback for domains without keyword mapping
+        return (f"das {domain.title()}", f"das {domain.title()}", f"die {domain.title()}s")
+    
+    keywords = keyword_maps[domain]
+    singular_nom = _get_first_keyword(keywords)  # e.g. "der rollladen"
+    plural = _get_first_plural(keywords)          # e.g. "die rollläden"
+    
+    # Capitalize properly
+    singular_nom = capitalize_article_phrase(singular_nom)  # "der Rollladen"
+    plural = capitalize_article_phrase(plural)              # "die Rollläden"
+    
+    # Derive accusative from nominative
+    singular_acc = nominative_to_accusative(singular_nom)   # "den Rollladen"
+    
+    return (singular_nom, singular_acc, plural)
+
+
+# Build device word dictionaries dynamically from entity_keywords
+DOMAIN_DEVICE_WORDS = {}           # Plural (for area/floor scope)
+DOMAIN_DEVICE_WORDS_SINGULAR = {}  # Singular accusative (for commands)
+DOMAIN_DEVICE_WORDS_NOMINATIVE = {} # Singular nominative (for questions)
+
+for _domain in ["light", "cover", "climate", "switch", "fan", "media_player", "sensor"]:
+    _nom, _acc, _plural = _get_device_words(_domain)
+    DOMAIN_DEVICE_WORDS[_domain] = _plural
+    DOMAIN_DEVICE_WORDS_SINGULAR[_domain] = _acc
+    DOMAIN_DEVICE_WORDS_NOMINATIVE[_domain] = _nom
+
+# Add automation (not in entity_keywords)
+DOMAIN_DEVICE_WORDS["automation"] = "die Automatisierungen"
+DOMAIN_DEVICE_WORDS_SINGULAR["automation"] = "die Automatisierung"
+DOMAIN_DEVICE_WORDS_NOMINATIVE["automation"] = "die Automatisierung"
 
 # GLOBAL-SCOPE patterns: Domain-wide commands without area restriction
 # ⚠️ RULE: 1 ENTRY per domain + intent (same as AREA and ENTITY patterns)
@@ -525,9 +560,14 @@ class SemanticCacheBuilder:
                         continue
 
                     # --- TIER 1: AREA-SCOPE ---
+                    # Use singular device word if only one entity
+                    area_device_word = device_word
+                    if len(entity_list) == 1:
+                        area_device_word = DOMAIN_DEVICE_WORDS_SINGULAR.get(domain, device_word)
+                    
                     new_anchors.extend(
                         await self._generate_area_anchors(
-                            domain, area_name, entity_list, device_word,
+                            domain, area_name, entity_list, area_device_word,
                             area_patterns, processed_area_domain_intent
                         )
                     )
@@ -557,9 +597,14 @@ class SemanticCacheBuilder:
                     if not entity_list:
                         continue
 
+                    # Use singular device word if only one entity
+                    floor_device_word = device_word
+                    if len(entity_list) == 1:
+                        floor_device_word = DOMAIN_DEVICE_WORDS_SINGULAR.get(domain, device_word)
+
                     new_anchors.extend(
                         await self._generate_floor_anchors(
-                            domain, floor_name, entity_list, device_word,
+                            domain, floor_name, entity_list, floor_device_word,
                             area_patterns, processed_floor_domain_intent
                         )
                     )
@@ -591,8 +636,11 @@ class SemanticCacheBuilder:
         for pattern_tuple in area_patterns:
             pattern, intent, extra_slots = pattern_tuple
             
+            # Get nominative form for questions
+            device_nom = DOMAIN_DEVICE_WORDS_NOMINATIVE.get(domain, device_word)
+            
             try:
-                text = pattern.format(area=area_name, device=device_word)
+                text = pattern.format(area=area_name, device=device_word, device_nom=device_nom)
             except KeyError:
                 continue
             
@@ -661,6 +709,18 @@ class SemanticCacheBuilder:
         anchors = []
         
         for entity_id, entity_name in entity_list:
+            # Skip entity only if its name EXACTLY matches the area name
+            # E.g., skip "Küche" when area is "Küche" (covered by area pattern)
+            # But keep "Küche Spots" - it's a distinct entity needing its own anchor
+            entity_name_lower = entity_name.lower()
+            area_name_lower = area_name.lower()
+            if entity_name_lower == area_name_lower:
+                _LOGGER.debug(
+                    "[SemanticCache] Skipping entity '%s' - exact match with area '%s'",
+                    entity_name, area_name
+                )
+                continue
+            
             # Check dimmability for lights
             is_dimmable = True
             if domain == "light":
@@ -676,10 +736,14 @@ class SemanticCacheBuilder:
                 if intent == "HassLightSet" and not is_dimmable:
                     continue
                 
+                # Get nominative form for questions
+                device_nom = DOMAIN_DEVICE_WORDS_NOMINATIVE.get(domain, device_word)
+                
                 try:
                     text = pattern.format(
                         area=area_name,
                         device=device_word,
+                        device_nom=device_nom,
                         entity_name=entity_name,
                     )
                 except KeyError:
@@ -722,9 +786,12 @@ class SemanticCacheBuilder:
         for pattern_tuple in area_patterns:
             pattern, intent, extra_slots = pattern_tuple
             
+            # Get nominative form for questions
+            device_nom = DOMAIN_DEVICE_WORDS_NOMINATIVE.get(domain, device_word)
+            
             try:
                 # Reuse area patterns - substitute {area} with floor_name
-                text = pattern.format(area=floor_name, device=device_word)
+                text = pattern.format(area=floor_name, device=device_word, device_nom=device_nom)
             except KeyError:
                 continue
             

@@ -109,20 +109,27 @@ AUTOMATION_KEYWORDS: List[str] = [
 
 # Generic entity names that should be ignored during resolution
 # (too vague to match a specific entity)
-GENERIC_NAMES: Set[str] = {
-    "licht",
-    "lichter",
-    "lampe",
-    "lampen",
-    "leuchte",
-    "leuchten",
-    "gerät",
-    "geräte",
-    "ding",
-    "alles",
-    "alle",
-    "etwas",
-}
+# Auto-derived from keyword dictionaries - extracts nouns from "article noun" format
+def _extract_nouns(keywords_dict: Dict[str, str]) -> Set[str]:
+    """Extract all nouns (singular and plural) from a keywords dict."""
+    nouns = set()
+    for singular, plural in keywords_dict.items():
+        # Extract noun from "article noun" format
+        nouns.add(singular.split()[-1].lower())  # e.g. "der rollladen" -> "rollladen"
+        nouns.add(plural.split()[-1].lower())    # e.g. "die rollläden" -> "rollläden"
+    return nouns
+
+GENERIC_NAMES: Set[str] = (
+    _extract_nouns(LIGHT_KEYWORDS) |
+    _extract_nouns(COVER_KEYWORDS) |
+    _extract_nouns(SWITCH_KEYWORDS) |
+    _extract_nouns(FAN_KEYWORDS) |
+    _extract_nouns(MEDIA_KEYWORDS) |
+    _extract_nouns(SENSOR_KEYWORDS) |
+    _extract_nouns(CLIMATE_KEYWORDS) |
+    # Additional generic terms not in keyword dicts
+    {"gerät", "geräte", "ding", "alles", "alle", "etwas"}
+)
 
 OTHER_ENTITY_PLURALS: Dict[str, str] = {
     "das fenster": "die fenster",

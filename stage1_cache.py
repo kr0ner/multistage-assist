@@ -7,11 +7,12 @@ repeated or similar commands without LLM calls.
 Flow:
 1. Use ClarificationCapability to split/clean user input
 2. For each command: lookup in SemanticCacheCapability
-3. Bypass cache for custom intents (TemporaryControl, DelayedControl, TimerSet)
+3. Bypass cache for custom intents (TemporaryControl, HassTimerSet)
 4. Return StageResult.success if cache hit, otherwise escalate to Stage2
 """
 
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from homeassistant.components import conversation
@@ -27,12 +28,11 @@ _LOGGER = logging.getLogger(__name__)
 
 
 # Custom intents that should bypass cache (require fresh LLM processing)
+# NOTE: DelayedControl and TemporaryControl are NOT in this list - we cache them with generic patterns!
 CACHE_BYPASS_INTENTS = {
-    "TemporaryControl",
-    "DelayedControl",
-    "HassTimerSet",
-    # Future: TemporaryControl, DelayedControl, TimerSet (after rename)
+    "HassTimerSet",  # Timer intents need fresh processing (user-specific descriptions)
 }
+
 
 
 class Stage1CacheProcessor(BaseStage):
@@ -127,6 +127,7 @@ class Stage1CacheProcessor(BaseStage):
                 raw_text=user_input.text,
             )
 
+
         # 4. Semantic cache lookup
         if not self.has("semantic_cache"):
             _LOGGER.debug("[Stage1Cache] No semantic cache configured → escalate")
@@ -167,6 +168,23 @@ class Stage1CacheProcessor(BaseStage):
                 cache_slots["state"] = nlu_entities["state"]
                 _LOGGER.debug("[Stage1Cache] Using NLU state='%s' instead of cache", nlu_entities["state"])
         
+        # For DelayedControl: Extract delay from raw text since cache uses generic patterns
+        # "in 3 Minuten" / "um 15 Uhr" → delay slot
+        if cached["intent"] == "DelayedControl":
+            delay_str = self._extract_delay_from_text(user_input.text)
+            if delay_str:
+                cache_slots["delay"] = delay_str
+                _LOGGER.debug("[Stage1Cache] Extracted delay='%s' from text", delay_str)
+        
+        # For TemporaryControl: Extract duration from raw text since cache uses generic patterns
+        # "für 3 Minuten" → duration slot
+        if cached["intent"] == "TemporaryControl":
+            duration_str = self._extract_duration_from_text(user_input.text)
+            if duration_str:
+                cache_slots["duration"] = duration_str
+                _LOGGER.debug("[Stage1Cache] Extracted duration='%s' from text", duration_str)
+        
+
         return StageResult.success(
             intent=cached["intent"],
             entity_ids=cached["entity_ids"],
@@ -178,6 +196,51 @@ class Stage1CacheProcessor(BaseStage):
             },
             raw_text=user_input.text,
         )
+
+    def _extract_delay_from_text(self, text: str) -> Optional[str]:
+        """Extract delay string from user input for DelayedControl.
+        
+        Extracts:
+        - "in 3 Minuten" → "3 Minuten"
+        - "in einer Stunde" → "einer Stunde" 
+        - "um 15 Uhr" → "15 Uhr"
+        - "um 15:30 Uhr" → "15:30 Uhr"
+        """
+        # Pattern for "in X Minuten/Stunde/Sekunden"
+        delay_match = re.search(
+            r"\bin\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
+            text, re.IGNORECASE
+        )
+        if delay_match:
+            return f"{delay_match.group(1)} {delay_match.group(2)}"
+        
+        # Pattern for "um X Uhr"
+        time_match = re.search(
+            r"\bum\s+(\d{1,2}(?::\d{2})?)\s*Uhr\b",
+            text, re.IGNORECASE
+        )
+        if time_match:
+            return f"{time_match.group(1)} Uhr"
+        
+        return None
+
+    def _extract_duration_from_text(self, text: str) -> Optional[str]:
+        """Extract duration string from user input for TemporaryControl.
+        
+        Extracts:
+        - "für 3 Minuten" → "3 Minuten"
+        - "für eine Stunde" → "eine Stunde"
+        - "für 10 Sekunden" → "10 Sekunden"
+        """
+        # Pattern for "für X Minuten/Stunde/Sekunden"
+        duration_match = re.search(
+            r"\bfür\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
+            text, re.IGNORECASE
+        )
+        if duration_match:
+            return f"{duration_match.group(1)} {duration_match.group(2)}"
+        
+        return None
 
 
 # Alias for backward compatibility during migration

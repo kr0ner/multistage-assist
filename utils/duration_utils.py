@@ -50,7 +50,18 @@ def parse_german_duration(text: Any) -> int:
     text_lower = text.lower().strip()
     total = 0
     
-    # Match hours (supports decimals like "1,5 Stunden" or "1.5 Stunden")
+    # First, normalize German word numbers to digits
+    # "einer Stunde" → "1 Stunde", "eine Minute" → "1 Minute"
+    word_to_num = {
+        "eine": "1", "einer": "1", "einem": "1", "eins": "1",
+        "zwei": "2", "drei": "3", "vier": "4", "fünf": "5",
+        "sechs": "6", "sieben": "7", "acht": "8", "neun": "9", "zehn": "10",
+        "halb": "0.5", "halbe": "0.5", "halben": "0.5",
+    }
+    for word, num in word_to_num.items():
+        text_lower = re.sub(rf'\b{word}\b', num, text_lower)
+    
+    # Match hours (supports decimals like "1,5 Stunden" or "1.5 Stunden" or "0.5 Stunden")
     hours_match = re.search(r'(\d+(?:[,\.]\d+)?)\s*(?:stunden?|std|h)\b', text_lower)
     if hours_match:
         hours = float(hours_match.group(1).replace(',', '.'))

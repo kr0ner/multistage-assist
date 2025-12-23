@@ -84,7 +84,6 @@ AREA_PHRASE_PATTERNS = {
         ("Aktiviere Beleuchtung in {area}", "HassTurnOn", {}),
         ("Aktiviere {device} in {area}", "HassTurnOn", {}),
         ("{device} in {area} einschalten", "HassTurnOn", {}),
-        ("Einschalten {device} in {area}", "HassTurnOn", {}),
         ("Mach mal {device} in {area} an", "HassTurnOn", {}),
         
         # === HassTurnOff - multiple word orders ===

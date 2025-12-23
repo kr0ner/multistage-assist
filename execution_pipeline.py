@@ -134,20 +134,22 @@ class ExecutionPipeline:
             pending_data=result.get("pending_data"),
         )
 
-    async def continue_disambiguation(
+    async def continue_pending(
         self,
         user_input,
         pending_data: Dict[str, Any],
     ) -> ExecutionResult:
-        """Continue after user selects from disambiguation.
+        """Continue pending execution (disambiguation, slot-filling, etc.).
         
         Args:
-            user_input: User's selection response
-            pending_data: Stored disambiguation context
+            user_input: User's follow-up response
+            pending_data: Stored execution context
             
         Returns:
-            ExecutionResult from executing the selected entity
+            ExecutionResult - may include new pending_data for multi-turn
         """
+        # For now, pending is always disambiguation
+        # Future: check pending_data["type"] for slot-filling, etc.
         result = await self._processor.continue_disambiguation(
             user_input=user_input,
             pending_data=pending_data,

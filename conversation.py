@@ -11,7 +11,7 @@ On "escalate", we pass context to the next stage.
 """
 
 import logging
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from homeassistant.components import conversation
 
@@ -49,6 +49,11 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
         # Create execution pipeline
         self._execution_pipeline = ExecutionPipeline(hass, config)
         
+        # Store pending execution context by conversation_id
+        # When ExecutionPipeline owns the conversation (disambiguation, slot-filling, etc.)
+        # conversation.py just checks ownership, not the reason
+        self._execution_pending: Dict[str, Dict[str, Any]] = {}
+        
         # Inject semantic cache into execution pipeline if available
         stage1 = self.stages[1]
         if hasattr(stage1, 'has') and stage1.has("semantic_cache"):
@@ -72,8 +77,28 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
 
     async def async_process(self, user_input: conversation.ConversationInput) -> conversation.ConversationResult:
         _LOGGER.info("Received utterance: %s", user_input.text)
+        
+        conv_id = user_input.conversation_id or "default"
 
-        # If any stage owns a pending turn, let it resolve first.
+        # FIRST: Check if ExecutionPipeline owns this conversation
+        # (could be disambiguation, slot-filling, follow-up - we don't care why)
+        if conv_id in self._execution_pending:
+            pending_data = self._execution_pending.pop(conv_id)
+            _LOGGER.debug("[Pipeline] ExecutionPipeline owns conversation %s, continuing", conv_id)
+            
+            exec_result = await self._execution_pipeline.continue_pending(
+                user_input, pending_data
+            )
+            
+            # If still pending, re-store
+            if exec_result.pending_data:
+                self._execution_pending[conv_id] = exec_result.pending_data
+                
+            if exec_result.response:
+                return exec_result.response
+            return await self._fallback(user_input)
+
+        # SECOND: If any stage owns a pending turn, let it resolve first.
         for stage in self.stages:
             if hasattr(stage, "has_pending") and stage.has_pending(user_input):
                 _LOGGER.debug("Resuming pending interaction in %s", stage.__class__.__name__)
@@ -92,7 +117,7 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
 
                 _LOGGER.warning("Unexpected pending format from %s: %s", stage.__class__.__name__, pending)
 
-        # Run pipeline
+        # THIRD: Run stages pipeline
         result = await self._run_pipeline(user_input)
         return result or await self._fallback(user_input)
 
@@ -134,6 +159,13 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
                         result,
                         from_cache=skip_cache,
                     )
+                    
+                    # Store pending data if ExecutionPipeline needs to continue
+                    if exec_result.pending_data:
+                        conv_id = user_input.conversation_id or "default"
+                        self._execution_pending[conv_id] = exec_result.pending_data
+                        _LOGGER.debug("[Pipeline] ExecutionPipeline taking ownership of %s", conv_id)
+                    
                     if exec_result.success:
                         return exec_result.response
                     else:

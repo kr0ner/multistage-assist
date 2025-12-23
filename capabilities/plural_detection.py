@@ -11,6 +11,18 @@ from custom_components.multistage_assist.conversation_utils import (
 _LOGGER = logging.getLogger(__name__)
 
 
+# Pre-compute noun-only mappings from _ENTITY_PLURALS
+# Converts {"das licht": "die lichter"} → {"licht": "lichter"}
+_SINGULAR_NOUNS = set()
+_PLURAL_NOUNS = set()
+for sing, plur in _ENTITY_PLURALS.items():
+    # Extract nouns from "article noun" format
+    sing_noun = sing.split()[-1].lower()
+    plur_noun = plur.split()[-1].lower()
+    _SINGULAR_NOUNS.add(sing_noun)
+    _PLURAL_NOUNS.add(plur_noun)
+
+
 class PluralDetectionCapability(Capability):
     """Detect plural references in German smart-home commands."""
 
@@ -38,17 +50,23 @@ class PluralDetectionCapability(Capability):
 
     async def run(self, user_input, **_: Any) -> Dict[str, Any]:
         text = user_input.text.lower().strip()
+        words = set(text.split())
 
-        # Fast Path
+        # Fast Path: Check for explicit plural cues ("alle", "beide", etc.)
         if any(cue in text for cue in _PLURAL_CUES):
             return {"multiple_entities": True}
         if any(num in text for num in _NUM_WORDS) or _NUMERIC_PATTERN.search(text):
             return {"multiple_entities": True}
 
-        for sing, plural in _ENTITY_PLURALS.items():
-            if plural in text:
-                return {"multiple_entities": True}
-            if sing in text:
-                return {"multiple_entities": False}
+        # Check for plural nouns (without articles)
+        if words & _PLURAL_NOUNS:
+            _LOGGER.debug("[PluralDetection] Found plural noun in: %s", words & _PLURAL_NOUNS)
+            return {"multiple_entities": True}
+        
+        # Check for singular nouns (without articles)
+        if words & _SINGULAR_NOUNS:
+            _LOGGER.debug("[PluralDetection] Found singular noun in: %s", words & _SINGULAR_NOUNS)
+            return {"multiple_entities": False}
 
+        # Fallback to LLM if no fast path matches
         return await self._safe_prompt(self.PROMPT, {"user_input": user_input.text})

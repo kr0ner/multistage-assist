@@ -21,9 +21,10 @@ from homeassistant.components import conversation
 
 from .base_stage import BaseStage
 from .capabilities.chat import ChatCapability
-from .capabilities.google_gemini_client import GoogleGeminiClient
+from .capabilities.google_gemini_client import GoogleGeminiClient, GeminiError
 from .stage_result import StageResult
 from .conversation_utils import make_response
+from .constants.messages_de import ERROR_MESSAGES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -175,11 +176,18 @@ class Stage3GeminiProcessor(BaseStage):
                 context={**context, "chat_response": True},
                 raw_text=user_input.text,
             )
+        except GeminiError as e:
+            _LOGGER.warning("[Stage3Gemini] Chat GeminiError: %s (type=%s)", e, e.error_type)
+            error_msg = ERROR_MESSAGES.get(e.error_type, ERROR_MESSAGES["api_error"])
+            return StageResult.error(
+                response=await make_response(error_msg, user_input),
+                raw_text=user_input.text,
+            )
         except Exception as e:
             _LOGGER.exception("[Stage3Gemini] Chat error: %s", e)
             return StageResult.error(
                 response=await make_response(
-                    "Entschuldigung, ein Fehler ist aufgetreten.",
+                    ERROR_MESSAGES["api_error"],
                     user_input
                 ),
                 raw_text=user_input.text,
@@ -246,11 +254,18 @@ class Stage3GeminiProcessor(BaseStage):
                 raw_text=user_input.text,
             )
 
+        except GeminiError as e:
+            _LOGGER.warning("[Stage3Gemini] Intent GeminiError: %s (type=%s)", e, e.error_type)
+            error_msg = ERROR_MESSAGES.get(e.error_type, ERROR_MESSAGES["api_error"])
+            return StageResult.error(
+                response=await make_response(error_msg, user_input),
+                raw_text=user_input.text,
+            )
         except Exception as e:
             _LOGGER.exception("[Stage3Gemini] Intent derivation error: %s", e)
             return StageResult.error(
                 response=await make_response(
-                    f"Entschuldigung, ein Fehler ist aufgetreten: {e}",
+                    ERROR_MESSAGES["api_error"],
                     user_input
                 ),
                 raw_text=user_input.text,

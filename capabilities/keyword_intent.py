@@ -159,25 +159,8 @@ class KeywordIntentCapability(Capability):
         }
     }
 
-    def _fuzzy_match(self, word: str, keyword: str, max_distance: int = 2) -> bool:
-        """Check if word matches keyword within edit distance.
-        
-        Handles typos like:
-        - Character swaps: "lihct" → "licht"
-        - Missing chars: "rolläden" → "rollläden"
-        - Extra chars: "lichtt" → "licht"
-        
-        Only for words of similar length to avoid false positives.
-        """
-        # Length check - avoid matching short words to long ones
-        if abs(len(word) - len(keyword)) > max_distance:
-            return False
-        
-        # Minimum length to apply fuzzy (avoid matching "an" to "auf")
-        if len(keyword) < 5:
-            return word == keyword
-        
-        # Simple Levenshtein distance
+    def _levenshtein(self, word: str, keyword: str) -> int:
+        """Calculate Levenshtein distance between two strings."""
         if len(word) > len(keyword):
             word, keyword = keyword, word
         
@@ -191,7 +174,28 @@ class KeywordIntentCapability(Capability):
                     new_distances.append(1 + min((distances[i1], distances[i1 + 1], new_distances[-1])))
             distances = new_distances
         
-        return distances[-1] <= max_distance
+        return distances[-1]
+
+    def _fuzzy_match_distance(self, word: str, keyword: str, max_distance: int = 2) -> Optional[int]:
+        """Return edit distance if within threshold, else None.
+        
+        Handles typos like:
+        - Character swaps: "lihct" → "licht"
+        - Missing chars: "rolläden" → "rollläden"
+        - Extra chars: "lichtt" → "licht"
+        
+        Only for words of similar length to avoid false positives.
+        """
+        # Length check - avoid matching short words to long ones
+        if abs(len(word) - len(keyword)) > max_distance:
+            return None
+        
+        # Minimum length to apply fuzzy (avoid matching "an" to "auf")
+        if len(keyword) < 5:
+            return 0 if word == keyword else None
+        
+        dist = self._levenshtein(word, keyword)
+        return dist if dist <= max_distance else None
 
     def _detect_domain(self, text: str) -> Optional[str]:
         t = text.lower()
@@ -214,13 +218,24 @@ class KeywordIntentCapability(Capability):
         if matches:
             return matches[0]
         
-        # Second pass: fuzzy match for typo tolerance
+        # Second pass: fuzzy match - collect ALL matches with distances, pick BEST
+        candidates = []  # (domain, keyword, distance)
         for word in words:
             for domain, keywords in self.DOMAIN_KEYWORDS.items():
                 for kw in keywords:
-                    if self._fuzzy_match(word, kw):
-                        _LOGGER.debug("[KeywordIntent] Fuzzy match: '%s' → '%s' (domain=%s)", word, kw, domain)
-                        return domain
+                    dist = self._fuzzy_match_distance(word, kw)
+                    if dist is not None:
+                        candidates.append((domain, kw, dist, word))
+        
+        if candidates:
+            # Sort by distance (ascending), pick smallest
+            candidates.sort(key=lambda x: x[2])
+            best = candidates[0]
+            _LOGGER.debug(
+                "[KeywordIntent] Fuzzy match: '%s' → '%s' (domain=%s, dist=%d)", 
+                best[3], best[1], best[0], best[2]
+            )
+            return best[0]
         
         return None
 

@@ -7,6 +7,8 @@ import asyncio
 import logging
 from typing import List, Dict, Any, Optional
 
+from ..constants.messages_de import ERROR_MESSAGES
+
 _LOGGER = logging.getLogger(__name__)
 
 # Lazy import - don't import at module load time
@@ -22,6 +24,13 @@ def _ensure_genai_imported():
         from google.genai import types
         _genai = genai
         _types = types
+
+
+class GeminiError(Exception):
+    """Custom exception for Gemini API errors with error type categorization."""
+    def __init__(self, message: str, error_type: str = "api_error"):
+        super().__init__(message)
+        self.error_type = error_type  # "api_quota_exceeded" or "api_error"
 
 
 class GoogleGeminiClient:
@@ -72,11 +81,15 @@ class GoogleGeminiClient:
         return gemini_history
 
     async def chat(self, new_input: str, history: List[Dict[str, str]] = None) -> str:
-        """Send a message to Gemini with history using the async client."""
+        """Send a message to Gemini with history using the async client.
+        
+        Raises:
+            GeminiError: On API errors with categorized error_type
+        """
         await self._ensure_client()
         
         if not self._client:
-            return "Fehler: Client nicht initialisiert."
+            raise GeminiError(ERROR_MESSAGES["gemini_unavailable"], "gemini_unavailable")
 
         # Prepare full context (History + Current Prompt)
         contents = self._format_history(history or [])
@@ -102,8 +115,15 @@ class GoogleGeminiClient:
             if response and response.text:
                 return response.text
             
-            return "Entschuldigung, ich habe keine Antwort erhalten."
+            return ERROR_MESSAGES["no_response"]
 
         except Exception as e:
             _LOGGER.exception("Gemini API Error: %s", e)
-            return f"Entschuldigung, ein Fehler ist aufgetreten: {e}"
+            
+            # Detect quota exceeded errors
+            error_str = str(e).lower()
+            if "429" in str(e) or "quota" in error_str or "resource_exhausted" in error_str:
+                raise GeminiError(str(e), "api_quota_exceeded")
+            
+            raise GeminiError(str(e), "api_error")
+

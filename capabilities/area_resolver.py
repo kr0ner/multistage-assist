@@ -65,9 +65,15 @@ You are a smart home helper that maps a user's spoken location to the correct in
             area_name: User-provided area name
             
         Returns:
-            AreaEntry or None
+            AreaEntry or None. Returns None for global keywords like 'Haus'.
         """
         if not area_name:
+            return None
+        
+        # Check for global keywords - return None to trigger all-domain lookup
+        area_lower = area_name.lower()
+        if any(gk in area_lower for gk in GLOBAL_KEYWORDS):
+            _LOGGER.debug("[AreaResolver] Global scope detected: '%s' → all entities", area_name)
             return None
             
         area_reg = ar.async_get(self.hass)

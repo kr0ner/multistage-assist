@@ -105,6 +105,12 @@ ERROR_MESSAGES: Dict[str, str] = {
     
     # Timebox errors
     "timebox_failed": "Fehler beim Ausführen der zeitlichen Steuerung.",
+    
+    # API errors
+    "api_quota_exceeded": "Entschuldigung, der Cloud-Dienst ist vorübergehend nicht erreichbar. Bitte versuche es später erneut.",
+    "api_error": "Entschuldigung, bei der Cloud-Anfrage ist ein Fehler aufgetreten.",
+    "gemini_unavailable": "Der Cloud-Dienst ist nicht konfiguriert.",
+    "no_response": "Entschuldigung, ich habe keine Antwort erhalten.",
 }
 
 

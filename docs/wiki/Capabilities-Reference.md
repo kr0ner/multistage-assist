@@ -6,18 +6,18 @@ Complete reference of all available capabilities in MultiStage Assist.
 
 ### semantic_cache
 
-**Purpose:** Cache successful commands as embeddings for instant replay.
+**Purpose:** Fast cache lookup via external reranker add-on with anchor patterns.
 
 **Input:** User input text
 
 **Output:** Cached resolution or None
 
 **Features:**
-- Uses Ollama embeddings (`mxbai-embed-large` recommended)
-- Cosine similarity matching (threshold: 0.85)
-- Stores only verified successful commands
+- **Anchor patterns** - Pre-generated command patterns for all entities/areas
+- **Reranker validation** - External add-on validates matches (threshold: 0.73)
+- **Hybrid search** - Combines vector similarity + BM25 keyword matching
+- **User learning** - Stores verified successful commands
 - Preserves disambiguation context for re-prompting
-- LRU eviction (max 200 entries)
 
 **Skip Filters (commands NOT cached):**
 - Short texts (< 3 words) - likely disambiguation responses
@@ -25,14 +25,13 @@ Complete reference of all available capabilities in MultiStage Assist.
 - Relative brightness commands (`step_up`/`step_down`) - depend on current state
 - Timer intents (`HassTimerSet`) - one-time events
 - Calendar intents (`HassCalendarCreate`) - unique events
+- Delayed control intents - time-sensitive
 
 **Config Options:**
-- `embedding_ip`: Ollama host (defaults to stage1_ip)
-- `embedding_port`: Ollama port (defaults to stage1_port)
-- `embedding_model`: Model name (default: `mxbai-embed-large`)
-- `cache_similarity_threshold`: Min similarity (default: 0.85)
-- `cache_max_entries`: Max cache size (default: 200)
-- `cache_enabled`: Enable/disable (default: true)
+- `reranker_threshold`: Min score for hit (default: 0.73)
+- `hybrid_enabled`: Enable hybrid search (default: true)
+- `hybrid_alpha`: Vector vs keyword weight (default: 0.7)
+- `cache_max_entries`: Max user cache size (default: 10000)
 
 **Log Messages:**
 ```

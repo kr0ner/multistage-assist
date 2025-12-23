@@ -119,25 +119,36 @@ class Stage2LLMProcessor(BaseStage):
                 raw_text=user_input.text,
             )
 
-        # 1. Check if multi-command was detected in previous stage
-        if context.get("multi_command") and context.get("commands"):
-            # For now, escalate multi-commands to Stage3
-            # Future: implement sequence processing
-            _LOGGER.debug("[Stage2LLM] Multi-command → escalate")
+        # 1. Get clarified commands from Stage1 or run clarification ourselves
+        clarified_commands = context.get("commands", [])
+        
+        if not clarified_commands:
+            # Stage1 didn't provide clarified commands - run clarification ourselves
+            clarification = self.get("clarification")
+            if clarification:
+                clarified_commands = await clarification.run(user_input) or []
+        
+        # 2. Handle based on clarification result
+        if not clarified_commands:
+            # Empty result → escalate to Stage3
+            _LOGGER.debug("[Stage2LLM] Clarification returned empty → escalate")
             return StageResult.escalate(
-                context=context,
+                context={**context, "clarification_empty": True},
                 raw_text=user_input.text,
             )
-
-        # 1.5 Use clarified command if Stage1Cache already ran clarification
-        # Clarification converts "Im Büro ist es zu dunkel" → "Mache das Licht im Büro heller"
-        clarified_commands = context.get("commands", [])
-        if clarified_commands and len(clarified_commands) == 1:
+        
+        if len(clarified_commands) == 1:
+            # Single command - process directly
             clarified_text = clarified_commands[0]
             if clarified_text != user_input.text:
                 _LOGGER.debug("[Stage2LLM] Using clarified: '%s' → '%s'", 
                              user_input.text, clarified_text)
                 user_input = with_new_text(user_input, clarified_text)
+            # Continue to single-command processing below
+        else:
+            # Multiple atomic commands - process each through intent pipeline
+            _LOGGER.debug("[Stage2LLM] Multi-command (%d) - processing each", len(clarified_commands))
+            return await self._process_multi_command(user_input, clarified_commands, context)
 
         # 2. Use keyword_intent to parse intent
         ki_data = await self.use("keyword_intent", user_input) or {}
@@ -215,6 +226,95 @@ class Stage2LLMProcessor(BaseStage):
                 "from_llm": True,
             },
             raw_text=user_input.text,
+        )
+
+    async def _process_multi_command(
+        self,
+        original_input,
+        commands: List[str],
+        context: Dict[str, Any]
+    ) -> StageResult:
+        """Process multiple atomic commands through the intent pipeline.
+        
+        Args:
+            original_input: Original ConversationInput
+            commands: List of atomic command strings
+            context: Processing context
+            
+        Returns:
+            Merged StageResult with aggregated entity_ids
+        """
+        all_entity_ids: List[str] = []
+        all_intents: List[str] = []
+        merged_params: Dict[str, Any] = {}
+        
+        for cmd in commands:
+            _LOGGER.debug("[Stage2LLM] Processing atomic command: '%s'", cmd)
+            
+            # Create modified input with atomic command
+            cmd_input = with_new_text(original_input, cmd)
+            
+            # Process through keyword_intent
+            ki_data = await self.use("keyword_intent", cmd_input) or {}
+            intent_name = ki_data.get("intent")
+            slots = ki_data.get("slots") or {}
+            domain = ki_data.get("domain")
+            
+            if not intent_name:
+                _LOGGER.warning("[Stage2LLM] No intent for: '%s'", cmd)
+                continue
+            
+            all_intents.append(intent_name)
+            
+            # Resolve area aliases
+            if slots.get("area"):
+                resolved_area = await self._resolve_area_alias(slots["area"])
+                if resolved_area and resolved_area != slots["area"]:
+                    slots["area"] = resolved_area
+            
+            # Entity resolution
+            resolver = self.get("entity_resolver")
+            entities_for_resolver = {**slots, "intent": intent_name}
+            if domain:
+                entities_for_resolver["domain"] = domain
+                
+            resolved = await resolver.run(cmd_input, entities=entities_for_resolver)
+            resolved_ids = (resolved or {}).get("resolved_ids", [])
+            
+            if resolved_ids:
+                all_entity_ids.extend(resolved_ids)
+            
+            # Merge params (exclude resolution keys)
+            resolution_keys = {"area", "room", "floor", "name", "entity", 
+                              "device", "label", "domain", "device_class", "entity_id"}
+            for k, v in slots.items():
+                if k not in resolution_keys:
+                    merged_params[k] = v
+        
+        if not all_entity_ids:
+            _LOGGER.warning("[Stage2LLM] Multi-command resolved no entities → escalate")
+            return StageResult.escalate(
+                context={**context, "multi_command_no_entities": True},
+                raw_text=original_input.text,
+            )
+        
+        # Use the first intent (they should all be the same for multi-area commands)
+        primary_intent = all_intents[0] if all_intents else None
+        
+        _LOGGER.info("[Stage2LLM] Multi-command resolved %d entities with intent '%s'",
+                    len(all_entity_ids), primary_intent)
+        
+        return StageResult.success(
+            intent=primary_intent,
+            entity_ids=all_entity_ids,
+            params=merged_params,
+            context={
+                **context,
+                "from_llm": True,
+                "multi_command": True,
+                "command_count": len(commands),
+            },
+            raw_text=original_input.text,
         )
 
     # ----------------------------------------------------------------

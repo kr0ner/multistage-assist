@@ -113,7 +113,17 @@ class CommandProcessorCapability(Capability):
 
         selected = await self.select.run(user_input, candidates=candidates)
         if not selected:
-            return {"status": "error", "result": await error_response(user_input)}
+            # Re-prompt with same question instead of returning error
+            # This keeps the conversation in disambiguation mode
+            _LOGGER.debug("[CommandProcessor] Empty selection, re-prompting disambiguation")
+            msg_data = await self.disambiguation.run(user_input, entities=pending_data["candidates"])
+            return {
+                "status": "handled",
+                "result": await make_response(
+                    msg_data.get("message", "Welches Gerät meinst du?"), user_input
+                ),
+                "pending_data": pending_data,  # Keep the same pending data!
+            }
 
         return await self._execute_final(
             user_input,

@@ -14,16 +14,24 @@ User Input
     │ (if no match)
     ▼
 ┌─────────────────────────────────┐
-│ Stage 1: LLM Enhancement        │
-│ • Clarification                 │
-│ • Keyword Intent Detection      │
-│ • Entity Resolution             │
-│ • Intent Execution              │
+│ Stage 1: Semantic Cache         │
+│ • Reranker-validated lookup     │
+│ • Pre-generated anchor patterns │
+│ • User-learned command cache    │
 └─────────────────────────────────┘
-    │ (if unresolved)
+    │ (if cache miss)
     ▼
 ┌─────────────────────────────────┐
-│ Stage 2: Chat Mode              │
+│ Stage 2: Local LLM              │
+│ • Ollama-based intent parsing   │
+│ • Keyword Intent Detection      │
+│ • Entity Resolution             │
+└─────────────────────────────────┘
+    │ (if unresolved or chat)
+    ▼
+┌─────────────────────────────────┐
+│ Stage 3: Gemini Cloud           │
+│ • Cloud fallback for edge cases │
 │ • Free-form conversation        │
 └─────────────────────────────────┘
 ```
@@ -36,7 +44,23 @@ Uses Home Assistant's built-in `conversation.async_recognize`.
 - No intent match found
 - Ambiguous entity references
 
-## Stage 1: LLM Enhancement
+## Stage 1: Semantic Cache
+
+Fast path using pre-computed and learned command patterns.
+
+**Features:**
+- **Anchor patterns** - Pre-generated from entity/area combinations
+- **User learning** - Successful commands are cached for replay
+- **Reranker validation** - External add-on validates cache matches
+- **Hybrid search** - Combines vector similarity + BM25 keyword matching
+
+**Escalates when:**
+- No cache hit above threshold (default: 0.73)
+- Command requires fresh processing (timers, delayed controls)
+
+## Stage 2: Local LLM
+
+Local Ollama-based intent parsing for commands not in cache.
 
 ### Processing Flow
 
@@ -44,8 +68,6 @@ Uses Home Assistant's built-in `conversation.async_recognize`.
 2. **Keyword Intent** - Detect domain from keywords, extract intent/slots via LLM
 3. **Intent Resolution** - Resolve areas, find entity IDs
 4. **Entity Fallback** - If no domain found, fuzzy match entity names
-5. **Intent Execution** - Execute HA intent, verify success
-6. **Confirmation** - Generate natural language response
 
 ### Domain Detection
 
@@ -64,9 +86,14 @@ When keyword_intent finds no domain:
 3. Fuzzy match against all entity names
 4. Execute if match score >= 80%
 
-## Stage 2: Chat Mode
+## Stage 3: Gemini Cloud
 
-Free-form LLM conversation for unrecognized commands.
+Google Gemini API for edge cases and general conversation.
+
+**Handles:**
+- Commands that local LLM couldn't resolve
+- General chat/conversation (jokes, help, etc.)
+- Complex multi-step reasoning
 
 ## Capabilities
 

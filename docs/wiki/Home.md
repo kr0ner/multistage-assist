@@ -147,16 +147,20 @@ User Input
     │ (if no match)
     ▼
 ┌─────────────────────────────────┐
-│ Stage 1: LLM Enhancement        │
-│ • Clarification                 │
-│ • Keyword Intent Detection      │
-│ • Entity Resolution             │
-│ • Intent Execution              │
+│ Stage 1: Semantic Cache         │
+│ (Reranker-validated lookup)     │
 └─────────────────────────────────┘
-    │ (if unresolved)
+    │ (if cache miss)
     ▼
 ┌─────────────────────────────────┐
-│ Stage 2: Chat Mode              │
+│ Stage 2: Local LLM              │
+│ (Ollama intent parsing)         │
+└─────────────────────────────────┘
+    │ (if unresolved or chat)
+    ▼
+┌─────────────────────────────────┐
+│ Stage 3: Gemini Cloud           │
+│ (Fallback + conversation)       │
 └─────────────────────────────────┘
 ```
 
@@ -164,17 +168,16 @@ User Input
 
 | Capability | Purpose |
 |------------|---------|
+| `semantic_cache` | Fast cache lookup with reranker validation |
 | `clarification` | Split compound commands, transform implicit commands |
 | `keyword_intent` | Detect domain and extract intent/slots via LLM |
-| `intent_resolution` | Resolve entities from slots |
 | `entity_resolver` | Find entity IDs matching criteria |
 | `intent_executor` | Execute HA intents, handle timebox |
-| `intent_confirmation` | Generate German confirmation text |
 | `calendar` | Multi-turn calendar event creation |
 | `timer` | Timer management with device notifications |
 | `vacuum` | Vacuum-specific slot extraction |
 | `memory` | Store learned area/entity aliases |
-| `area_alias` | Fuzzy match area names |
+| `area_resolver` | Fuzzy match area names |
 
 ## Floor vs Area
 

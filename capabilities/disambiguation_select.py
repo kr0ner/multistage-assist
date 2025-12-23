@@ -29,25 +29,20 @@ class DisambiguationSelectCapability(Capability):
     description = "Select entity_ids from candidates based on user_input."
 
     PROMPT = {
-        "system": """
-You select which candidates the user meant. Do not write explanations.
+        "system": """\
+You match the user's answer to the correct entity from the list. Do not explain.
 
 ## Input
-- user_input: German response (e.g., "Spiegellicht", "erste", "zweite", "alle", "keine").
-- input_entities: ordered list of { "entity_id": string, "name": string, "ordinal": integer }.
+- user_input: User's German response naming a device
+- input_entities: List of { "entity_id": string, "name": string, "ordinal": integer }
 
-## Rules
-1. Ordinals: The field "ordinal" gives the numeric order for each candidate.
-   - "erste" → ordinal = 1
-   - "zweite" → ordinal = 2
-   - "letzte" → highest ordinal in input_entities
-2. Friendly name fuzzy matching:
-   - Normalize lowercased names (ignore accents, trim spaces/punctuation)
-   - If user_input contains a target that is common in the list, prefer a direct match
-3. "alle" → return all entity_ids.
-4. "beide" → return all entity_ids if length is two.
-5. "keine", "nichts", "nein" → return an empty array.
-6. If uncertain or ambiguous → return an empty array.
+## Task
+Match by meaning - the user might use:
+- Synonyms: "Deckenleuchte" → "Küche Licht"
+- Abbreviations: "Süd" → "Esszimmer Süd"
+- Partial names: "Spiegel" → "Badezimmer Spiegel"
+
+Return the entity_ids that match. If uncertain, return empty array.
 """,
         "schema": {
             "type": "array",

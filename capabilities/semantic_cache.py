@@ -482,8 +482,16 @@ class SemanticCacheCapability(Capability):
             r"\bfür\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
             replace_duration, text_norm, flags=re.IGNORECASE
         )
+        
+        # Timer duration patterns: "auf 5 Minuten", "Timer auf 10 Minuten"
+        # For HassTimerSet
+        text_norm = re.sub(
+            r"\bauf\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
+            replace_duration, text_norm, flags=re.IGNORECASE
+        )
 
         return text_norm, extracted
+
 
 
 

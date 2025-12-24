@@ -383,7 +383,21 @@ GLOBAL_PHRASE_PATTERNS = {
         ("Deaktiviere alle Automatisierungen", "HassTurnOff", {}),
         ("Aktiviere alle Automatisierungen", "HassTurnOn", {}),
     ],
+    # Timer patterns - no area/entity, just duration (parsed separately)
+    "timer": [
+        # Basic timer patterns
+        ("Timer für Minuten", "HassTimerSet", {}),
+        ("Timer auf Minuten", "HassTimerSet", {}),
+        ("Stelle einen Timer auf Minuten", "HassTimerSet", {}),
+        ("Stell einen Timer auf Minuten", "HassTimerSet", {}),
+        ("Setze einen Timer auf Minuten", "HassTimerSet", {}),
+        ("Wecker für Minuten", "HassTimerSet", {}),
+        # With description (placeholder will be stripped, description extracted separately)
+        ("Timer für Minuten für", "HassTimerSet", {}),
+        ("Minuten Timer", "HassTimerSet", {}),
+    ],
 }
+
 
 
 class SemanticCacheBuilder:

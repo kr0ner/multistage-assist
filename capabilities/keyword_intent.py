@@ -75,7 +75,11 @@ class KeywordIntentCapability(Capability):
                 "TemporaryControl",
                 "DelayedControl",
             ],
-            "rules": "brightness: 'step_up'/'step_down' if no number. 0-100 otherwise."
+            "rules": """For HassLightSet:
+- 'command': use 'step_up' (heller) or 'step_down' (dunkler) for relative changes.
+- 'brightness': use integer 0-100 ONLY for explicit percentages (e.g., "50 Prozent").
+- Do NOT put step_up/step_down in brightness slot!
+"""
             + _TEMP_RULE + _DELAYED_RULE,
         },
         "cover": {

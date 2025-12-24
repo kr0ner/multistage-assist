@@ -28,8 +28,25 @@ class IntentConfirmationCapability(Capability):
         "DelayedControl": "The action will be executed AFTER a delay.",
         "HassVacuumStart": "Vacuum/Mop was started.",
     }
+    
+    # Domain-specific overrides for certain intents
+    DOMAIN_INTENT_DESCRIPTIONS = {
+        "cover": {
+            "HassTurnOn": "The cover(s)/blind(s) are being OPENED (werden geöffnet).",
+            "HassTurnOff": "The cover(s)/blind(s) are being CLOSED (werden geschlossen).",
+        },
+    }
 
     SCHEMA = {"properties": {"response": {"type": "string"}}, "required": ["response"]}
+
+    def _get_action_description(self, intent_name: str, domain: str) -> str:
+        """Get domain-aware action description."""
+        # Check for domain-specific override first
+        if domain in self.DOMAIN_INTENT_DESCRIPTIONS:
+            if intent_name in self.DOMAIN_INTENT_DESCRIPTIONS[domain]:
+                return self.DOMAIN_INTENT_DESCRIPTIONS[domain][intent_name]
+        # Fall back to generic description
+        return self.INTENT_DESCRIPTIONS.get(intent_name, "An action was performed.")
 
     async def run(
         self,
@@ -67,9 +84,9 @@ class IntentConfirmationCapability(Capability):
             k: v for k, v in (params or {}).items() if k not in ignored_keys
         }
 
-        action_desc = self.INTENT_DESCRIPTIONS.get(
-            intent_name, "An action was performed."
-        )
+        # Get domain-aware action description
+        primary_domain = domains[0] if domains else ""
+        action_desc = self._get_action_description(intent_name, primary_domain)
 
         # Build base rules
         base_rules = """1. **Identify the Device:** Use the device names from 'devices' list directly. Don't substitute with area names.

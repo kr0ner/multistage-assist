@@ -28,11 +28,9 @@ _LOGGER = logging.getLogger(__name__)
 
 
 # Custom intents that should bypass cache (require fresh LLM processing)
-# NOTE: DelayedControl and TemporaryControl are NOT in this list - we cache them with generic patterns!
-CACHE_BYPASS_INTENTS = {
-    "HassTimerSet",  # Timer intents need fresh processing (user-specific descriptions)
-}
-
+# NOTE: DelayedControl, TemporaryControl, and HassTimerSet use generic patterns with duration extraction!
+# All temporal intents are now cacheable - duration is parsed from raw text at cache hit time.
+CACHE_BYPASS_INTENTS: set = set()  # Empty - all intents are now cacheable!
 
 
 class Stage1CacheProcessor(BaseStage):
@@ -184,6 +182,13 @@ class Stage1CacheProcessor(BaseStage):
                 cache_slots["duration"] = duration_str
                 _LOGGER.debug("[Stage1Cache] Extracted duration='%s' from text", duration_str)
         
+        # For HassTimerSet: Extract duration from raw text since cache uses generic patterns
+        # "Timer für 5 Minuten", "Timer auf 10 Minuten" → duration slot
+        if cached["intent"] == "HassTimerSet":
+            duration_str = self._extract_timer_duration_from_text(user_input.text)
+            if duration_str:
+                cache_slots["duration"] = duration_str
+                _LOGGER.debug("[Stage1Cache] Extracted timer duration='%s' from text", duration_str)
 
         return StageResult.success(
             intent=cached["intent"],
@@ -239,6 +244,41 @@ class Stage1CacheProcessor(BaseStage):
         )
         if duration_match:
             return f"{duration_match.group(1)} {duration_match.group(2)}"
+        
+        return None
+
+    def _extract_timer_duration_from_text(self, text: str) -> Optional[str]:
+        """Extract duration string from user input for HassTimerSet.
+        
+        Extracts:
+        - "Timer für 5 Minuten" → "5 Minuten"
+        - "Timer auf 10 Minuten" → "10 Minuten"
+        - "5 Minuten Timer" → "5 Minuten"
+        - "Stell einen Timer auf 3 Minuten" → "3 Minuten"
+        """
+        # Pattern for "für X Minuten/Stunde/Sekunden" (same as TemporaryControl)
+        duration_match = re.search(
+            r"\bfür\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
+            text, re.IGNORECASE
+        )
+        if duration_match:
+            return f"{duration_match.group(1)} {duration_match.group(2)}"
+        
+        # Pattern for "auf X Minuten/Stunde/Sekunden"
+        auf_match = re.search(
+            r"\bauf\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
+            text, re.IGNORECASE
+        )
+        if auf_match:
+            return f"{auf_match.group(1)} {auf_match.group(2)}"
+        
+        # Pattern for "X Minuten Timer" (number at start)
+        prefix_match = re.search(
+            r"(\d+)\s*(Minuten?|Stunden?|Sekunden?)\s+(?:timer|wecker)\b",
+            text, re.IGNORECASE
+        )
+        if prefix_match:
+            return f"{prefix_match.group(1)} {prefix_match.group(2)}"
         
         return None
 

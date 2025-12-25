@@ -573,9 +573,15 @@ class IntentExecutorCapability(Capability):
 
                         current_params["brightness"] = new_pct
                         final_executed_params["brightness"] = new_pct
+                        # Track direction for confirmation message
+                        if new_pct > cur_pct or light_is_off:
+                            final_executed_params["direction"] = "increased"
+                        else:
+                            final_executed_params["direction"] = "decreased"
                         _LOGGER.debug(
-                            "[IntentExecutor] %s on %s: %d%% -> %d%% (change: ±%d%%)",
-                            val, eid, cur_pct, new_pct, change if not light_is_off else new_pct
+                            "[IntentExecutor] %s on %s: %d%% -> %d%% (change: ±%d%%, direction=%s)",
+                            val, eid, cur_pct, new_pct, change if not light_is_off else new_pct,
+                            final_executed_params["direction"]
                         )
                     else:
                         current_params.pop("brightness", None)
@@ -601,9 +607,14 @@ class IntentExecutorCapability(Capability):
                         current_params["position"] = new_pos
                         current_params.pop("command", None)  # Remove command, we now have position
                         final_executed_params["position"] = new_pos
+                        # Track direction for confirmation message
+                        if new_pos > cur_pos:
+                            final_executed_params["direction"] = "increased"  # More open
+                        else:
+                            final_executed_params["direction"] = "decreased"  # More closed
                         _LOGGER.debug(
-                            "[IntentExecutor] Cover %s on %s: %d%% -> %d%%",
-                            cmd, eid, cur_pos, new_pos
+                            "[IntentExecutor] Cover %s on %s: %d%% -> %d%% (direction=%s)",
+                            cmd, eid, cur_pos, new_pos, final_executed_params["direction"]
                         )
                     else:
                         # Can't get state, use reasonable defaults
@@ -916,7 +927,26 @@ class IntentExecutorCapability(Capability):
                 elif domain == "media_player" and expected == "on" and current not in ("off", "unavailable", "unknown"):
                     _LOGGER.debug("[IntentExecutor] Verification passed for %s (media state: %s)", entity_id, current)
                     return True
+                
+                # For scenes, state is a timestamp of last activation
+                # Scene states look like: "2025-12-25t17:39:38.947016+00:00"
+                # Verify the timestamp is recent (within last 10 seconds)
+                elif domain == "scene" and expected == "on":
+                    try:
+                        from datetime import datetime, timezone
+                        # Parse ISO format timestamp
+                        scene_time = datetime.fromisoformat(current.replace("Z", "+00:00"))
+                        now = datetime.now(timezone.utc)
+                        age_seconds = (now - scene_time).total_seconds()
+                        if age_seconds < 10:  # Activated within last 10 seconds
+                            _LOGGER.debug("[IntentExecutor] Verification passed for %s (scene activated %.1fs ago)", entity_id, age_seconds)
+                            return True
+                        else:
+                            _LOGGER.debug("[IntentExecutor] Scene %s last activated %.1fs ago (too old)", entity_id, age_seconds)
+                    except (ValueError, TypeError) as e:
+                        _LOGGER.debug("[IntentExecutor] Could not parse scene timestamp '%s': %s", current, e)
             
+
             # Check brightness if applicable
             if expected_brightness is not None:
                 cur_255 = state.attributes.get("brightness") or 0

@@ -97,10 +97,20 @@ class IntentConfirmationCapability(Capability):
         # Add brightness guidance only for HassLightSet
         if intent_name == "HassLightSet":
             base_rules += """
-5. **Brightness:** 
+5. **Brightness (IMPORTANT - check 'direction' in params):** 
    - If 'brightness' has a NUMBER: say "ist auf [X]% gesetzt."
-   - If 'command' is "step_up" that means "[Licht] ist jetzt heller."
-   - If 'command' is "step_down" that means "[Licht] ist jetzt dunkler." """
+   - If 'direction' is "increased": say "[Licht] ist jetzt heller."
+   - If 'direction' is "decreased": say "[Licht] ist jetzt dunkler."
+   - NEVER guess direction from command - ONLY use the 'direction' field!"""
+
+        # Add cover direction guidance for HassSetPosition
+        if intent_name == "HassSetPosition" and primary_domain == "cover":
+            base_rules += """
+5. **Cover Position (IMPORTANT - check 'direction' in params):**
+   - If 'direction' is "increased": say "[Rollladen] ist jetzt weiter geöffnet." or "wird geöffnet."
+   - If 'direction' is "decreased": say "[Rollladen] ist jetzt weiter geschlossen." or "wird geschlossen."
+   - If 'position' has a NUMBER: say "[Rollladen] ist auf [X]%."
+   - NEVER guess direction - ONLY use the 'direction' field!"""
 
         system = f"""You are a smart home assistant.
 Generate a VERY SHORT, natural German confirmation (du-form).

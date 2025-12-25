@@ -157,14 +157,29 @@ AREA_PHRASE_PATTERNS = {
         ("{device} in {area} schließen", "HassSetPosition", {"position": 0}),
         ("{device} in {area} runter", "HassSetPosition", {"position": 0}),
         ("Mach {device} in {area} zu", "HassSetPosition", {"position": 0}),
-        # === Cover Step ===
+        # === Cover Step (formal) ===
         ("Fahre {device} in {area} weiter hoch", "HassSetPosition", {"command": "step_up"}),
         ("Fahre {device} in {area} weiter runter", "HassSetPosition", {"command": "step_down"}),
         ("Stelle {device} in {area} auf 50 Prozent", "HassSetPosition", {"position": 50}),
+        # === Cover Step (relative - open more) ===
+        ("Öffne {device} in {area} ein bisschen mehr", "HassSetPosition", {"command": "step_up"}),
+        ("Öffne {device} in {area} ein wenig", "HassSetPosition", {"command": "step_up"}),
+        ("Öffne {device} in {area} etwas mehr", "HassSetPosition", {"command": "step_up"}),
+        ("{device} in {area} etwas mehr öffnen", "HassSetPosition", {"command": "step_up"}),
+        ("{device} in {area} ein bisschen mehr auf", "HassSetPosition", {"command": "step_up"}),
+        ("Mach {device} in {area} etwas weiter auf", "HassSetPosition", {"command": "step_up"}),
+        # === Cover Step (relative - close more) ===
+        ("Schließe {device} in {area} ein bisschen mehr", "HassSetPosition", {"command": "step_down"}),
+        ("Schließe {device} in {area} ein wenig", "HassSetPosition", {"command": "step_down"}),
+        ("Schließe {device} in {area} etwas mehr", "HassSetPosition", {"command": "step_down"}),
+        ("{device} in {area} etwas mehr schließen", "HassSetPosition", {"command": "step_down"}),
+        ("{device} in {area} ein bisschen mehr zu", "HassSetPosition", {"command": "step_down"}),
+        ("Mach {device} in {area} etwas weiter zu", "HassSetPosition", {"command": "step_down"}),
         # === Cover State (nominative + question mark) ===
         ("Ist {device_nom} in {area} offen?", "HassGetState", {}),
         ("Sind {device} in {area} offen?", "HassGetState", {}),
     ],
+
     "climate": [
         ("Schalte {device} in {area} an", "HassTurnOn", {}),
         ("Schalte {device} in {area} aus", "HassTurnOff", {}),

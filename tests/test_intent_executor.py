@@ -122,7 +122,71 @@ async def test_media_player_accepts_non_off_as_on(config_entry):
     assert result2 is True  # "paused" should also count as "on"
 
 
-# ============================================================================
+async def test_scene_accepts_recent_timestamp(config_entry):
+    """Test that scene verification accepts recent activation timestamps."""
+    from datetime import datetime, timezone, timedelta
+    
+    mock_hass = MagicMock()
+    states = {}
+    
+    class MockState:
+        def __init__(self, state, attrs):
+            self.state = state
+            self.attributes = attrs
+    
+    def get_state(entity_id):
+        return states.get(entity_id)
+    
+    mock_hass.states.get = get_state
+    
+    executor = IntentExecutorCapability(mock_hass, config_entry.data)
+    
+    # Scene activated just now (1 second ago)
+    recent_time = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    states["scene.nora"] = MockState(recent_time, {"friendly_name": "Nora geht Schlafen"})
+    
+    result = await executor._verify_execution(
+        "scene.nora",
+        "HassTurnOn",
+        expected_state="on",
+    )
+    
+    assert result is True  # Recent timestamp should pass
+
+
+async def test_scene_rejects_old_timestamp(config_entry):
+    """Test that scene verification rejects old activation timestamps."""
+    from datetime import datetime, timezone, timedelta
+    
+    mock_hass = MagicMock()
+    states = {}
+    
+    class MockState:
+        def __init__(self, state, attrs):
+            self.state = state
+            self.attributes = attrs
+    
+    def get_state(entity_id):
+        return states.get(entity_id)
+    
+    mock_hass.states.get = get_state
+    
+    executor = IntentExecutorCapability(mock_hass, config_entry.data)
+    
+    # Scene activated 1 hour ago (too old)
+    old_time = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    states["scene.old"] = MockState(old_time, {"friendly_name": "Old Scene"})
+    
+    result = await executor._verify_execution(
+        "scene.old",
+        "HassTurnOn",
+        expected_state="on",
+    )
+
+    
+    assert result is False  # Old timestamp should fail
+
+
 # GERMAN STATE TRANSLATION TESTS
 # ============================================================================
 

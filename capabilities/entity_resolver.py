@@ -156,24 +156,39 @@ class EntityResolverCapability(Capability):
 
         # Filter by floor
         if floor_obj:
+            before_floor = resolved.copy()
             resolved = [
                 eid for eid in resolved
                 if self._is_entity_on_floor(eid, floor_obj.floor_id)
             ]
+            filtered_by_floor = [eid for eid in before_floor if eid not in resolved]
+            if filtered_by_floor:
+                _LOGGER.debug("[EntityResolver] Filtered %d by floor: %s", len(filtered_by_floor), filtered_by_floor)
 
         # Filter by device class
         if target_device_class:
+            before_class = resolved.copy()
             resolved = [
                 eid for eid in resolved
                 if self._match_device_class_or_unit(eid, target_device_class)
             ]
+            filtered_by_class = [eid for eid in before_class if eid not in resolved]
+            if filtered_by_class:
+                _LOGGER.debug("[EntityResolver] Filtered %d by device_class: %s", len(filtered_by_class), filtered_by_class)
 
-        # Filter by exposure
+        # Filter by exposure (entities must be exposed to conversation agent)
         pre_count = len(resolved)
+        before_expose = resolved.copy()
         resolved = [
             eid for eid in resolved
             if async_should_expose(hass, CONVERSATION_DOMAIN, eid)
         ]
+        filtered_by_expose = [eid for eid in before_expose if eid not in resolved]
+        if filtered_by_expose:
+            _LOGGER.debug(
+                "[EntityResolver] Filtered %d NOT EXPOSED to conversation: %s",
+                len(filtered_by_expose), filtered_by_expose
+            )
 
         # Filter by knowledge graph dependencies
         filtered_by_deps = []
@@ -202,10 +217,15 @@ class EntityResolverCapability(Capability):
                 )
 
         _LOGGER.debug(
-            "[EntityResolver] Final: %d entities (pre-filter: %d, filtered by deps: %d)",
-            len(resolved), pre_count, len(filtered_by_deps),
+            "[EntityResolver] Final: %d entities (pre-filter: %d, filtered by deps: %d, not exposed: %d)",
+            len(resolved), pre_count, len(filtered_by_deps), len(filtered_by_expose),
         )
-        return {"resolved_ids": resolved, "filtered_by_deps": filtered_by_deps}
+        return {
+            "resolved_ids": resolved,
+            "filtered_by_deps": filtered_by_deps,
+            "filtered_not_exposed": filtered_by_expose,
+        }
+
 
     # --- Helper Methods ---
     

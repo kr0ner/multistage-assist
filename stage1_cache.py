@@ -23,14 +23,36 @@ from .capabilities.semantic_cache import SemanticCacheCapability
 from .capabilities.memory import MemoryCapability
 from .stage_result import StageResult
 from .conversation_utils import with_new_text
+from .utils.german_utils import extract_delay, extract_duration
 
 _LOGGER = logging.getLogger(__name__)
 
 
-# Custom intents that should bypass cache (require fresh LLM processing)
-# NOTE: DelayedControl, TemporaryControl, and HassTimerSet use generic patterns with duration extraction!
-# All temporal intents are now cacheable - duration is parsed from raw text at cache hit time.
-CACHE_BYPASS_INTENTS: set = set()  # Empty - all intents are now cacheable!
+# ============================================================================
+# CACHE BYPASS INTENTS
+# ============================================================================
+# These intents should ALWAYS go to LLM, never be cached or matched from cache.
+#
+# WHY TIMER/CALENDAR BYPASS CACHE:
+# Timer and calendar commands often have contextual information that the
+# cache normalization strips out. For example:
+#   "Stelle einen Timer auf 15 Minuten der mich an das Gulasch erinnert"
+# The cache normalizes this to just "Timer auf Minuten" and loses the
+# crucial "der mich an das Gulasch erinnert" part.
+#
+# The LLM can properly parse the full command including:
+#   - Timer name/description
+#   - Calendar event details
+#   - Reminder context
+#
+# Simple device control commands (lights, covers, etc.) are safe to cache
+# because they have predictable structure with extractable numeric values.
+# ============================================================================
+CACHE_BYPASS_INTENTS: set = {
+    "HassTimerSet",      # Timer commands need full context (name, description)
+    "HassTimerCancel",   # Timer cancel needs timer name
+    # Future: Add calendar intents here when implemented
+}
 
 
 class Stage1CacheProcessor(BaseStage):
@@ -171,7 +193,7 @@ class Stage1CacheProcessor(BaseStage):
         # For DelayedControl: Extract delay from raw text since cache uses generic patterns
         # "in 3 Minuten" / "um 15 Uhr" → delay slot
         if cached["intent"] == "DelayedControl":
-            delay_str = self._extract_delay_from_text(user_input.text)
+            delay_str = extract_delay(user_input.text)
             if delay_str:
                 cache_slots["delay"] = delay_str
                 _LOGGER.debug("[Stage1Cache] Extracted delay='%s' from text", delay_str)
@@ -179,18 +201,13 @@ class Stage1CacheProcessor(BaseStage):
         # For TemporaryControl: Extract duration from raw text since cache uses generic patterns
         # "für 3 Minuten" → duration slot
         if cached["intent"] == "TemporaryControl":
-            duration_str = self._extract_duration_from_text(user_input.text)
+            duration_str = extract_duration(user_input.text)
             if duration_str:
                 cache_slots["duration"] = duration_str
                 _LOGGER.debug("[Stage1Cache] Extracted duration='%s' from text", duration_str)
         
-        # For HassTimerSet: Extract duration from raw text since cache uses generic patterns
-        # "Timer für 5 Minuten", "Timer auf 10 Minuten" → duration slot
-        if cached["intent"] == "HassTimerSet":
-            duration_str = self._extract_timer_duration_from_text(user_input.text)
-            if duration_str:
-                cache_slots["duration"] = duration_str
-                _LOGGER.debug("[Stage1Cache] Extracted timer duration='%s' from text", duration_str)
+        # NOTE: HassTimerSet bypasses cache (see CACHE_BYPASS_INTENTS)
+        # Timer commands need LLM to preserve context like "der mich an das Gulasch erinnert"
 
         return StageResult.success(
             intent=cached["intent"],
@@ -203,86 +220,6 @@ class Stage1CacheProcessor(BaseStage):
             },
             raw_text=user_input.text,
         )
-
-    def _extract_delay_from_text(self, text: str) -> Optional[str]:
-        """Extract delay string from user input for DelayedControl.
-        
-        Extracts:
-        - "in 3 Minuten" → "3 Minuten"
-        - "in einer Stunde" → "einer Stunde" 
-        - "um 15 Uhr" → "15 Uhr"
-        - "um 15:30 Uhr" → "15:30 Uhr"
-        """
-        # Pattern for "in X Minuten/Stunde/Sekunden"
-        delay_match = re.search(
-            r"\bin\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
-            text, re.IGNORECASE
-        )
-        if delay_match:
-            return f"{delay_match.group(1)} {delay_match.group(2)}"
-        
-        # Pattern for "um X Uhr"
-        time_match = re.search(
-            r"\bum\s+(\d{1,2}(?::\d{2})?)\s*Uhr\b",
-            text, re.IGNORECASE
-        )
-        if time_match:
-            return f"{time_match.group(1)} Uhr"
-        
-        return None
-
-    def _extract_duration_from_text(self, text: str) -> Optional[str]:
-        """Extract duration string from user input for TemporaryControl.
-        
-        Extracts:
-        - "für 3 Minuten" → "3 Minuten"
-        - "für eine Stunde" → "eine Stunde"
-        - "für 10 Sekunden" → "10 Sekunden"
-        """
-        # Pattern for "für X Minuten/Stunde/Sekunden"
-        duration_match = re.search(
-            r"\bfür\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
-            text, re.IGNORECASE
-        )
-        if duration_match:
-            return f"{duration_match.group(1)} {duration_match.group(2)}"
-        
-        return None
-
-    def _extract_timer_duration_from_text(self, text: str) -> Optional[str]:
-        """Extract duration string from user input for HassTimerSet.
-        
-        Extracts:
-        - "Timer für 5 Minuten" → "5 Minuten"
-        - "Timer auf 10 Minuten" → "10 Minuten"
-        - "5 Minuten Timer" → "5 Minuten"
-        - "Stell einen Timer auf 3 Minuten" → "3 Minuten"
-        """
-        # Pattern for "für X Minuten/Stunde/Sekunden" (same as TemporaryControl)
-        duration_match = re.search(
-            r"\bfür\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
-            text, re.IGNORECASE
-        )
-        if duration_match:
-            return f"{duration_match.group(1)} {duration_match.group(2)}"
-        
-        # Pattern for "auf X Minuten/Stunde/Sekunden"
-        auf_match = re.search(
-            r"\bauf\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
-            text, re.IGNORECASE
-        )
-        if auf_match:
-            return f"{auf_match.group(1)} {auf_match.group(2)}"
-        
-        # Pattern for "X Minuten Timer" (number at start)
-        prefix_match = re.search(
-            r"(\d+)\s*(Minuten?|Stunden?|Sekunden?)\s+(?:timer|wecker)\b",
-            text, re.IGNORECASE
-        )
-        if prefix_match:
-            return f"{prefix_match.group(1)} {prefix_match.group(2)}"
-        
-        return None
 
 
 # Alias for backward compatibility during migration

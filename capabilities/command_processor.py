@@ -21,6 +21,14 @@ from custom_components.multistage_assist.conversation_utils import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# ============================================================================
+# INTENTS THAT SHOULD NEVER BE CACHED
+# ============================================================================
+# Timer and calendar commands have variable context (names, descriptions)
+# that can't be generalized. See stage1_cache.py for detailed explanation.
+# ============================================================================
+NOCACHE_INTENTS = {"HassTimerSet", "HassTimerCancel"}
+
 
 class CommandProcessorCapability(Capability):
     """
@@ -219,7 +227,9 @@ class CommandProcessorCapability(Capability):
         # Only cache if:
         # 1. Execution was verified successful (no error flag, no verification failures)
         # 2. Command did NOT come from cache (avoid re-caching potentially wrong entries)
-        if self.semantic_cache and not exec_data.get("error") and not verification_failures and not from_cache:
+        # 3. Intent is not in NOCACHE_INTENTS (timer/calendar need full LLM handling)
+        skip_store = from_cache or intent_name in NOCACHE_INTENTS
+        if self.semantic_cache and not exec_data.get("error") and not verification_failures and not skip_store:
             try:
                 await self.semantic_cache.store(
                     text=user_input.text,
@@ -230,6 +240,7 @@ class CommandProcessorCapability(Capability):
                     verified=True,
                     is_disambiguation_response=is_disambiguation_response,
                 )
+
             except Exception as e:
                 _LOGGER.warning("[CommandProcessor] Failed to cache command: %s", e)
 

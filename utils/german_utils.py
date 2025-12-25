@@ -464,8 +464,6 @@ def format_datetime_german(dt: datetime) -> str:
     return dt.strftime("%d.%m.%Y um %H:%M Uhr")
 
 
-# --- Cache Normalization ---
-
 def normalize_for_cache(text: str) -> Tuple[str, List]:
     """Normalize numeric values for semantic cache matching.
     
@@ -564,3 +562,104 @@ def normalize_for_cache(text: str) -> Tuple[str, List]:
     )
 
     return text_norm, extracted
+
+
+def extract_delay(text: str) -> Optional[str]:
+    """Extract delay string from user input for DelayedControl.
+    
+    Args:
+        text: User command text
+        
+    Returns:
+        Delay string or None
+        
+    Examples:
+        extract_delay("in 3 Minuten") → "3 Minuten"
+        extract_delay("in einer Stunde") → "einer Stunde" 
+        extract_delay("um 15 Uhr") → "15 Uhr"
+        extract_delay("um 15:30 Uhr") → "15:30 Uhr"
+    """
+    # Pattern for "in X Minuten/Stunde/Sekunden"
+    delay_match = re.search(
+        r"\bin\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
+        text, re.IGNORECASE
+    )
+    if delay_match:
+        return f"{delay_match.group(1)} {delay_match.group(2)}"
+    
+    # Pattern for "um X Uhr"
+    time_match = re.search(
+        r"\bum\s+(\d{1,2}(?::\d{2})?)\s*Uhr\b",
+        text, re.IGNORECASE
+    )
+    if time_match:
+        return f"{time_match.group(1)} Uhr"
+    
+    return None
+
+
+def extract_duration(text: str) -> Optional[str]:
+    """Extract duration string from user input for TemporaryControl.
+    
+    Args:
+        text: User command text
+        
+    Returns:
+        Duration string or None
+        
+    Examples:
+        extract_duration("für 3 Minuten") → "3 Minuten"
+        extract_duration("für eine Stunde") → "eine Stunde"
+        extract_duration("für 10 Sekunden") → "10 Sekunden"
+    """
+    # Pattern for "für X Minuten/Stunde/Sekunden"
+    duration_match = re.search(
+        r"\bfür\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
+        text, re.IGNORECASE
+    )
+    if duration_match:
+        return f"{duration_match.group(1)} {duration_match.group(2)}"
+    
+    return None
+
+
+def extract_timer_duration(text: str) -> Optional[str]:
+    """Extract duration string from user input for HassTimerSet.
+    
+    Args:
+        text: User command text
+        
+    Returns:
+        Duration string or None
+        
+    Examples:
+        extract_timer_duration("Timer für 5 Minuten") → "5 Minuten"
+        extract_timer_duration("Timer auf 10 Minuten") → "10 Minuten"
+        extract_timer_duration("5 Minuten Timer") → "5 Minuten"
+        extract_timer_duration("Stell einen Timer auf 3 Minuten") → "3 Minuten"
+    """
+    # Pattern for "für X Minuten/Stunde/Sekunden" (same as TemporaryControl)
+    duration_match = re.search(
+        r"\bfür\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
+        text, re.IGNORECASE
+    )
+    if duration_match:
+        return f"{duration_match.group(1)} {duration_match.group(2)}"
+    
+    # Pattern for "auf X Minuten/Stunde/Sekunden"
+    auf_match = re.search(
+        r"\bauf\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
+        text, re.IGNORECASE
+    )
+    if auf_match:
+        return f"{auf_match.group(1)} {auf_match.group(2)}"
+    
+    # Pattern for "X Minuten Timer" (number at start)
+    prefix_match = re.search(
+        r"(\d+)\s*(Minuten?|Stunden?|Sekunden?)\s+(?:timer|wecker)\b",
+        text, re.IGNORECASE
+    )
+    if prefix_match:
+        return f"{prefix_match.group(1)} {prefix_match.group(2)}"
+    
+    return None

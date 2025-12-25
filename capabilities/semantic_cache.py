@@ -159,7 +159,8 @@ class SemanticCacheCapability(Capability):
         self._stats["total_lookups"] += 1
 
         try:
-            timeout = aiohttp.ClientTimeout(total=5)
+            timeout = aiohttp.ClientTimeout(total=10)  # Reranker can take 4-5s
+
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
                     self._addon_url("/lookup"),

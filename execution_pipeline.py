@@ -78,6 +78,7 @@ class ExecutionPipeline:
         if not stage_result.entity_ids:
             area = stage_result.params.get("requested_area", "")
             device_class = stage_result.params.get("requested_device_class", "")
+            not_exposed = stage_result.context.get("filtered_not_exposed", [])
             
             # Build helpful error message
             if device_class and area:
@@ -87,6 +88,13 @@ class ExecutionPipeline:
             else:
                 error_msg = "Kein passendes Gerät gefunden."
             
+            # Add exposure hint if entities were filtered due to not being exposed
+            if not_exposed:
+                error_msg += f" ({len(not_exposed)} Gerät(e) sind nicht für Sprachassistenten freigegeben)"
+                _LOGGER.warning(
+                    "[ExecutionPipeline] Entities not exposed to conversation: %s", not_exposed
+                )
+            
             _LOGGER.warning("[ExecutionPipeline] No entities to execute on: %s", error_msg)
             
             from .conversation_utils import make_response
@@ -95,6 +103,7 @@ class ExecutionPipeline:
                 response=await make_response(error_msg, user_input),
                 pending_data=None,
             )
+
 
         _LOGGER.debug(
             "[ExecutionPipeline] Executing intent='%s' on %d entities: %s",

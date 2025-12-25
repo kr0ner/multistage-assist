@@ -22,6 +22,8 @@ from .capabilities.area_resolver import AreaResolverCapability as AreaAliasCapab
 from .capabilities.memory import MemoryCapability
 from .capabilities.clarification import ClarificationCapability
 from .capabilities.multi_turn_base import MultiTurnCapability
+from .capabilities.timer import TimerCapability
+from .capabilities.calendar import CalendarCapability
 from .stage_result import StageResult
 from .conversation_utils import with_new_text
 
@@ -53,6 +55,8 @@ class Stage2LLMProcessor(BaseStage):
         MemoryCapability,
         ClarificationCapability,
         MultiTurnCapability,
+        TimerCapability,
+        CalendarCapability,
     ]
 
     def __init__(self, hass, config):
@@ -187,6 +191,7 @@ class Stage2LLMProcessor(BaseStage):
             
         resolved = await resolver.run(user_input, entities=entities_for_resolver)
         resolved_ids = (resolved or {}).get("resolved_ids", [])
+        filtered_not_exposed = (resolved or {}).get("filtered_not_exposed", [])
 
         _LOGGER.debug("[Stage2LLM] Resolved %d entities: %s", 
                      len(resolved_ids), resolved_ids)
@@ -211,9 +216,11 @@ class Stage2LLMProcessor(BaseStage):
                     "domain": domain,
                     "from_llm": True,
                     "no_entities_found": True,
+                    "filtered_not_exposed": filtered_not_exposed,  # For helpful error message
                 },
                 raw_text=user_input.text,
             )
+
 
         # 5. Build execution params (exclude resolution-only keys)
         resolution_keys = {"area", "room", "floor", "name", "entity", 

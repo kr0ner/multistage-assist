@@ -28,17 +28,9 @@ from ..utils.semantic_cache_types import (
     MIN_CACHE_WORDS,
     DEFAULT_MAX_ENTRIES,
 )
+from ..utils.german_utils import normalize_for_cache
 
 _LOGGER = logging.getLogger(__name__)
-
-# Bypass patterns - commands that should skip cache lookup
-DURATION_PATTERNS = [
-    r"\bfür\s+\d+\s*(minuten?|stunden?|sekunden?)\b",
-    r"\bfür\s+(eine?|kurze?)\s*(zeit|weile)\b",
-    r"\btemporär\b",
-    r"\bvorübergehend\b",
-    r"\bzeitlich\s+begrenzt\b",
-]
 
 IMPLICIT_PATTERNS = [
     r"\bzu\s+dunkel\b",
@@ -132,13 +124,21 @@ class SemanticCacheCapability(Capability):
         return f"http://{self.addon_ip}:{self.addon_port}{endpoint}"
 
     def _should_bypass(self, text: str) -> bool:
-        """Check if query should bypass cache lookup."""
+        """Check if query should bypass cache lookup.
+        
+        Only implicit patterns (e.g., "zu dunkel") bypass cache
+        since they need LLM interpretation.
+        
+        Duration patterns (e.g., "für 5 Minuten") are handled via
+        cache normalization and extraction in stage1_cache.
+        """
         text_lower = text.lower()
-        for pattern in DURATION_PATTERNS + IMPLICIT_PATTERNS:
+        for pattern in IMPLICIT_PATTERNS:
             if re.search(pattern, text_lower):
                 _LOGGER.debug("[SemanticCache] Bypass pattern detected: %s", text[:50])
                 return True
         return False
+
 
     async def lookup(self, text: str) -> Optional[Dict[str, Any]]:
         """Lookup command via add-on API.
@@ -405,95 +405,9 @@ class SemanticCacheCapability(Capability):
     def _normalize_numeric_value(self, text: str) -> tuple:
         """Normalize numeric values for generalized cache matching.
         
-        Normalizes:
-        - Percentages: "50 Prozent" → "50 Prozent" (canonical)
-        - Temperatures: "22 Grad" → "20 Grad" (canonical)
-        - Temporal delays: "in 3 Minuten" → "in Minuten" (strip number)
-        - Temporal times: "um 15:30 Uhr" → "um Uhr" (strip time)
-        
-        Uses duration_utils.py for consistent German duration parsing.
-        
         Returns: (normalized_text, extracted_values)
         """
-        from ..utils.duration_utils import parse_german_duration
-        
-        extracted = []
-
-        def replace_percent(match):
-            val = int(match.group(1))
-            extracted.append(val)
-            return "50 Prozent"
-
-        def replace_temp(match):
-            val = int(match.group(1))
-            extracted.append(val)
-            return "20 Grad"
-
-        def replace_delay(match):
-            # Use duration_utils for robust parsing
-            full_match = match.group(0)  # e.g., "in 3 Minuten"
-            duration_part = match.group(1) + " " + match.group(2)  # "3 Minuten"
-            seconds = parse_german_duration(duration_part)
-            extracted.append(seconds // 60 if seconds >= 60 else seconds)  # Store minutes or seconds
-            # Return normalized form without number
-            unit = match.group(2)
-            return f"in {unit}"
-
-        def replace_time(match):
-            # Extract time: "um 15:30 Uhr" or "um 8 Uhr"
-            time_str = match.group(1)
-            extracted.append(time_str)
-            return "um Uhr"
-
-        def replace_duration(match):
-            # "für X Minuten" → temporary control duration
-            # Use duration_utils for robust parsing
-            duration_part = match.group(1) + " " + match.group(2)  # "3 Minuten"
-            seconds = parse_german_duration(duration_part)
-            extracted.append(seconds // 60 if seconds >= 60 else seconds)
-            # Return normalized form without number
-            unit = match.group(2)
-            return f"für {unit}"
-
-        # Percentage patterns
-        text_norm = re.sub(r"(\d+)\s*%", replace_percent, text)
-        text_norm = re.sub(r"(\d+)\s*(prozent|Prozent)", replace_percent, text_norm)
-        
-        # Temperature patterns
-        text_norm = re.sub(r"(\d+)\s*(grad|Grad)", replace_temp, text_norm)
-        
-        # Temporal delay patterns: "in 3 Minuten", "in einer Stunde", "in 10 Sekunden"
-        # For DelayedControl - action AFTER delay
-        text_norm = re.sub(
-            r"\bin\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
-            replace_delay, text_norm, flags=re.IGNORECASE
-        )
-        
-        # Temporal time patterns: "um 15:30 Uhr", "um 8 Uhr"
-        # For DelayedControl - action at specific time
-        text_norm = re.sub(
-            r"\bum\s+(\d{1,2}(?::\d{2})?)\s*Uhr\b",
-            replace_time, text_norm, flags=re.IGNORECASE
-        )
-        
-        # Duration patterns: "für 3 Minuten", "für eine Stunde"
-        # For TemporaryControl - action NOW, revert after duration
-        text_norm = re.sub(
-            r"\bfür\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
-            replace_duration, text_norm, flags=re.IGNORECASE
-        )
-        
-        # Timer duration patterns: "auf 5 Minuten", "Timer auf 10 Minuten"
-        # For HassTimerSet
-        text_norm = re.sub(
-            r"\bauf\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
-            replace_duration, text_norm, flags=re.IGNORECASE
-        )
-
-        return text_norm, extracted
-
-
-
+        return normalize_for_cache(text)
 
 
     def get_stats(self) -> Dict[str, Any]:

@@ -146,9 +146,14 @@ class Stage2LLMProcessor(BaseStage):
                 user_input = with_new_text(user_input, clarified_text)
             # Continue to single-command processing below
         else:
-            # Multiple atomic commands - process each through intent pipeline
-            _LOGGER.debug("[Stage2LLM] Multi-command (%d) - processing each", len(clarified_commands))
-            return await self._process_multi_command(user_input, clarified_commands, context)
+            # Multiple atomic commands - return multi_command for conversation.py to iterate
+            _LOGGER.debug("[Stage2LLM] Multi-command (%d) → returning multi_command", len(clarified_commands))
+            return StageResult.multi_command(
+                commands=clarified_commands,
+                context={**context},
+                raw_text=user_input.text,
+            )
+
 
         # 2. Use keyword_intent to parse intent
         ki_data = await self.use("keyword_intent", user_input) or {}

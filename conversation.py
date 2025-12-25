@@ -21,6 +21,7 @@ from .stage2_llm import Stage2LLMProcessor
 from .stage3_gemini import Stage3GeminiProcessor
 from .stage_result import StageResult
 from .execution_pipeline import ExecutionPipeline
+from .conversation_utils import with_new_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -184,7 +185,41 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
                 # Fast-track to chat mode
                 current_context = {**current_context, **result.context}
                 continue
+        
+            elif result.status == "multi_command":
+                # Process each atomic command through full pipeline independently
+                _LOGGER.info("[Pipeline] Processing %d atomic commands", len(result.commands))
+                all_responses = []
+                for i, cmd in enumerate(result.commands):
+                    _LOGGER.debug("[Pipeline] Multi-command %d/%d: '%s'", i + 1, len(result.commands), cmd)
+                    # Create new input with this command text
+                    cmd_input = with_new_text(user_input, cmd)
+                    # Run through full pipeline with FRESH context (no contamination!)
+                    cmd_result = await self._run_pipeline(cmd_input, context={})
+                    if cmd_result:
+                        all_responses.append(cmd_result)
                 
+                # Combine responses from all commands
+                if all_responses:
+                    # Get speech from each response and combine
+                    speeches = []
+                    for resp in all_responses:
+                        if hasattr(resp, 'response') and hasattr(resp.response, 'speech'):
+                            speech = resp.response.speech.get("plain", {}).get("speech", "")
+                            if speech:
+                                speeches.append(speech)
+                    
+                    if speeches:
+                        combined = " ".join(speeches)
+                        # Return first response with combined speech
+                        first_resp = all_responses[0]
+                        if hasattr(first_resp, 'response'):
+                            first_resp.response.async_set_speech(combined)
+                        return first_resp
+                    return all_responses[0]
+                # No responses - fall through to end
+                
+        
             elif result.status == "error":
                 if result.response:
                     return result.response

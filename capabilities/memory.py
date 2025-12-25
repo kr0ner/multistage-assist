@@ -37,9 +37,9 @@ class MemoryCapability(Capability):
         result = self._data["areas"].get(key)
         if result:
             _LOGGER.debug("[Memory] Area alias hit: '%s' → '%s'", key, result)
-        else:
-            _LOGGER.debug("[Memory] Area alias miss: '%s' (available: %s)", key, list(self._data["areas"].keys()))
+        # Don't log misses - too noisy for multi-word inputs
         return result
+
 
     async def learn_area_alias(self, text: str, area_name: str):
         await self._ensure_loaded()

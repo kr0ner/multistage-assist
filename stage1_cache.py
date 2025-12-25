@@ -106,14 +106,16 @@ class Stage1CacheProcessor(BaseStage):
         if not commands:
             commands = [user_input.text]
         
-        # For now, handle only single commands in cache
-        # Multi-command sequences escalate to Stage2
+        # For multi-commands, return multi_command status
+        # conversation.py will iterate each command through full pipeline
         if len(commands) > 1:
-            _LOGGER.debug("[Stage1Cache] Multi-command detected (%d) → escalate", len(commands))
-            return StageResult.escalate(
-                context={**context, "commands": commands, "multi_command": True},
+            _LOGGER.debug("[Stage1Cache] Multi-command detected (%d) → multi_command", len(commands))
+            return StageResult.multi_command(
+                commands=commands,
+                context={**context},
                 raw_text=user_input.text,
             )
+
 
         # 3. Check if the command should bypass cache
         # (Context may already have NLU intent from Stage0)

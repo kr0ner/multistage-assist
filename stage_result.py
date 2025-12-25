@@ -29,13 +29,14 @@ class StageResult:
         raw_text: Original user utterance (for logging/learning)
     """
     
-    status: Literal["success", "escalate", "escalate_chat", "error"]
+    status: Literal["success", "escalate", "escalate_chat", "multi_command", "error"]
     intent: Optional[str] = None
     entity_ids: List[str] = field(default_factory=list)
     params: Dict[str, Any] = field(default_factory=dict)
     context: Dict[str, Any] = field(default_factory=dict)
     response: Optional[Any] = None  # ConversationResponse or similar
     raw_text: Optional[str] = None
+    commands: List[str] = field(default_factory=list)  # For multi_command status
     
     def as_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization/logging."""
@@ -105,6 +106,21 @@ class StageResult:
         return cls(
             status="error",
             response=response,
+            raw_text=raw_text,
+        )
+    
+    @classmethod
+    def multi_command(
+        cls,
+        commands: List[str],
+        context: Optional[Dict[str, Any]] = None,
+        raw_text: Optional[str] = None,
+    ) -> "StageResult":
+        """Create a multi-command result for processing multiple atomic commands."""
+        return cls(
+            status="multi_command",
+            commands=commands,
+            context=context or {},
             raw_text=raw_text,
         )
 

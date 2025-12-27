@@ -105,10 +105,10 @@ Examples:
 
     async def _normalize_area_name(self, user_input, name: str) -> Optional[str]:
         """
-        Use AreaAliasCapability to normalize 'Bad' -> 'Badezimmer'.
+        Use AreaResolverCapability to normalize 'Bad' -> 'Badezimmer'.
         This ensures the script receives the correct HA area name.
         """
-        from .area_resolver import AreaResolverCapability as AreaAliasCapability
+        from .area_resolver import AreaResolverCapability
         from homeassistant.helpers import area_registry as ar
 
         # Check for exact match in registry first to save LLM call
@@ -118,7 +118,7 @@ Examples:
                 return a.name
 
         # Ask LLM for alias
-        alias_cap = AreaAliasCapability(self.hass, self.config)
+        alias_cap = AreaResolverCapability(self.hass, self.config)
         res = await alias_cap.run(user_input, search_text=name)
         mapped = res.get("area")
         

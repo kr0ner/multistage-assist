@@ -20,23 +20,27 @@ class StageResult:
             - "success": Intent + entities resolved → execute via ExecutionPipeline
             - "escalate": Need more sophisticated processing → next stage
             - "escalate_chat": User wants to chat → Stage3 in chat-only mode
+            - "pending": Asking user for clarification (area, entity, etc.) → wait for response
             - "error": Unrecoverable error
         intent: Derived intent name (e.g., "HassTurnOn", "HassLightSet")
         entity_ids: Resolved entity IDs to act upon
         params: Intent parameters (brightness, temperature, duration, etc.)
         context: Enriched context for next stage (NLU hints, slot values)
-        response: Pre-built response for error cases
+        response: Pre-built response for error/pending cases
+        pending_data: Data for pending multi-turn (type, candidates, etc.)
         raw_text: Original user utterance (for logging/learning)
     """
     
-    status: Literal["success", "escalate", "escalate_chat", "multi_command", "error"]
+    status: Literal["success", "escalate", "escalate_chat", "multi_command", "pending", "error"]
     intent: Optional[str] = None
     entity_ids: List[str] = field(default_factory=list)
     params: Dict[str, Any] = field(default_factory=dict)
     context: Dict[str, Any] = field(default_factory=dict)
     response: Optional[Any] = None  # ConversationResponse or similar
+    pending_data: Dict[str, Any] = field(default_factory=dict)  # For pending status
     raw_text: Optional[str] = None
     commands: List[str] = field(default_factory=list)  # For multi_command status
+
     
     def as_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization/logging."""
@@ -124,52 +128,29 @@ class StageResult:
             raw_text=raw_text,
         )
 
-
-# Legacy alias for backward compatibility during migration
-# TODO: Remove after all stages are migrated
-class Stage0Result:
-    """DEPRECATED: Use StageResult instead.
-    
-    Container for Stage0 parsed intent and resolved entities.
-    Kept for backward compatibility during migration.
-    """
-
-    def __init__(
-        self,
-        type: str,
-        intent: Optional[str] = None,
-        raw: Optional[str] = None,
-        resolved_ids: Optional[List[str]] = None,
-        **kwargs: Any,
-    ):
-        self.type = type
-        self.intent = intent
-        self.raw = raw
-        self.resolved_ids = resolved_ids or []
-        self.extra = kwargs or {}
-
-    def as_dict(self) -> Dict[str, Any]:
-        return {
-            "type": self.type,
-            "intent": self.intent,
-            "raw": self.raw,
-            "resolved_ids": self.resolved_ids,
-            **self.extra,
-        }
-
-    def __repr__(self) -> str:
-        return (
-            f"<Stage0Result type={self.type!r} intent={self.intent!r} "
-            f"resolved={len(self.resolved_ids)}>"
+    @classmethod
+    def pending(
+        cls,
+        pending_type: str,
+        message: str,
+        pending_data: Optional[Dict[str, Any]] = None,
+        raw_text: Optional[str] = None,
+    ) -> "StageResult":
+        """Create a pending result for multi-turn user interaction.
+        
+        Args:
+            pending_type: Type of pending state (area_learning, disambiguation, etc.)
+            message: Question to ask the user
+            pending_data: Context for continuing when user responds
+            raw_text: Original user utterance
+        """
+        data = pending_data or {}
+        data["type"] = pending_type
+        data["original_prompt"] = message
+        return cls(
+            status="pending",
+            pending_data=data,
+            raw_text=raw_text,
         )
-    
-    def to_stage_result(self) -> StageResult:
-        """Convert to new StageResult for gradual migration."""
-        status = "success" if self.type == "intent" else "escalate"
-        return StageResult(
-            status=status,
-            intent=self.intent,
-            entity_ids=self.resolved_ids,
-            context=self.extra,
-            raw_text=self.raw,
-        )
+
+

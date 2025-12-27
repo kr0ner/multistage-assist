@@ -26,7 +26,8 @@ from .stage2_llm import Stage2LLMProcessor
 from .stage3_gemini import Stage3GeminiProcessor
 from .stage_result import StageResult
 from .execution_pipeline import ExecutionPipeline
-from .conversation_utils import with_new_text
+from .conversation_utils import with_new_text, make_response
+from .constants.messages_de import SYSTEM_MESSAGES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
             language=user_input.language or "de",
             agent_id=conversation.HOME_ASSISTANT_AGENT,
         )
+
 
     def _cleanup_stale_pending(self, current_conv_id: str) -> None:
         """Remove stale pending states from OTHER conversations."""
@@ -145,9 +147,53 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
             
             _LOGGER.debug("[Pipeline] ExecutionPipeline owns conversation %s, continuing", conv_id)
             
+            # Handle area_learning by routing to Stage2
+            pending_type = pending_data.get("type", "")
+            if pending_type == "area_learning":
+                stage2 = next((s for s in self.stages if s.name == "stage2_llm"), None)
+                if stage2:
+                    result = await stage2.continue_pending(user_input, pending_data)
+                    
+                    if result.status == "success":
+                        # Rerun original command if requested
+                        if result.params.get("rerun_command"):
+                            original_text = result.params.get("original_text")
+                            message = SYSTEM_MESSAGES['unknown_area_learned'].format(
+                                alias=result.params.get("learned_alias"), 
+                                area=result.params.get("learned_area")
+                            )
+                            _LOGGER.info("[Pipeline] Re-running original command: %s", original_text)
+                            
+                            # Create new input with original text
+                            new_input = with_new_text(user_input, original_text)
+                            rerun_result = await self._run_pipeline(new_input, context={})
+                            
+                            if rerun_result:
+                                # Prepend confirmation
+                                if hasattr(rerun_result, 'response') and hasattr(rerun_result.response, 'speech'):
+                                    existing = rerun_result.response.speech.get("plain", {}).get("speech", "")
+                                    rerun_result.response.async_set_speech(f"{message} {existing}")
+                                return rerun_result
+                        return await make_response(SYSTEM_MESSAGES['error_short'], user_input)
+                        
+                    elif result.status == "pending":
+                        # Re-ask question
+                        # Re-store pending state
+                        conv_id = user_input.conversation_id or "default"
+                        result.pending_data["_created_at"] = time.time()
+                        result.pending_data["_retry_count"] = pending_data.get("_retry_count", 0) + 1
+                        if remaining_commands:
+                            result.pending_data["remaining_multi_commands"] = remaining_commands
+                        self._execution_pending[conv_id] = result.pending_data
+                        
+                        message = result.pending_data.get("original_prompt", "")
+                        return await make_response(message, user_input)
+            
+            # Default: ExecutionPipeline handles disambiguation etc.
             exec_result = await self._execution_pipeline.continue_pending(
                 user_input, pending_data
             )
+
             
             # If still pending, re-store (with remaining commands preserved and fresh timestamp)
             if exec_result.pending_data:
@@ -355,8 +401,23 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
                     return all_responses[0]
                 # No responses - fall through to end
 
+            elif result.status == "pending":
+                # Stage asking user for clarification (area learning, etc.)
+                conv_id = user_input.conversation_id or "default"
+                result.pending_data["_created_at"] = time.time()
+                result.pending_data["_retry_count"] = 0
+                self._execution_pending[conv_id] = result.pending_data
                 
-        
+                _LOGGER.info(
+                    "[Pipeline] Stage pending (%s), asking user: %s",
+                    result.pending_data.get("type"),
+                    result.pending_data.get("original_prompt", "")[:50]
+                )
+                
+                # Build response with the question
+                message = result.pending_data.get("original_prompt", "")
+                return await make_response(message, user_input)
+                
             elif result.status == "error":
                 if result.response:
                     return result.response

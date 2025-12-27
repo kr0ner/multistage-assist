@@ -218,10 +218,15 @@ SYSTEM_MESSAGES: Dict[str, str] = {
     "which_device": "Welches Gerät meinst du?",
     "did_not_understand": "Ich habe leider nichts verstanden.",
     
+    # Unknown area learning
+    "unknown_area_ask": "Ich kenne '{alias}' noch nicht. Welchen Bereich meinst du?",
+    "unknown_area_learned": "Alles klar, ich merke mir dass '{alias}' für '{area}' steht.",
+    "unknown_area_not_matched": "Das habe ich nicht verstanden. Welchen Bereich meinst du mit '{alias}'?",
 
     # Generic error
     "error_short": "Fehler.",
 }
+
 
 
 # --- Helper Functions ---
@@ -522,11 +527,14 @@ def get_domain_confirmation(
     # Prepare action verb suffix (for "läuft" vs "läuft nicht")
     action_suffix = "" if state == "on" or action == "on" else " nicht"
     
+    # Format value for German locale
+    formatted_value = _format_value_de(value, domain, action)
+    
     # Format with provided values
     try:
         return template.format(
             name=name,
-            value=value,
+            value=formatted_value,
             area=area,
             state=state,
             action=ACTION_VERBS.get(state, state),
@@ -534,3 +542,29 @@ def get_domain_confirmation(
         )
     except KeyError:
         return f"{name} erledigt."
+
+
+def _format_value_de(value: str, domain: str, action: str) -> str:
+    """Format a value for German locale.
+    
+    - Round percentages to integers for light/cover
+    - Replace decimal . with , for German formatting
+    """
+    if not value:
+        return value
+    
+    try:
+        num = float(value)
+        
+        # Round to integer for percentages (light brightness, cover position)
+        if domain in ("light", "cover") or action in ("brightness_set", "position"):
+            return str(int(round(num)))
+        
+        # For temperature and other decimals, use German comma
+        if num == int(num):
+            return str(int(num))
+        else:
+            return str(num).replace(".", ",")
+    except (ValueError, TypeError):
+        # Not a number, return as-is
+        return str(value).replace(".", ",")

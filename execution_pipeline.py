@@ -26,6 +26,7 @@ from .stage_result import StageResult
 _LOGGER = logging.getLogger(__name__)
 
 
+
 @dataclass
 class ExecutionResult:
     """Result from execution pipeline."""
@@ -76,15 +77,15 @@ class ExecutionPipeline:
 
         # Handle empty entity_ids - generate user-facing error
         if not stage_result.entity_ids:
-            area = stage_result.params.get("requested_area", "")
+            requested_area = stage_result.params.get("requested_area", "")
             device_class = stage_result.params.get("requested_device_class", "")
             not_exposed = stage_result.context.get("filtered_not_exposed", [])
             
             # Build helpful error message
-            if device_class and area:
-                error_msg = f"Es gibt keinen {device_class}-Sensor in {area}."
-            elif area:
-                error_msg = f"Kein passendes Gerät in {area} gefunden."
+            if device_class and requested_area:
+                error_msg = f"Es gibt keinen {device_class}-Sensor in {requested_area}."
+            elif requested_area:
+                error_msg = f"Kein passendes Gerät in {requested_area} gefunden."
             else:
                 error_msg = "Kein passendes Gerät gefunden."
             
@@ -157,8 +158,10 @@ class ExecutionPipeline:
         Returns:
             ExecutionResult - may include new pending_data for multi-turn
         """
-        # For now, pending is always disambiguation
-        # Future: check pending_data["type"] for slot-filling, etc.
+        # Route based on pending type
+        pending_type = pending_data.get("type", "disambiguation")
+        
+        # Default: disambiguation
         result = await self._processor.continue_disambiguation(
             user_input=user_input,
             pending_data=pending_data,
@@ -194,7 +197,6 @@ class ExecutionPipeline:
             response=result.get("result"),
             pending_data=result.get("pending_data"),
         )
-
 
 
 # Singleton-ish factory for stages to share the pipeline

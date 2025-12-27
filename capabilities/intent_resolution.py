@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from .base import Capability
 from .keyword_intent import KeywordIntentCapability
 from .entity_resolver import EntityResolverCapability
-from .area_resolver import AreaResolverCapability as AreaAliasCapability
+from .area_resolver import AreaResolverCapability
 from .memory import MemoryCapability
 
 _LOGGER = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ JSON: {"entity_id": <string or null>}
         super().__init__(hass, config)
         self.keyword_cap = KeywordIntentCapability(hass, config)
         self.resolver_cap = EntityResolverCapability(hass, config)
-        self.alias_cap = AreaAliasCapability(hass, config)
+        self.alias_cap = AreaResolverCapability(hass, config)
         self.memory_cap = None  # Will be injected by Stage1
 
     def set_memory(self, memory_cap):

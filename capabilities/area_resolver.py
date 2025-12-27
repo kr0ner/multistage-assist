@@ -212,7 +212,13 @@ You are a smart home helper that maps a user's spoken location to the correct in
         data = await self._safe_prompt(self.PROMPT, payload)
 
         if not isinstance(data, dict):
-            return {"match": None}
+            # LLM failed - return unknown area with candidates for user disambiguation
+            _LOGGER.debug("[AreaResolver] LLM failed, returning unknown area: %s", text)
+            return {
+                "match": None,
+                "unknown_area": text,
+                "candidates": candidates,
+            }
 
         matched = data.get("match")
         
@@ -223,8 +229,24 @@ You are a smart home helper that maps a user's spoken location to the correct in
             _LOGGER.debug("[AreaResolver] LLM mapped '%s' → '%s' (mode=%s)", text, matched, mode)
             return {"match": matched}
 
-        return {"match": None}
+        # LLM returned no match - return unknown area for user disambiguation
+        _LOGGER.debug("[AreaResolver] No match for '%s', returning for user disambiguation", text)
+        return {
+            "match": None,
+            "unknown_area": text,
+            "candidates": candidates,
+        }
+
+    async def learn_area_alias(self, alias: str, area_name: str) -> None:
+        """Learn an area alias after user confirms.
+        
+        Args:
+            alias: The unknown text user said (e.g., "Ki-Bad")
+            area_name: The actual area name (e.g., "Kinder Badezimmer")
+        """
+        from .memory import MemoryCapability
+        memory = MemoryCapability(self.hass, self._config)
+        await memory.learn_area_alias(alias.lower(), area_name)
+        _LOGGER.info("[AreaResolver] Learned area alias: '%s' → '%s'", alias, area_name)
 
 
-# Keep AreaAliasCapability as alias for backward compatibility
-AreaAliasCapability = AreaResolverCapability

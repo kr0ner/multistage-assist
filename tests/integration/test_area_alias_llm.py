@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from homeassistant.components import conversation
 
-from multistage_assist.capabilities.area_resolver import AreaResolverCapability as AreaAliasCapability
+from multistage_assist.capabilities.area_resolver import AreaResolverCapability
 from tests.integration import get_llm_config
 
 
@@ -25,8 +25,8 @@ def hass():
 
 
 @pytest.fixture
-def area_alias_capability(hass):
-    """Create area alias capability with real LLM and mocked registries."""
+def area_resolver_capability(hass):
+    """Create area resolver capability with real LLM and mocked registries."""
     
     # Create mock areas
     mock_areas = []
@@ -43,8 +43,8 @@ def area_alias_capability(hass):
         mock_floors.append(floor)
     
     # Patch the registry functions
-    with patch("multistage_assist.capabilities.area_alias.ar") as mock_ar, \
-         patch("multistage_assist.capabilities.area_alias.fr") as mock_fr:
+    with patch("multistage_assist.capabilities.area_resolver.ar") as mock_ar, \
+         patch("multistage_assist.capabilities.area_resolver.fr") as mock_fr:
         
         mock_area_reg = MagicMock()
         mock_area_reg.async_list_areas.return_value = mock_areas
@@ -54,7 +54,7 @@ def area_alias_capability(hass):
         mock_floor_reg.async_list_floors.return_value = mock_floors
         mock_fr.async_get.return_value = mock_floor_reg
         
-        capability = AreaAliasCapability(hass, get_llm_config())
+        capability = AreaResolverCapability(hass, get_llm_config())
         # Store patched registries so they persist
         capability._mock_ar = mock_ar
         capability._mock_fr = mock_fr
@@ -104,12 +104,12 @@ def make_input(text: str):
     ],
 )
 async def test_area_matching(
-    area_alias_capability, user_query, candidates, expected_match
+    area_resolver_capability, user_query, candidates, expected_match
 ):
     """Test area alias matching with real LLM."""
     user_input = make_input(user_query)
 
-    result = await area_alias_capability.run(
+    result = await area_resolver_capability.run(
         user_input,
         user_query=user_query,
         candidates=candidates,
@@ -143,12 +143,12 @@ async def test_area_matching(
     ],
 )
 async def test_floor_matching(
-    area_alias_capability, user_query, floor_candidates, expected
+    area_resolver_capability, user_query, floor_candidates, expected
 ):
     """Test floor alias matching."""
     user_input = make_input(user_query)
 
-    result = await area_alias_capability.run(
+    result = await area_resolver_capability.run(
         user_input,
         user_query=user_query,
         candidates=floor_candidates,
@@ -161,7 +161,7 @@ async def test_floor_matching(
     ), f"Expected floor '{expected}' for query='{user_query}', got: '{match}'"
 
 
-async def test_fuzzy_matching(area_alias_capability):
+async def test_fuzzy_matching(area_resolver_capability):
     """Test fuzzy matching with slight misspellings or variations."""
     test_cases = [
         ("Badzimmer", ["Badezimmer", "Küche"], "Badezimmer"),  # Typo
@@ -171,7 +171,7 @@ async def test_fuzzy_matching(area_alias_capability):
 
     for query, candidates, expected in test_cases:
         user_input = make_input(query)
-        result = await area_alias_capability.run(
+        result = await area_resolver_capability.run(
             user_input,
             user_query=query,
             candidates=candidates,

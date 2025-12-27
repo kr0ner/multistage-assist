@@ -18,7 +18,7 @@ from homeassistant.components import conversation
 from .base_stage import BaseStage
 from .capabilities.keyword_intent import KeywordIntentCapability
 from .capabilities.entity_resolver import EntityResolverCapability
-from .capabilities.area_resolver import AreaResolverCapability as AreaAliasCapability
+from .capabilities.area_resolver import AreaResolverCapability
 from .capabilities.memory import MemoryCapability
 from .capabilities.clarification import ClarificationCapability
 from .capabilities.multi_turn_base import MultiTurnCapability
@@ -26,6 +26,7 @@ from .capabilities.timer import TimerCapability
 from .capabilities.calendar import CalendarCapability
 from .stage_result import StageResult
 from .conversation_utils import with_new_text
+from .constants.messages_de import SYSTEM_MESSAGES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class Stage2LLMProcessor(BaseStage):
     capabilities = [
         KeywordIntentCapability,
         EntityResolverCapability,
-        AreaAliasCapability,
+        AreaResolverCapability,
         MemoryCapability,
         ClarificationCapability,
         MultiTurnCapability,
@@ -77,25 +78,32 @@ class Stage2LLMProcessor(BaseStage):
                 return True
         return False
 
-    async def _resolve_area_alias(self, area_name: str) -> Optional[str]:
-        """Resolve area alias using memory or LLM."""
+    async def _resolve_area_alias(self, area_name: str) -> Dict[str, Any]:
+        """Resolve area alias using memory or LLM.
+        
+        Returns:
+            Dict with:
+            - match: resolved area name or None
+            - unknown_area: original text if unresolved (optional)
+            - candidates: list of available areas (optional)
+        """
         if not area_name:
-            return None
+            return {"match": None}
             
         # Check memory first
         memory = self.get("memory")
         resolved = await memory.get_area_alias(area_name.lower())
         if resolved:
-            return resolved
+            return {"match": resolved}
             
-        # Use area_alias capability for LLM-based resolution
-        if self.has("area_alias"):
-            alias_cap = self.get("area_alias")
-            result = await alias_cap.run(None, area_name=area_name)
-            if result and result.get("match"):
-                return result["match"]
+        # Use area_resolver capability for fuzzy + LLM-based resolution
+        if self.has("area_resolver"):
+            resolver = self.get("area_resolver")
+            result = await resolver.run(None, area_name=area_name)
+            # Returns: {match, unknown_area, candidates}
+            return result
                 
-        return area_name
+        return {"match": area_name}
 
     async def process(
         self,
@@ -177,11 +185,40 @@ class Stage2LLMProcessor(BaseStage):
 
         # 3. Resolve area aliases if present
         if slots.get("area"):
-            resolved_area = await self._resolve_area_alias(slots["area"])
-            if resolved_area and resolved_area != slots["area"]:
-                _LOGGER.debug("[Stage2LLM] Area alias: '%s' → '%s'", 
-                            slots["area"], resolved_area)
+            area_result = await self._resolve_area_alias(slots["area"])
+            resolved_area = area_result.get("match")
+            
+            if resolved_area:
+                if resolved_area != slots["area"]:
+                    _LOGGER.debug("[Stage2LLM] Area alias: '%s' → '%s'", 
+                                slots["area"], resolved_area)
                 slots["area"] = resolved_area
+            elif area_result.get("unknown_area"):
+                # Unknown area - ask user to clarify
+                unknown = area_result["unknown_area"]
+                candidates = area_result.get("candidates", [])
+                
+                area_list = ", ".join(candidates[:10])
+                if len(candidates) > 10:
+                    area_list += f" und {len(candidates) - 10} weitere"
+                
+                message = f"{SYSTEM_MESSAGES['unknown_area_ask'].format(alias=unknown)} ({area_list})"
+                
+                _LOGGER.info("[Stage2LLM] Unknown area '%s', asking user", unknown)
+                
+                return StageResult.pending(
+                    pending_type="area_learning",
+                    message=message,
+                    pending_data={
+                        "unknown_alias": unknown,
+                        "candidates": candidates,
+                        "original_slots": slots,
+                        "intent": intent_name,
+                        "domain": domain,
+                        "original_text": user_input.text,
+                    },
+                    raw_text=user_input.text,
+                )
 
         # 4. Entity resolution
         resolver = self.get("entity_resolver")
@@ -280,7 +317,8 @@ class Stage2LLMProcessor(BaseStage):
             
             # Resolve area aliases
             if slots.get("area"):
-                resolved_area = await self._resolve_area_alias(slots["area"])
+                area_result = await self._resolve_area_alias(slots["area"])
+                resolved_area = area_result.get("match")
                 if resolved_area and resolved_area != slots["area"]:
                     slots["area"] = resolved_area
             
@@ -347,3 +385,98 @@ class Stage2LLMProcessor(BaseStage):
         if session_id in self._pending:
             del self._pending[session_id]
             _LOGGER.debug("[Stage2LLM] Cleared pending state for %s", session_id)
+
+    async def continue_pending(
+        self,
+        user_input,
+        pending_data: Dict[str, Any],
+    ) -> StageResult:
+        """Continue multi-turn interaction started by this stage.
+        
+        Args:
+            user_input: User's follow-up response
+            pending_data: Stored context from when pending was created
+            
+        Returns:
+            StageResult - success to execute, pending to re-ask, or error
+        """
+        pending_type = pending_data.get("type", "")
+        
+        if pending_type == "area_learning":
+            return await self._continue_area_learning(user_input, pending_data)
+        
+        # Unknown pending type - clear and escalate
+        _LOGGER.warning("[Stage2LLM] Unknown pending type: %s", pending_type)
+        return StageResult.escalate(
+            context={"unknown_pending_type": pending_type},
+            raw_text=user_input.text,
+        )
+
+    async def _continue_area_learning(
+        self,
+        user_input,
+        pending_data: Dict[str, Any],
+    ) -> StageResult:
+        """Handle user's response to unknown area question.
+        
+        Matches response to available areas and learns the alias.
+        Then re-runs original command through pipeline.
+        """
+        user_response = user_input.text.strip().lower()
+        unknown_alias = pending_data.get("unknown_alias", "")
+        candidates = pending_data.get("candidates", [])
+        original_text = pending_data.get("original_text", "")
+        
+        # Try to match user response to an area
+        matched_area = None
+        
+        # 1. Check for exact match first
+        for area in candidates:
+            if area.lower() == user_response:
+                matched_area = area
+                break
+                
+        # 2. If no exact match, check for substring
+        if not matched_area:
+            for area in candidates:
+                if area.lower() in user_response:
+                    matched_area = area
+                    break
+        
+        if not matched_area:
+            # Re-prompt if no match
+            area_list = ", ".join(candidates[:10])
+            message = f"{SYSTEM_MESSAGES['unknown_area_not_matched'].format(alias=unknown_alias)} ({area_list})"
+            
+            _LOGGER.debug("[Stage2LLM] Area learning: no match for '%s'", user_response)
+            
+            return StageResult.pending(
+                pending_type="area_learning",
+                message=message,
+                pending_data=pending_data,  # Keep same data
+                raw_text=user_input.text,
+            )
+        
+        # Learn the alias
+        resolver = self.get("area_resolver")
+        await resolver.learn_area_alias(unknown_alias, matched_area)
+        
+        _LOGGER.info("[Stage2LLM] Learned area alias: '%s' → '%s'", unknown_alias, matched_area)
+        
+        # Return success with context for re-running original command
+        # The original_text will be processed through pipeline again
+        return StageResult.success(
+            intent=pending_data.get("intent", ""),
+            entity_ids=[],  # Will be resolved when original command re-runs
+            params={
+                "learned_alias": unknown_alias,
+                "learned_area": matched_area,
+                "original_text": original_text,
+                "rerun_command": True,  # Signal to conversation.py to re-run
+            },
+            context={
+                "area_learned": True,
+                "from_stage2": True,
+            },
+            raw_text=original_text,
+        )

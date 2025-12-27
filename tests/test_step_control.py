@@ -80,9 +80,10 @@ class TestLightBrightnessStep:
             domain="light"
         )
         
-        # Should turn on to off_to_on value (30)
-        assert result["new_value"] == 30
+        # Should turn on to off_to_on value (50 from domain_config.py)
+        assert result["new_value"] == 50
         assert result["current_value"] == 0
+
 
     @pytest.mark.asyncio
     async def test_step_down_to_zero(self, step_control, mock_hass):

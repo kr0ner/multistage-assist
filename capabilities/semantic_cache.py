@@ -417,5 +417,8 @@ class SemanticCacheCapability(Capability):
             **self._stats,
             "user_entries": len(self._cache),
             "enabled": self.enabled,
-            "addon_url": f"{self.reranker_ip}:{self.reranker_port}",
+            "addon_url": f"{self.addon_ip}:{self.addon_port}",
+            "reranker_host": f"{self.addon_ip}:{self.addon_port}",
+            "reranker_enabled": self.reranker_enabled,
+            "reranker_blocks": self._stats.get("reranker_blocks", 0),
         }

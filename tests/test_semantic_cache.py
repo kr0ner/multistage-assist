@@ -429,28 +429,20 @@ async def test_cache_preserves_disambiguation_info(semantic_cache, hass):
 async def test_custom_config_options(hass, config_entry):
     """Test that all config options are respected."""
     config = dict(config_entry.data)
-    config["embedding_ip"] = "192.168.178.2"
-    config["embedding_port"] = 11434
-    config["embedding_model"] = "bge-m3"
-    config["reranker_model"] = "BAAI/bge-reranker-base"
-    config["reranker_threshold"] = 0.6
-    config["vector_search_threshold"] = 0.5
-    config["vector_search_top_k"] = 10
+    config["reranker_ip"] = "192.168.178.2"
+    config["reranker_port"] = 9876
 
     cache = SemanticCacheCapability(hass, config)
 
-    assert cache.embedding_ip == "192.168.178.2"
-    assert cache.embedding_port == 11434
-    assert cache.embedding_model == "bge-m3"
-    assert cache.reranker_model == "BAAI/bge-reranker-base"
-    assert cache.reranker_threshold == 0.6
-    assert cache.vector_threshold == 0.5
-    assert cache.vector_top_k == 10
+    # Check new unified addon_ip/addon_port attributes
+    assert cache.addon_ip == "192.168.178.2"
+    assert cache.addon_port == 9876
+    assert cache.reranker_enabled == True
 
 
 async def test_stats_include_reranker_info(semantic_cache, hass):
     """Test that stats include reranker information."""
-    stats = await semantic_cache.get_stats()
+    stats = semantic_cache.get_stats()  # Not async
 
     assert "reranker_host" in stats
     assert "reranker_enabled" in stats

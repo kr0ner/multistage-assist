@@ -170,6 +170,32 @@ class ExecutionPipeline:
             pending_data=result.get("pending_data"),
         )
 
+    async def re_prompt_pending(
+        self,
+        user_input,
+        pending_data: Dict[str, Any],
+    ) -> ExecutionResult:
+        """Re-ask any pending question after timeout.
+        
+        Args:
+            user_input: Current user input (may be new command)
+            pending_data: Stored execution context with original_prompt
+            
+        Returns:
+            ExecutionResult with the re-prompt response
+        """
+        result = await self._processor.re_prompt_pending(
+            user_input=user_input,
+            pending_data=pending_data,
+        )
+
+        return ExecutionResult(
+            success=False,  # Still waiting for response
+            response=result.get("result"),
+            pending_data=result.get("pending_data"),
+        )
+
+
 
 # Singleton-ish factory for stages to share the pipeline
 _pipeline_instance: Optional[ExecutionPipeline] = None

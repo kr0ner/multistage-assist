@@ -96,13 +96,13 @@ class CommandProcessorCapability(Capability):
         msg_data = await self.disambiguation.run(user_input, entities=entities_map)
 
         # Return pending state for multi-turn handling
+        prompt_message = msg_data.get("message", "Welches Gerät?")
         return {
             "status": "handled",
-            "result": await make_response(
-                msg_data.get("message", "Welches Gerät?"), user_input
-            ),
+            "result": await make_response(prompt_message, user_input),
             "pending_data": {
                 "type": "disambiguation",
+                "original_prompt": prompt_message,  # Store for re-prompt
                 "candidates": entities_map,
                 "intent": intent_name,
                 "params": params,
@@ -141,6 +141,20 @@ class CommandProcessorCapability(Capability):
             pending_data.get("learning_data"),
             is_disambiguation_response=True,  # Mark as disambiguation follow-up
         )
+
+    async def re_prompt_pending(
+        self, user_input, pending_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Re-ask pending question after timeout."""
+        original_prompt = pending_data.get("original_prompt", "Bitte antworte.")
+        message = f"Ich habe leider nichts verstanden. {original_prompt}"
+        
+        return {
+            "status": "handled",
+            "result": await make_response(message, user_input),
+            "pending_data": pending_data,
+        }
+
 
     async def _execute_final(
         self, user_input, entity_ids, intent_name, params, learning_data=None,

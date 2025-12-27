@@ -190,8 +190,9 @@ class KeywordIntentCapability(Capability):
         
         Only for words of similar length to avoid false positives.
         """
-        # Length check - avoid matching short words to long ones
-        if abs(len(word) - len(keyword)) > max_distance:
+        # Length check - Enforce strict length equality to avoid matching "schalte" (7) to "schalter" (8)
+        # Allows typos like "lihct" -> "licht" (swaps) but prevents insertions/deletions that change word type
+        if len(word) != len(keyword):
             return None
         
         # Minimum length to apply fuzzy (avoid matching "an" to "auf")

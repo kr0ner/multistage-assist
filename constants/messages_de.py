@@ -209,10 +209,18 @@ SYSTEM_MESSAGES: Dict[str, str] = {
     
     # Learning messages
     "learning_offer": "Soll ich mir merken, dass '{alias}' '{target}' bedeutet?",
+    "learning_offer_entity": "Übrigens, ich habe '{src}' als Gerät '{tgt}' interpretiert. Soll ich mir das merken?",
+    "learning_offer_area": "Übrigens, ich habe '{src}' als Bereich '{tgt}' interpretiert. Soll ich mir das merken?",
     
     # Disambiguation messages
     "multiple_matches": "Ich habe mehrere passende Geräte gefunden:",
     "please_specify": "Bitte sag mir genauer, welches du meinst.",
+    "which_device": "Welches Gerät meinst du?",
+    "did_not_understand": "Ich habe leider nichts verstanden.",
+    
+
+    # Generic error
+    "error_short": "Fehler.",
 }
 
 
@@ -283,3 +291,246 @@ def get_state_response(key: str, **kwargs) -> str:
         return template.format(**kwargs)
     except KeyError:
         return template
+
+
+# --- Domain-Based Response Templates ---
+# Each domain/intent has 5 variations for natural variety
+
+import random
+from typing import List
+
+# Action verbs for on/off (used in templates)
+ACTION_VERBS = {
+    "on": "an",
+    "off": "aus",
+}
+
+# Domain-specific response templates
+# {name} = device/area name, {action} = an/aus, {value} = percentage/value
+DOMAIN_RESPONSES: Dict[str, Dict[str, List[str]]] = {
+    "light": {
+        # HassTurnOn / HassTurnOff (combined with {action})
+        "toggle": [
+            "{name} ist jetzt {action}.",
+            "{name} ist {action}.",
+            "Ich habe {name} {action}gemacht.",
+            "Das Licht in {name} ist {action}.",
+            "{name} ist jetzt {action}geschaltet.",
+        ],
+        "brightness_up": [
+            "{name} ist jetzt heller.",
+            "Ich habe {name} aufgehellt.",
+            "{name} ist heller gestellt.",
+            "Die Helligkeit von {name} ist erhöht.",
+            "{name} leuchtet jetzt stärker.",
+        ],
+        "brightness_down": [
+            "{name} ist jetzt dunkler.",
+            "Ich habe {name} gedimmt.",
+            "{name} ist gedimmt.",
+            "Die Helligkeit von {name} ist reduziert.",
+            "{name} leuchtet jetzt schwächer.",
+        ],
+        "brightness_set": [
+            "{name} ist auf {value}% gestellt.",
+            "{name} leuchtet jetzt mit {value}%.",
+            "Helligkeit von {name} ist {value}%.",
+            "{name} ist auf {value}% eingestellt.",
+            "Ich habe {name} auf {value}% gesetzt.",
+        ],
+        "state_on": [
+            "{name} ist an.",
+            "{name} ist eingeschaltet.",
+            "{name} leuchtet.",
+        ],
+        "state_off": [
+            "{name} ist aus.",
+            "{name} ist ausgeschaltet.",
+            "{name} leuchtet nicht.",
+        ],
+    },
+    "cover": {
+        "toggle": [
+            "{name} ist jetzt {action}.",
+            "Die Rollläden {name} sind {action}.",
+            "Ich habe {name} {action}gemacht.",
+            "{name} ist {action}.",
+            "Rollläden in {name} sind {action}.",
+        ],
+        "open": [
+            "{name} ist jetzt offen.",
+            "Die Rollläden {name} sind offen.",
+            "Ich habe {name} geöffnet.",
+            "{name} ist hochgefahren.",
+            "{name} ist oben.",
+        ],
+        "close": [
+            "{name} ist jetzt geschlossen.",
+            "Die Rollläden {name} sind zu.",
+            "Ich habe {name} geschlossen.",
+            "{name} ist runtergefahren.",
+            "{name} ist unten.",
+        ],
+        "position": [
+            "{name} ist auf {value}%.",
+            "Ich habe {name} auf {value}% gestellt.",
+            "{name} steht jetzt bei {value}%.",
+            "Die Position von {name} ist {value}%.",
+            "{name} ist auf {value}% eingestellt.",
+        ],
+        "state_open": [
+            "{name} ist offen.",
+            "{name} ist geöffnet.",
+            "{name} ist oben.",
+        ],
+        "state_closed": [
+            "{name} ist geschlossen.",
+            "{name} ist zu.",
+            "{name} ist unten.",
+        ],
+    },
+    "switch": {
+        "toggle": [
+            "{name} ist jetzt {action}.",
+            "Die Steckdose {name} ist {action}.",
+            "Ich habe {name} {action}geschaltet.",
+            "{name} ist {action}.",
+            "Strom für {name} ist {action}.",
+        ],
+        "state_on": [
+            "{name} ist an.",
+            "{name} ist eingeschaltet.",
+            "{name} ist aktiv.",
+        ],
+        "state_off": [
+            "{name} ist aus.",
+            "{name} ist ausgeschaltet.",
+            "{name} ist inaktiv.",
+        ],
+    },
+    "fan": {
+        "toggle": [
+            "{name} ist jetzt {action}.",
+            "Der Ventilator {name} ist {action}.",
+            "Ich habe {name} {action}geschaltet.",
+            "{name} läuft{action_suffix}.",
+            "{name} ist {action}.",
+        ],
+        "state_on": [
+            "{name} läuft.",
+            "{name} ist an.",
+            "{name} ist eingeschaltet.",
+        ],
+        "state_off": [
+            "{name} läuft nicht.",
+            "{name} ist aus.",
+            "{name} ist ausgeschaltet.",
+        ],
+    },
+    "vacuum": {
+        "start": [
+            "Staubsauger gestartet.",
+            "Der Staubsauger läuft.",
+            "Ich habe den Staubsauger gestartet.",
+            "Staubsauger ist unterwegs.",
+            "Der Staubsauger macht sich an die Arbeit.",
+        ],
+        "start_area": [
+            "Staubsauger saugt jetzt {area}.",
+            "Ich schicke den Staubsauger in {area}.",
+            "Staubsauger reinigt {area}.",
+            "{area} wird gesaugt.",
+            "Der Staubsauger kümmert sich um {area}.",
+        ],
+        "state_on": [
+            "Der Staubsauger läuft.",
+            "Der Staubsauger ist unterwegs.",
+            "Der Staubsauger saugt gerade.",
+        ],
+        "state_off": [
+            "Der Staubsauger ist in der Station.",
+            "Der Staubsauger läuft nicht.",
+            "Der Staubsauger ist fertig.",
+        ],
+    },
+    "climate": {
+        "set_temperature": [
+            "{name} ist auf {value}° eingestellt.",
+            "Ich habe {name} auf {value}° gestellt.",
+            "Temperatur von {name} ist {value}°.",
+            "{name} heizt auf {value}°.",
+            "Zieltemperatur für {name} ist {value}°.",
+        ],
+        "state": [
+            "{name} ist auf {value}° eingestellt.",
+            "{name} heizt auf {value}°.",
+            "Temperatur in {name} ist {value}°.",
+        ],
+    },
+    # Fallback for unknown domains
+    "default": {
+        "toggle": [
+            "{name} ist jetzt {action}.",
+            "Ich habe {name} {action}gemacht.",
+            "{name} ist {action}.",
+        ],
+        "set": [
+            "{name} ist auf {value} eingestellt.",
+            "Ich habe {name} auf {value} gesetzt.",
+            "{name} ist jetzt bei {value}.",
+        ],
+        "state": [
+            "{name} ist {state}.",
+        ],
+    },
+}
+
+
+def get_domain_confirmation(
+    domain: str,
+    action: str,
+    name: str = "",
+    value: str = "",
+    area: str = "",
+    state: str = "",
+) -> str:
+    """Get a random confirmation message for a domain/action.
+    
+    Args:
+        domain: Entity domain (light, cover, switch, etc.)
+        action: Action type (toggle, open, close, brightness_set, etc.)
+        name: Device/area name
+        value: Value for brightness/position/temperature
+        area: Area name for vacuum
+        state: State for query responses (on/off)
+        
+    Returns:
+        Formatted German confirmation message
+    """
+    # Get domain templates, fall back to default
+    domain_templates = DOMAIN_RESPONSES.get(domain, DOMAIN_RESPONSES["default"])
+    
+    # Get action templates
+    templates = domain_templates.get(action)
+    if not templates:
+        # Fall back to default domain
+        templates = DOMAIN_RESPONSES["default"].get(action, ["{name} erledigt."])
+    
+    # Pick random template
+    template = random.choice(templates)
+    
+    # Prepare action verb suffix (for "läuft" vs "läuft nicht")
+    action_suffix = "" if state == "on" or action == "on" else " nicht"
+    
+    # Format with provided values
+    try:
+        return template.format(
+            name=name,
+            value=value,
+            area=area,
+            state=state,
+            action=ACTION_VERBS.get(state, state),
+            action_suffix=action_suffix,
+        )
+    except KeyError:
+        return f"{name} erledigt."

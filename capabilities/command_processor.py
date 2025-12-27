@@ -96,7 +96,7 @@ class CommandProcessorCapability(Capability):
         msg_data = await self.disambiguation.run(user_input, entities=entities_map)
 
         # Return pending state for multi-turn handling
-        prompt_message = msg_data.get("message", "Welches Gerät?")
+        prompt_message = msg_data.get("message", QUESTION_TEMPLATES["entity"])
         return {
             "status": "handled",
             "result": await make_response(prompt_message, user_input),
@@ -128,7 +128,7 @@ class CommandProcessorCapability(Capability):
             return {
                 "status": "handled",
                 "result": await make_response(
-                    msg_data.get("message", "Welches Gerät meinst du?"), user_input
+                    msg_data.get("message", SYSTEM_MESSAGES["which_device"]), user_input
                 ),
                 "pending_data": pending_data,  # Keep the same pending data!
             }
@@ -146,8 +146,8 @@ class CommandProcessorCapability(Capability):
         self, user_input, pending_data: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Re-ask pending question after timeout."""
-        original_prompt = pending_data.get("original_prompt", "Bitte antworte.")
-        message = f"Ich habe leider nichts verstanden. {original_prompt}"
+        original_prompt = pending_data.get("original_prompt", SYSTEM_MESSAGES["did_not_understand"])
+        message = f"{SYSTEM_MESSAGES['did_not_understand']} {original_prompt}"
         
         return {
             "status": "handled",
@@ -178,7 +178,7 @@ class CommandProcessorCapability(Capability):
             )
             return {
                 "status": "error",
-                "result": await error_response(user_input, "Fehler."),
+                "result": await error_response(user_input, SYSTEM_MESSAGES["error_short"]),
             }
 
         result_obj = exec_data["result"]
@@ -226,8 +226,10 @@ class CommandProcessorCapability(Capability):
         if learning_data:
             original = result_obj.response.speech.get("plain", {}).get("speech", "")
             src, tgt = learning_data["source"], learning_data["target"]
-            t_type = "Gerät" if learning_data.get("type") == "entity" else "Bereich"
-            new_speech = f"{original} Übrigens, ich habe '{src}' als {t_type} '{tgt}' interpretiert. Soll ich mir das merken?"
+            if learning_data.get("type") == "entity":
+                new_speech = f"{original} {SYSTEM_MESSAGES['learning_offer_entity'].format(src=src, tgt=tgt)}"
+            else:
+                new_speech = f"{original} {SYSTEM_MESSAGES['learning_offer_area'].format(src=src, tgt=tgt)}"
             result_obj.response.async_set_speech(new_speech)
             result_obj.continue_conversation = True
             pending_data = {

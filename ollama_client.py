@@ -47,8 +47,10 @@ class OllamaClient:
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
+            "keep_alive": -1,  # Keep model loaded in memory permanently
             "options": {"num_ctx": num_ctx, "temperature": temperature},
         }
+
 
         # 🔎 Log full payload for debugging
         try:

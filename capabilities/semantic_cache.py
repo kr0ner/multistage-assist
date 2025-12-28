@@ -317,7 +317,7 @@ class SemanticCacheCapability(Capability):
             "[SemanticCache] Stored: '%s' → %s [%s]",
             text[:40],
             intent,
-            entity_ids[0] if entity_ids else "?",
+            entity_ids if len(entity_ids) <= 3 else f"{len(entity_ids)} entities",
         )
 
     # --- Helper Methods ---

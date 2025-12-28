@@ -25,7 +25,7 @@ from .base import Capability
 from .area_resolver import AreaResolverCapability
 from ..utils.fuzzy_utils import get_fuzz
 from ..utils.german_utils import canonicalize
-from ..constants.entity_keywords import GENERIC_NAMES
+from ..constants.entity_keywords import GENERIC_NAMES, ALL_KEYWORDS
 from ..constants.sensor_units import DEVICE_CLASS_UNITS
 
 _LOGGER = logging.getLogger(__name__)
@@ -147,12 +147,20 @@ class EntityResolverCapability(Capability):
 
         # "All Domain" fallback
         if not thing_name and not area_hint and domain:
-            _LOGGER.debug("[EntityResolver] No name/area. Fetching ALL entities for domain '%s'", domain)
-            all_domain_entities = self._collect_all_domain_entities(domain)
-            for eid in all_domain_entities:
-                if eid not in seen:
-                    resolved.append(eid)
-                    seen.add(eid)
+            # CRITICAL SAFETY CHECK: Only allow global "turn everything on/off"
+            # if the user explicitly said "all/sämtliche".
+            # Otherwise "Schalte Spots an" -> "Spot" is generic -> triggers this -> turns on whole house.
+            has_all_keyword = any(k in user_input.text.lower() for k in ALL_KEYWORDS)
+            
+            if has_all_keyword:
+                _LOGGER.debug("[EntityResolver] No name/area. Fetching ALL entities for domain '%s'", domain)
+                all_domain_entities = self._collect_all_domain_entities(domain)
+                for eid in all_domain_entities:
+                    if eid not in seen:
+                        resolved.append(eid)
+                        seen.add(eid)
+            else:
+                _LOGGER.debug("[EntityResolver] Global fallback skipped (no 'all' keyword in '%s')", user_input.text)
 
         # Filter by floor
         if floor_obj:

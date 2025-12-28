@@ -138,6 +138,9 @@ OTHER_ENTITY_PLURALS: Dict[str, str] = {
     "das gerät": "die geräte",
 }
 
+# Keywords that trigger global operations (all entities in domain)
+ALL_KEYWORDS: Set[str] = {"alle", "sämtliche", "ganze", "gesamte", "alles", "ganzes", "komplettes"}
+
 # --- DOMAIN NAME MAPPING ---
 
 # Helper to get noun from "article noun" format

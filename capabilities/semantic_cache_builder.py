@@ -41,7 +41,7 @@ import json
 import logging
 import os
 from dataclasses import asdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 import numpy as np
 
@@ -85,6 +85,9 @@ AREA_PHRASE_PATTERNS = {
         ("Aktiviere {device} in {area}", "HassTurnOn", {}),
         ("{device} in {area} einschalten", "HassTurnOn", {}),
         ("Mach mal {device} in {area} an", "HassTurnOn", {}),
+        # Colloquial "anmachen"
+        ("Kannst du {device} in {area} anmachen", "HassTurnOn", {}),
+        ("{device} in {area} anmachen", "HassTurnOn", {}),
         
         # === HassTurnOff - multiple word orders ===
         ("Schalte {device} in {area} aus", "HassTurnOff", {}),
@@ -120,6 +123,11 @@ AREA_PHRASE_PATTERNS = {
         # More informal brightness variants
         ("{device} heller in {area}", "HassLightSet", {"command": "step_up"}),
         ("{device} dunkler in {area}", "HassLightSet", {"command": "step_down"}),
+        # "Mehr/Weniger" variants
+        ("Mehr Licht in {area}", "HassLightSet", {"command": "step_up"}),
+        ("Weniger Licht in {area}", "HassLightSet", {"command": "step_down"}),
+        ("Mehr Helligkeit in {area}", "HassLightSet", {"command": "step_up"}),
+        ("Weniger Helligkeit in {area}", "HassLightSet", {"command": "step_down"}),
         
         # === HassGetState (nominative + question mark) ===
         ("Ist {device_nom} in {area} an?", "HassGetState", {}),
@@ -237,6 +245,25 @@ ENTITY_PHRASE_PATTERNS = {
         ("{device} {entity_name} in {area} dunkler", "HassLightSet", {"command": "step_down"}),
         # State query (nominative case + question mark)
         ("Ist {device_nom} {entity_name} in {area} an?", "HassGetState", {}),
+        # UNIQUE (No Area)
+        ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
+        ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
+        ("Mach {device} {entity_name} an", "HassTurnOn", {}),
+        ("Mach {device} {entity_name} aus", "HassTurnOff", {}),
+        ("{device} {entity_name} an", "HassTurnOn", {}),
+        ("{device} {entity_name} aus", "HassTurnOff", {}),
+        # Formal brightness (Unique)
+        ("Erhöhe die Helligkeit von {device} {entity_name}", "HassLightSet", {"command": "step_up"}),
+        ("Reduziere die Helligkeit von {device} {entity_name}", "HassLightSet", {"command": "step_down"}),
+        ("Dimme {device} {entity_name} auf 50 Prozent", "HassLightSet", {"brightness": 50}),
+        # Informal brightness (Unique)
+        ("Mach {device} {entity_name} heller", "HassLightSet", {"command": "step_up"}),
+        ("Mach {device} {entity_name} dunkler", "HassLightSet", {"command": "step_down"}),
+        ("{device} {entity_name} heller", "HassLightSet", {"command": "step_up"}),
+        ("{device} {entity_name} dunkler", "HassLightSet", {"command": "step_down"}),
+        # Query (Unique)
+        ("Ist {device_nom} {entity_name} an?", "HassGetState", {}),
+        ("Ist {device_nom} {entity_name} aus?", "HassGetState", {}),
     ],
     "cover": [
         ("Öffne {device} {entity_name} in {area}", "HassTurnOn", {}),
@@ -247,28 +274,61 @@ ENTITY_PHRASE_PATTERNS = {
         # State queries (nominative case + question mark)
         ("Ist {device_nom} {entity_name} in {area} offen?", "HassGetState", {"state": "open"}),
         ("Ist {device_nom} {entity_name} in {area} geschlossen?", "HassGetState", {"state": "closed"}),
+        # UNIQUE
+        ("Öffne {device} {entity_name}", "HassTurnOn", {}),
+        ("Schließe {device} {entity_name}", "HassTurnOff", {}),
+        ("Mach {device} {entity_name} auf", "HassTurnOn", {}),
+        ("Mach {device} {entity_name} zu", "HassTurnOff", {}),
+        ("Fahre {device} {entity_name} hoch", "HassTurnOn", {}),
+        ("Fahre {device} {entity_name} runter", "HassTurnOff", {}),
+        ("Fahre {device} {entity_name} weiter hoch", "HassSetPosition", {"command": "step_up"}),
+        ("Fahre {device} {entity_name} weiter runter", "HassSetPosition", {"command": "step_down"}),
+        ("Stelle {device} {entity_name} auf 50 Prozent", "HassSetPosition", {"position": 50}),
+        # Query (Unique)
+        ("Ist {device_nom} {entity_name} offen?", "HassGetState", {"state": "open"}),
+        ("Ist {device_nom} {entity_name} geschlossen?", "HassGetState", {"state": "closed"}),
     ],
     "climate": [
         ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
         ("Schalte {device} {entity_name} in {area} aus", "HassTurnOff", {}),
         ("Stelle {device} {entity_name} in {area} auf 21 Grad", "HassClimateSetTemperature", {}),
+        # UNIQUE
+        ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
+        ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
+        ("Stelle {device} {entity_name} auf 21 Grad", "HassClimateSetTemperature", {}),
     ],
     "switch": [
         ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
         ("Schalte {device} {entity_name} in {area} aus", "HassTurnOff", {}),
         ("Ist {device_nom} {entity_name} in {area} an?", "HassGetState", {}),
+        # UNIQUE
+        ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
+        ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
+        ("Mach {device} {entity_name} an", "HassTurnOn", {}),
+        ("Mach {device} {entity_name} aus", "HassTurnOff", {}),
+        ("Ist {device_nom} {entity_name} an?", "HassGetState", {}),
+        ("Ist {device_nom} {entity_name} aus?", "HassGetState", {}),
     ],
     "fan": [
         ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
         ("Schalte {device} {entity_name} in {area} aus", "HassTurnOff", {}),
+        # UNIQUE
+        ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
+        ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
     ],
     "media_player": [
         ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
         ("Schalte {device} {entity_name} in {area} aus", "HassTurnOff", {}),
+        # UNIQUE
+        ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
+        ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
     ],
     "automation": [
         ("Aktiviere {device} {entity_name} in {area}", "HassTurnOn", {}),
         ("Deaktiviere {device} {entity_name} in {area}", "HassTurnOff", {}),
+        # UNIQUE
+        ("Aktiviere {device} {entity_name}", "HassTurnOn", {}),
+        ("Deaktiviere {device} {entity_name}", "HassTurnOff", {}),
     ],
 }
 
@@ -362,6 +422,10 @@ GLOBAL_PHRASE_PATTERNS = {
         ("Mach alle Lichter heller", "HassLightSet", {"command": "step_up"}),
         ("Mach alle Lichter dunkler", "HassLightSet", {"command": "step_down"}),
         ("Dimme alle Lichter auf 50 Prozent", "HassLightSet", {"brightness": 50}),
+        ("Stelle alle Lichter auf 50 Prozent", "HassLightSet", {"brightness": 50}),
+        # Colloquial Global Match
+        ("Alle Lichter an", "HassTurnOn", {}),
+        ("Alle Lichter aus", "HassTurnOff", {}),
         # State queries
         ("Welche Lichter sind an?", "HassGetState", {"state": "on"}),
         ("Welche Lichter sind aus?", "HassGetState", {"state": "off"}),
@@ -412,67 +476,6 @@ GLOBAL_PHRASE_PATTERNS = {
 # UNIQUE-ENTITY-SCOPE patterns: {device} + {entity_name} → single entity (NO AREA)
 # For entities with GLOBALLY UNIQUE names (e.g. "Ambilight", "Weihnachtsbaum")
 # Must not clash with Area/Floor names.
-UNIQUE_ENTITY_PATTERNS = {
-    "light": [
-        ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
-        ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
-        ("Mach {device} {entity_name} an", "HassTurnOn", {}),
-        ("Mach {device} {entity_name} aus", "HassTurnOff", {}),
-        ("{device} {entity_name} an", "HassTurnOn", {}),
-        ("{device} {entity_name} aus", "HassTurnOff", {}),
-        # Formal brightness
-        ("Erhöhe die Helligkeit von {device} {entity_name}", "HassLightSet", {"command": "step_up"}),
-        ("Reduziere die Helligkeit von {device} {entity_name}", "HassLightSet", {"command": "step_down"}),
-        ("Dimme {device} {entity_name} auf 50 Prozent", "HassLightSet", {"brightness": 50}),
-        # Informal brightness
-        ("Mach {device} {entity_name} heller", "HassLightSet", {"command": "step_up"}),
-        ("Mach {device} {entity_name} dunkler", "HassLightSet", {"command": "step_down"}),
-        ("{device} {entity_name} heller", "HassLightSet", {"command": "step_up"}),
-        ("{device} {entity_name} dunkler", "HassLightSet", {"command": "step_down"}),
-        # Query
-        ("Ist {device_nom} {entity_name} an?", "HassGetState", {}),
-        ("Ist {device_nom} {entity_name} aus?", "HassGetState", {}),
-    ],
-    "cover": [
-        ("Öffne {device} {entity_name}", "HassTurnOn", {}),
-        ("Schließe {device} {entity_name}", "HassTurnOff", {}),
-        ("Mach {device} {entity_name} auf", "HassTurnOn", {}),
-        ("Mach {device} {entity_name} zu", "HassTurnOff", {}),
-        ("Fahre {device} {entity_name} hoch", "HassTurnOn", {}),
-        ("Fahre {device} {entity_name} runter", "HassTurnOff", {}),
-        ("Fahre {device} {entity_name} weiter hoch", "HassSetPosition", {"command": "step_up"}),
-        ("Fahre {device} {entity_name} weiter runter", "HassSetPosition", {"command": "step_down"}),
-        ("Stelle {device} {entity_name} auf 50 Prozent", "HassSetPosition", {"position": 50}),
-        # Query
-        ("Ist {device_nom} {entity_name} offen?", "HassGetState", {"state": "open"}),
-        ("Ist {device_nom} {entity_name} geschlossen?", "HassGetState", {"state": "closed"}),
-    ],
-    "climate": [
-        ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
-        ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
-        ("Stelle {device} {entity_name} auf 21 Grad", "HassClimateSetTemperature", {}),
-    ],
-    "switch": [
-        ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
-        ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
-        ("Mach {device} {entity_name} an", "HassTurnOn", {}),
-        ("Mach {device} {entity_name} aus", "HassTurnOff", {}),
-        ("Ist {device_nom} {entity_name} an?", "HassGetState", {}),
-        ("Ist {device_nom} {entity_name} aus?", "HassGetState", {}),
-    ],
-    "fan": [
-        ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
-        ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
-    ],
-    "media_player": [
-        ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
-        ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
-    ],
-    "automation": [
-        ("Aktiviere {device} {entity_name}", "HassTurnOn", {}),
-        ("Deaktiviere {device} {entity_name}", "HassTurnOff", {}),
-    ],
-}
 
 
 
@@ -552,6 +555,51 @@ class SemanticCacheBuilder:
             _LOGGER.info("[SemanticCache] Saved %d anchors to cache", len(anchors))
         except Exception as e:
             _LOGGER.error("[SemanticCache] Failed to save anchor cache: %s", e)
+
+    async def _create_anchor_entry(
+        self,
+        text: str,
+        intent: str,
+        slots: Dict[str, Any],
+        entity_ids: List[str] = None,
+        required_disambiguation: bool = False,
+        generated: bool = True
+    ) -> Optional[CacheEntry]:
+        """Create a cache entry with validation and embedding.
+        
+        Handles:
+        1. Minimum word count check
+        2. Numeric normalization
+        3. Embedding generation
+        4. CacheEntry instantiation
+        """
+        if len(text.split()) < MIN_CACHE_WORDS:
+            return None
+
+        # Normalize text for Generalized Number Matching
+        text_norm, _ = self._normalize_numeric_value(text)
+        if text_norm != text:
+            text = text_norm
+
+        _LOGGER.debug("[SemanticCache] Generating embedding for: '%s'", text)
+        embedding = await self._get_embedding(text)
+        if embedding is None:
+            _LOGGER.warning("[SemanticCache] Failed to generate embedding for anchor: '%s'", text)
+            return None
+
+        return CacheEntry(
+            text=text,
+            embedding=embedding.tolist(),
+            intent=intent,
+            entity_ids=entity_ids or [],
+            slots=slots,
+            required_disambiguation=required_disambiguation,
+            disambiguation_options=None,
+            hits=0,
+            last_hit="",
+            verified=True,
+            generated=generated,
+        )
 
     async def generate_anchors(self) -> List[CacheEntry]:
         """Generate semantic anchor entries for each domain × intent × area × entity.
@@ -663,84 +711,12 @@ class SemanticCacheBuilder:
         _LOGGER.info("[SemanticCache] Generating unique entity anchors...")
         forbidden_names = set(a.lower() for a in areas) | set(f.lower() for f in floors)
         
-        unique_added = 0
-        for name, count in global_name_counts.items():
-            if count != 1:
-                continue
-                
-            if name.lower() in forbidden_names:
-                continue
-                
-            # Valid unique entity
-            domain, entity_id = entities_by_name[name][0]
-            
-            # Fetch device word (accusative) and extract article
-            # e.g. "das Licht" -> "das"
-            device_word_acc = DOMAIN_DEVICE_WORDS_SINGULAR.get(domain, "das Gerät")
-            article_acc = device_word_acc.split()[0] if " " in device_word_acc else ""
-            
-            # Nominative (for queries)
-            device_word_nom = DOMAIN_DEVICE_WORDS_NOMINATIVE.get(domain, "das Gerät")
-            article_nom = device_word_nom.split()[0] if " " in device_word_nom else ""
-            # Dative
-            device_word_dat = DOMAIN_DEVICE_WORDS_DATIVE.get(domain, "dem Gerät")
-            article_dat = device_word_dat.split()[0] if " " in device_word_dat else ""
-            
-            unique_patterns = UNIQUE_ENTITY_PATTERNS.get(domain, [])
-            for pattern_template, intent, extra_slots in unique_patterns:
-                # Use just the article for natural phrasing: "Schalte das Ambilight an"
-                # Instead of "Schalte das Licht Ambilight an" (which is too verbose)
-                
-                # Accusative context
-                # Determine which article to use based on pattern
-                if "{device_nom}" in pattern_template:
-                    article = article_nom
-                elif "{device_dat}" in pattern_template:
-                    article = article_dat
-                else:
-                    article = article_acc
-                
-                text = pattern_template.format(
-                    device=article,
-                    device_nom=article_nom,
-                    device_dat=article_dat,
-                    entity_name=name
-                ).replace("  ", " ").strip() # Cleanup double spaces if article empty
-                
-                # Normalize text for Generalized Number Matching
-                text_norm, _ = self._normalize_numeric_value(text)
-                if text_norm != text:
-                    text = text_norm
-                
-                if len(text.split()) < MIN_CACHE_WORDS:
-                    continue
-
-                embedding = await self._get_embedding(text)
-                if embedding is None:
-                    continue
-
-                # Add to anchors
-                slots = extra_slots.copy()
-                slots["name"] = name
-                
-                new_anchors.append(
-                    CacheEntry(
-                        text=text,
-                        embedding=embedding.tolist(),
-                        intent=intent,
-                        entity_ids=[entity_id],
-                        slots=slots,
-                        required_disambiguation=False,
-                        disambiguation_options=None,
-                        hits=0,
-                        last_hit="",
-                        verified=True,
-                        generated=True,
-                    )
-                )
-                unique_added += 1
-
-        _LOGGER.info("[SemanticCache] Added %d unique entity anchors", unique_added)
+        new_anchors.extend(
+            await self._generate_unique_entity_anchors(
+                global_name_counts, entities_by_name, forbidden_names
+            )
+        )
+        
         
         # Track processed area+domain+intent combinations for area-scope (avoid duplicates)
         processed_area_domain_intent = set()
@@ -858,18 +834,6 @@ class SemanticCacheBuilder:
                 continue
             processed.add(text_key)
 
-            if len(text.split()) < MIN_CACHE_WORDS:
-                continue
-
-            # Normalize text for Generalized Number Matching
-            text_norm, _ = self._normalize_numeric_value(text)
-            if text_norm != text:
-                text = text_norm
-
-            embedding = await self._get_embedding(text)
-            if embedding is None:
-                continue
-
             slots = {"area": area_name, "domain": domain, **extra_slots}
             
             # Use all entities in the area
@@ -888,20 +852,17 @@ class SemanticCacheBuilder:
                 if not area_entity_ids:
                     continue
 
-            entry = CacheEntry(
+            entry = await self._create_anchor_entry(
                 text=text,
-                embedding=embedding.tolist(),
                 intent=intent,
-                entity_ids=area_entity_ids,
                 slots=slots,
+                entity_ids=area_entity_ids,
                 required_disambiguation=(len(area_entity_ids) > 1),
-                disambiguation_options=None,
-                hits=0,
-                last_hit="",
-                verified=True,
-                generated=True,
+                generated=True
             )
-            anchors.append(entry)
+            
+            if entry:
+                anchors.append(entry)
         
         return anchors
 
@@ -959,25 +920,18 @@ class SemanticCacheBuilder:
                 except KeyError:
                     continue
 
-                embedding = await self._get_embedding(text)
-                if embedding is None:
-                    continue
-
                 slots = {"area": area_name, "domain": domain, "name": entity_name, **extra_slots}
-                entry = CacheEntry(
+                
+                entry = await self._create_anchor_entry(
                     text=text,
-                    embedding=embedding.tolist(),
                     intent=intent,
-                    entity_ids=[entity_id],
                     slots=slots,
-                    required_disambiguation=False,
-                    disambiguation_options=None,
-                    hits=0,
-                    last_hit="",
-                    verified=True,
-                    generated=True,
+                    entity_ids=[entity_id],
+                    generated=True
                 )
-                anchors.append(entry)
+                
+                if entry:
+                    anchors.append(entry)
         
         return anchors
 
@@ -1017,18 +971,6 @@ class SemanticCacheBuilder:
                 continue
             processed.add(floor_key)
 
-            if len(text.split()) < MIN_CACHE_WORDS:
-                continue
-
-            # Normalize text for Generalized Number Matching
-            text_norm, _ = self._normalize_numeric_value(text)
-            if text_norm != text:
-                text = text_norm
-
-            embedding = await self._get_embedding(text)
-            if embedding is None:
-                continue
-
             slots = {"floor": floor_name, "domain": domain, **extra_slots}
             
             # Use all entities on the floor
@@ -1047,20 +989,17 @@ class SemanticCacheBuilder:
                 if not floor_entity_ids:
                     continue
 
-            entry = CacheEntry(
+            entry = await self._create_anchor_entry(
                 text=text,
-                embedding=embedding.tolist(),
                 intent=intent,
-                entity_ids=floor_entity_ids,
                 slots=slots,
+                entity_ids=floor_entity_ids,
                 required_disambiguation=(len(floor_entity_ids) > 1),
-                disambiguation_options=None,
-                hits=0,
-                last_hit="",
-                verified=True,
-                generated=True,
+                generated=True
             )
-            anchors.append(entry)
+            
+            if entry:
+                anchors.append(entry)
         
         return anchors
 
@@ -1070,26 +1009,100 @@ class SemanticCacheBuilder:
         
         for domain, patterns in GLOBAL_PHRASE_PATTERNS.items():
             for text, intent, extra_slots in patterns:
-                embedding = await self._get_embedding(text)
-                if embedding is None:
-                    continue
-                
                 slots = {"domain": domain}
                 slots.update(extra_slots)
                 
-                entry = CacheEntry(
+                entry = await self._create_anchor_entry(
                     text=text,
-                    embedding=embedding.tolist(),
                     intent=intent,
-                    entity_ids=[],
                     slots=slots,
-                    required_disambiguation=False,
-                    disambiguation_options=None,
-                    hits=0,
-                    last_hit="",
-                    verified=True,
-                    generated=True,
+                    entity_ids=[],
+                    generated=True
                 )
-                anchors.append(entry)
+                
+                if entry:
+                    anchors.append(entry)
         
+        return anchors
+
+
+    async def _generate_unique_entity_anchors(
+        self,
+        global_name_counts: Dict[str, int],
+        entities_by_name: Dict[str, List[Tuple[str, str]]],
+        forbidden_names: Set[str]
+    ) -> List[CacheEntry]:
+        """Generate anchors for globally unique entity names (without area context)."""
+        anchors = []
+        unique_added = 0
+        processed_count = 0
+
+        for name, count in global_name_counts.items():
+            if count != 1:
+                continue
+                
+            if name.lower() in forbidden_names:
+                continue
+            
+            processed_count += 1
+            if processed_count % 10 == 0:
+                 _LOGGER.debug("[SemanticCache] Processing unique entity %d: %s...", processed_count, name)
+                
+            # Valid unique entity
+            domain, entity_id = entities_by_name[name][0]
+            
+            # Fetch device word (accusative) and extract article
+            # e.g. "das Licht" -> "das"
+            device_word_acc = DOMAIN_DEVICE_WORDS_SINGULAR.get(domain, "das Gerät")
+            article_acc = device_word_acc.split()[0] if " " in device_word_acc else ""
+            
+            # Nominative (for queries)
+            device_word_nom = DOMAIN_DEVICE_WORDS_NOMINATIVE.get(domain, "das Gerät")
+            article_nom = device_word_nom.split()[0] if " " in device_word_nom else ""
+            # Dative
+            device_word_dat = DOMAIN_DEVICE_WORDS_DATIVE.get(domain, "dem Gerät")
+            article_dat = device_word_dat.split()[0] if " " in device_word_dat else ""
+            
+            # Use ENTITY_PHRASE_PATTERNS but filtered for NO AREA
+            entity_patterns = ENTITY_PHRASE_PATTERNS.get(domain, [])
+            
+            for pattern_template, intent, extra_slots in entity_patterns:
+                # SKIP if pattern requires {area}
+                if "{area}" in pattern_template:
+                    continue
+                
+                # Determine which article to use based on pattern
+                if "{device_nom}" in pattern_template:
+                    article = article_nom
+                elif "{device_dat}" in pattern_template:
+                    article = article_dat
+                else:
+                    article = article_acc
+                
+                try:
+                    text = pattern_template.format(
+                        device=article,
+                        device_nom=article_nom,
+                        device_dat=article_dat,
+                        entity_name=name
+                    ).replace("  ", " ").strip()
+                except KeyError:
+                    continue
+
+                slots = extra_slots.copy()
+                slots["name"] = name
+                
+                entry = await self._create_anchor_entry(
+                    text=text,
+                    intent=intent,
+                    slots=slots,
+                    entity_ids=[entity_id],
+                    generated=True
+                )
+                
+                if entry:
+                    anchors.append(entry)
+                    unique_added += 1
+
+        _LOGGER.info("[SemanticCache] Added %d unique entity anchors", unique_added)
         return anchors

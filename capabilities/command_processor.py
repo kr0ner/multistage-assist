@@ -18,6 +18,7 @@ from custom_components.multistage_assist.conversation_utils import (
     error_response,
     filter_candidates_by_state,
 )
+from ..constants.messages_de import QUESTION_TEMPLATES, SYSTEM_MESSAGES
 
 _LOGGER = logging.getLogger(__name__)
 

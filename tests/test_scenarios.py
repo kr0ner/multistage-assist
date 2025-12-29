@@ -5,12 +5,16 @@ They relied on the old Stage1Processor's _pending mechanism for disambiguation.
 """
 
 import pytest
-pytestmark = pytest.mark.skip(reason="Tests need rewrite for 4-stage architecture")
-
 from unittest.mock import MagicMock, AsyncMock, patch
-import pytest
 from homeassistant.components import conversation
 from homeassistant.helpers import intent
+
+from multistage_assist.conversation import MultiStageAssistAgent
+from multistage_assist.stage0 import Stage0Processor
+from multistage_assist.stage1_cache import Stage1CacheProcessor
+from multistage_assist.stage2_llm import Stage2LLMProcessor
+from multistage_assist.stage3_gemini import Stage3GeminiProcessor
+from multistage_assist import conversation_utils  # Import to patch
 
 from multistage_assist.conversation import MultiStageAssistAgent
 from multistage_assist.stage0 import Stage0Processor
@@ -56,7 +60,7 @@ def patch_make_response():
 
     # Patch the one used by Stage1 (relative import)
     p1 = patch(
-        "multistage_assist.stage1.make_response", side_effect=_mock_make_response
+        "multistage_assist.conversation.make_response", side_effect=_mock_make_response
     )
 
     # Configure the one used by CommandProcessor (mocked absolute import)
@@ -148,8 +152,8 @@ async def test_scenario_disambiguation(agent, hass):
             or "meinst du" in speech.lower()
         )
 
-        assert "test_id_1" in agent.stages[1]._pending
-        assert agent.stages[1]._pending["test_id_1"]["type"] == "disambiguation"
+        assert "test_id_1" in agent._execution_pending
+        assert agent._execution_pending["test_id_1"]["type"] == "disambiguation"
 
     # --- Turn 2 ---
     user_input2 = conversation.ConversationInput(
@@ -272,9 +276,9 @@ async def test_scenario_area_alias_learning(agent, hass):
         # If it fails, we might need to check if 'learning_data' was actually generated.
         # For now, let's assume if it executed, it's good, but we want to verify learning.
         if "merken" in speech.lower() or "alias" in speech.lower():
-            assert "test_id_3" in agent.stages[1]._pending
+            assert "test_id_3" in agent._execution_pending
             assert (
-                agent.stages[1]._pending["test_id_3"]["type"] == "learning_confirmation"
+                agent._execution_pending["test_id_3"]["type"] == "learning_confirmation"
             )
         else:
             print("WARNING: Learning confirmation not triggered in speech.")
@@ -293,7 +297,7 @@ async def test_scenario_area_alias_learning(agent, hass):
     with patch.object(agent.stages[0], "_dry_run_recognize", return_value=None):
         # Manually set pending state to ensure Turn 2 works reliably
         # This bypasses LLM non-determinism in Turn 1
-        agent.stages[1]._pending["test_id_3"] = {
+        agent._execution_pending["test_id_3"] = {
             "type": "learning_confirmation",
             "learning_type": "area",
             "source": "Gästebad",
@@ -340,8 +344,8 @@ async def test_scenario_disambiguation_with_memory(agent, hass):
         )
         assert "badezimmer" in speech.lower()
 
-        assert "test_id_4" in agent.stages[1]._pending
-        assert agent.stages[1]._pending["test_id_4"]["type"] == "disambiguation"
+        assert "test_id_4" in agent._execution_pending
+        assert agent._execution_pending["test_id_4"]["type"] == "disambiguation"
 
     # --- Turn 2 ---
     user_input2 = conversation.ConversationInput(
@@ -475,8 +479,8 @@ async def test_scenario_timer_multi_turn(agent, hass):
         # Should ask for duration
         assert "wie lange" in speech1.lower() or "dauer" in speech1.lower()
 
-        assert "test_id_7" in agent.stages[1]._pending
-        assert agent.stages[1]._pending["test_id_7"]["type"] == "timer"
+        assert "test_id_7" in agent._execution_pending
+        assert agent._execution_pending["test_id_7"]["type"] == "timer"
 
     # --- Turn 2: Provide duration ---
     user_input2 = conversation.ConversationInput(

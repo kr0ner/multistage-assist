@@ -133,6 +133,7 @@ TURN_OFF_POSITIVE_CASES: List[Tuple[str, str, Optional[str], str]] = [
     ("Schalte alle Lichter aus", "HassTurnOff", None, "global"),
     ("Mach alle Lichter aus", "HassTurnOff", None, "global"),
     ("Alle Lichter aus", "HassTurnOff", None, "global"),
+    ("Schalte alle Lampen im Haus aus", "HassTurnOff", None, "global"),
 ]
 
 LIGHT_SET_POSITIVE_CASES: List[Tuple[str, str, Optional[str], str]] = [

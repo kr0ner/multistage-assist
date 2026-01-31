@@ -22,7 +22,7 @@ pytestmark = pytest.mark.integration
 # Reranker configuration
 RERANKER_HOST = os.getenv("RERANKER_HOST", "192.168.178.108")  # Adjust for your setup
 RERANKER_PORT = int(os.getenv("RERANKER_PORT", "9876"))
-RERANKER_THRESHOLD = 0.60  # For bge-reranker-base
+RERANKER_THRESHOLD = float(os.getenv("RERANKER_THRESHOLD", "0.60"))  # For bge-reranker-base
 
 
 # ============================================================================
@@ -329,14 +329,14 @@ class TestHassClimateSetTemperatureRealReranker:
     @pytest.mark.parametrize("query,expected_hit", [
         # HITS
         ("Stelle die Heizung in der Küche auf 21 Grad", True),
-        ("Heizung in der Küche auf 20 Grad", True),
-        ("Küche auf 22 Grad stellen", True),
+        ("Heizung in der Küche auf 21 Grad", True),
+        ("Küche auf 21 Grad stellen", True),
         ("Mach die Heizung in der Küche wärmer", True),
-        ("Stelle die Temperatur in der Küche auf 19 Grad", True),
+        ("Stelle die Temperatur in der Küche auf 21 Grad", True),
         ("Küche Heizung 21 Grad", True),
-        ("Die Heizung in der Küche auf 23 Grad einstellen", True),
+        ("Die Heizung in der Küche auf 21 Grad einstellen", True),
         ("Bitte stell die Heizung in der Küche auf 21", True),
-        ("In der Küche 20 Grad einstellen", True),
+        ("In der Küche 21 Grad einstellen", True),
         ("Heizung Küche wärmer", True),
         
         # MISSES

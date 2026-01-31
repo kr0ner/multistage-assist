@@ -21,6 +21,7 @@ from .base_stage import BaseStage
 from .capabilities.clarification import ClarificationCapability
 from .capabilities.semantic_cache import SemanticCacheCapability
 from .capabilities.memory import MemoryCapability
+from .capabilities.entity_resolver import EntityResolverCapability
 from .stage_result import StageResult
 from .conversation_utils import with_new_text
 from .utils.german_utils import extract_delay, extract_duration
@@ -63,6 +64,7 @@ class Stage1CacheProcessor(BaseStage):
         ClarificationCapability,
         SemanticCacheCapability,
         MemoryCapability,
+        EntityResolverCapability,
     ]
 
     def __init__(self, hass, config):
@@ -171,6 +173,24 @@ class Stage1CacheProcessor(BaseStage):
             "[Stage1Cache] Cache HIT (%.3f): %s → %s",
             cached["score"], cached["intent"], cached["entity_ids"]
         )
+
+        # 5b. Check for Empty Entities (Global/Dynamic Anchors)
+        # Global anchors (e.g. "Schalte alle Lichter aus") are stored with empty entity_ids
+        # to force dynamic resolution at runtime (since "alle" changes).
+        # We must invoke EntityResolver if entity_ids are missing.
+        if not cached["entity_ids"] and cached.get("slots"):
+            _LOGGER.debug("[Stage1Cache] Cache hit has empty entities - attempting dynamic resolution...")
+            resolver_cap = self.get("entity_resolver")
+            resolution = await resolver_cap.run(user_input, entities=cached["slots"])
+            
+            if resolution.get("resolved_ids"):
+                cached["entity_ids"] = resolution["resolved_ids"]
+                _LOGGER.info(
+                    "[Stage1Cache] Dynamically resolved %d entities via Global/Dynamic fallback",
+                    len(cached["entity_ids"])
+                )
+            else:
+                _LOGGER.warning("[Stage1Cache] Failed to dynamically resolve entities for cache hit")
 
         # NOTE: Disambiguation is handled by ExecutionPipeline, not here.
         # Stage1 just returns success with entities - pipeline handles the rest.

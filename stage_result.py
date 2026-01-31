@@ -152,5 +152,3 @@ class StageResult:
             pending_data=data,
             raw_text=raw_text,
         )
-
-

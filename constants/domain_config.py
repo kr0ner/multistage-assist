@@ -246,7 +246,7 @@ DOMAIN_CONFIG: Dict[str, Dict[str, Any]] = {
         "name_de_plural": _get_name_de_plural(SENSOR_KEYWORDS),
         "device_word_de": _get_device_word_de(SENSOR_KEYWORDS),
         
-        "keywords": _extract_nouns(SENSOR_KEYWORDS) + ["grad", "warm", "kalt", "wieviel"],
+        "keywords": _extract_nouns(SENSOR_KEYWORDS) + ["grad", "warm", "heiß","kalt", "wieviel"],
         
         "intents": ["HassGetState"],
         

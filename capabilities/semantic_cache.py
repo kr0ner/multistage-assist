@@ -158,6 +158,12 @@ class SemanticCacheCapability(Capability):
 
         self._stats["total_lookups"] += 1
 
+        # Normalize text for generalized matching (same as store/build)
+        text_norm, _ = self._normalize_numeric_value(text)
+        if text_norm != text:
+             _LOGGER.debug("[SemanticCache] Generalized lookup: '%s' → '%s'", text, text_norm)
+             text = text_norm
+
         try:
             timeout = aiohttp.ClientTimeout(total=10)  # Reranker can take 4-5s
 

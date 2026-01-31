@@ -264,6 +264,14 @@ ENTITY_PHRASE_PATTERNS = {
         # Query (Unique)
         ("Ist {device_nom} {entity_name} an?", "HassGetState", {}),
         ("Ist {device_nom} {entity_name} aus?", "HassGetState", {}),
+        # NATURAL ENTITY PATTERNS (Without Device Word)
+        # "Ist Deckenlampe an?", "Schalte Stehlampe an"
+        ("Schalte {entity_name} in {area} an", "HassTurnOn", {}),
+        ("Schalte {entity_name} in {area} aus", "HassTurnOff", {}),
+        ("Ist {entity_name} in {area} an?", "HassGetState", {}),
+        ("Schalte {entity_name} an", "HassTurnOn", {}),
+        ("Schalte {entity_name} aus", "HassTurnOff", {}),
+        ("Ist {entity_name} an?", "HassGetState", {}),
     ],
     "cover": [
         ("Öffne {device} {entity_name} in {area}", "HassTurnOn", {}),
@@ -287,6 +295,13 @@ ENTITY_PHRASE_PATTERNS = {
         # Query (Unique)
         ("Ist {device_nom} {entity_name} offen?", "HassGetState", {"state": "open"}),
         ("Ist {device_nom} {entity_name} geschlossen?", "HassGetState", {"state": "closed"}),
+        # NATURAL ENTITY PATTERNS (Without Device Word)
+        ("Öffne {entity_name} in {area}", "HassTurnOn", {}),
+        ("Schließe {entity_name} in {area}", "HassTurnOff", {}),
+        ("Ist {entity_name} in {area} offen?", "HassGetState", {"state": "open"}),
+        ("Öffne {entity_name}", "HassTurnOn", {}),
+        ("Schließe {entity_name}", "HassTurnOff", {}),
+        ("Ist {entity_name} offen?", "HassGetState", {"state": "open"}),
     ],
     "climate": [
         ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
@@ -296,6 +311,13 @@ ENTITY_PHRASE_PATTERNS = {
         ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
         ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
         ("Stelle {device} {entity_name} auf 21 Grad", "HassClimateSetTemperature", {}),
+        # NATURAL ENTITY PATTERNS
+        ("Schalte {entity_name} in {area} an", "HassTurnOn", {}),
+        ("Schalte {entity_name} in {area} aus", "HassTurnOff", {}),
+        ("Stelle {entity_name} in {area} auf 21 Grad", "HassClimateSetTemperature", {}),
+        ("Schalte {entity_name} an", "HassTurnOn", {}),
+        ("Schalte {entity_name} aus", "HassTurnOff", {}),
+        ("Stelle {entity_name} auf 21 Grad", "HassClimateSetTemperature", {}),
     ],
     "switch": [
         ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
@@ -308,6 +330,13 @@ ENTITY_PHRASE_PATTERNS = {
         ("Mach {device} {entity_name} aus", "HassTurnOff", {}),
         ("Ist {device_nom} {entity_name} an?", "HassGetState", {}),
         ("Ist {device_nom} {entity_name} aus?", "HassGetState", {}),
+        # NATURAL ENTITY PATTERNS
+        ("Schalte {entity_name} in {area} an", "HassTurnOn", {}),
+        ("Schalte {entity_name} in {area} aus", "HassTurnOff", {}),
+        ("Ist {entity_name} in {area} an?", "HassGetState", {}),
+        ("Schalte {entity_name} an", "HassTurnOn", {}),
+        ("Schalte {entity_name} aus", "HassTurnOff", {}),
+        ("Ist {entity_name} an?", "HassGetState", {}),
     ],
     "fan": [
         ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
@@ -315,6 +344,11 @@ ENTITY_PHRASE_PATTERNS = {
         # UNIQUE
         ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
         ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
+        # NATURAL ENTITY PATTERNS
+        ("Schalte {entity_name} in {area} an", "HassTurnOn", {}),
+        ("Schalte {entity_name} in {area} aus", "HassTurnOff", {}),
+        ("Schalte {entity_name} an", "HassTurnOn", {}),
+        ("Schalte {entity_name} aus", "HassTurnOff", {}),
     ],
     "media_player": [
         ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
@@ -322,6 +356,11 @@ ENTITY_PHRASE_PATTERNS = {
         # UNIQUE
         ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
         ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
+        # NATURAL ENTITY PATTERNS
+        ("Schalte {entity_name} in {area} an", "HassTurnOn", {}),
+        ("Schalte {entity_name} in {area} aus", "HassTurnOff", {}),
+        ("Schalte {entity_name} an", "HassTurnOn", {}),
+        ("Schalte {entity_name} aus", "HassTurnOff", {}),
     ],
     "automation": [
         ("Aktiviere {device} {entity_name} in {area}", "HassTurnOn", {}),
@@ -329,6 +368,11 @@ ENTITY_PHRASE_PATTERNS = {
         # UNIQUE
         ("Aktiviere {device} {entity_name}", "HassTurnOn", {}),
         ("Deaktiviere {device} {entity_name}", "HassTurnOff", {}),
+        # NATURAL ENTITY PATTERNS
+        ("Aktiviere {entity_name} in {area}", "HassTurnOn", {}),
+        ("Deaktiviere {entity_name} in {area}", "HassTurnOff", {}),
+        ("Aktiviere {entity_name}", "HassTurnOn", {}),
+        ("Deaktiviere {entity_name}", "HassTurnOff", {}),
     ],
 }
 

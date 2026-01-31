@@ -161,7 +161,7 @@ class ExecutionPipeline:
         # Route based on pending type
         pending_type = pending_data.get("type", "disambiguation")
         
-        # Default: disambiguation
+        # Use CommandProcessor for all pending flows
         result = await self._processor.continue_disambiguation(
             user_input=user_input,
             pending_data=pending_data,

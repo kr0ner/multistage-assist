@@ -30,6 +30,11 @@ from ..constants.sensor_units import DEVICE_CLASS_UNITS
 
 _LOGGER = logging.getLogger(__name__)
 
+# Domains where "entities" are actually services and can't be exposed via
+# Settings → Voice Assistants → Expose. These bypass exposure filtering.
+# Example: notify.mobile_app_* are services discovered from the notify domain.
+SERVICE_DOMAINS = {"notify"}
+
 
 class EntityResolverCapability(Capability):
     """Resolve entities from NLU slots with area/floor and fuzzy matching."""
@@ -185,11 +190,15 @@ class EntityResolverCapability(Capability):
                 _LOGGER.debug("[EntityResolver] Filtered %d by device_class: %s", len(filtered_by_class), filtered_by_class)
 
         # Filter by exposure (entities must be exposed to conversation agent)
+        # Exception: service domains (like notify) can't be exposed via UI, so skip
         pre_count = len(resolved)
         before_expose = resolved.copy()
         resolved = [
             eid for eid in resolved
-            if async_should_expose(hass, CONVERSATION_DOMAIN, eid)
+            if (
+                eid.split(".")[0] in SERVICE_DOMAINS  # Service domains bypass exposure
+                or async_should_expose(hass, CONVERSATION_DOMAIN, eid)
+            )
         ]
         filtered_by_expose = [eid for eid in before_expose if eid not in resolved]
         if filtered_by_expose:

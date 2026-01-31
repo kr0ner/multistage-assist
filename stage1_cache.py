@@ -173,6 +173,24 @@ class Stage1CacheProcessor(BaseStage):
             "[Stage1Cache] Cache HIT (%.3f): %s → %s",
             cached["score"], cached["intent"], cached["entity_ids"]
         )
+        
+        # 5a. Check for ambiguous matches - escalate to LLM for reasoning
+        # When multiple cache entries match above threshold, let LLM decide
+        if cached.get("ambiguous_matches"):
+            ambiguous = cached["ambiguous_matches"]
+            _LOGGER.info(
+                "[Stage1Cache] %d ambiguous matches → escalate to LLM",
+                len(ambiguous)
+            )
+            return StageResult.escalate(
+                context={
+                    **context,
+                    "cache_ambiguous": True,
+                    "cache_candidates": ambiguous,
+                    "commands": commands,
+                },
+                raw_text=user_input.text,
+            )
 
         # 5b. Check for Empty Entities (Global/Dynamic Anchors)
         # Global anchors (e.g. "Schalte alle Lichter aus") are stored with empty entity_ids

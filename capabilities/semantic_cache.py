@@ -148,6 +148,7 @@ class SemanticCacheCapability(Capability):
             
         Returns:
             Dict with {intent, entity_ids, slots, score, ...} or None
+            If multiple matches are ambiguous, includes 'ambiguous_matches' list
         """
         if not self.enabled or not self.reranker_enabled:
             return None
@@ -170,7 +171,7 @@ class SemanticCacheCapability(Capability):
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
                     self._addon_url("/lookup"),
-                    json={"query": text},
+                    json={"query": text, "top_k": 3},  # Request top 3 matches
                 ) as resp:
                     if resp.status != 200:
                         _LOGGER.warning(
@@ -195,6 +196,34 @@ class SemanticCacheCapability(Capability):
 
         self._stats["cache_hits"] += 1
         
+        # Check for multiple ambiguous matches (new feature)
+        # If reranker returns 'matches' array, check for ambiguity
+        AMBIGUITY_THRESHOLD = 0.70
+        matches = data.get("matches", [])
+        
+        if matches:
+            # Filter matches above threshold
+            above_threshold = [m for m in matches if m.get("score", 0) >= AMBIGUITY_THRESHOLD]
+            
+            if len(above_threshold) > 1:
+                # Multiple matches above threshold - ambiguous!
+                _LOGGER.info(
+                    "[SemanticCache] AMBIGUOUS: %d matches above %.2f for '%s'",
+                    len(above_threshold), AMBIGUITY_THRESHOLD, text[:40]
+                )
+                # Return with ambiguous_matches flag for Stage1Cache to escalate
+                best = above_threshold[0]
+                return {
+                    "intent": best.get("intent"),
+                    "entity_ids": best.get("entity_ids", []),
+                    "slots": best.get("slots", {}),
+                    "score": best.get("score", 0),
+                    "original_text": best.get("original_text", ""),
+                    "source": "anchor" if best.get("is_anchor") else "learned",
+                    "ambiguous_matches": above_threshold,  # Include all candidates
+                }
+        
+        # Single match or no matches array - use legacy format
         result = {
             "intent": data["intent"],
             "entity_ids": data.get("entity_ids", []),

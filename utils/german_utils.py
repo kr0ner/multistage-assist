@@ -21,6 +21,27 @@ GERMAN_PREPOSITIONS: Set[str] = {
     "zum", "zur", "vom", "von", "für", "mit", "nach",
 }
 
+# Area indicators for multi-area detection (used in clarification bypass)
+AREA_INDICATORS: List[str] = [
+    "in der", "im", "in", "auf dem", "auf der",
+]
+
+# Floor keywords for detecting floor-based commands
+FLOOR_KEYWORDS: List[str] = [
+    "geschoss", "stock", "etage",
+]
+
+# Compound separator (used to detect multi-part commands)
+COMPOUND_SEPARATOR: str = " und "
+
+# Location indicators for detecting area references in compound commands
+LOCATION_INDICATORS: List[str] = [" in ", " im "]
+
+# Implicit phrases that need LLM transformation (e.g., "zu dunkel" → "Licht heller")
+IMPLICIT_PHRASES: List[str] = [
+    "zu dunkel", "zu hell", "zu kalt", "zu warm", "zu laut", "zu leise",
+]
+
 
 def nominative_to_accusative(phrase: str) -> str:
     """Convert nominative article to accusative case.

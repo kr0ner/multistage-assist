@@ -1,6 +1,13 @@
 import logging
 from typing import Any, Dict
 from .base import Capability
+from ..utils.german_utils import (
+    AREA_INDICATORS,
+    FLOOR_KEYWORDS,
+    COMPOUND_SEPARATOR,
+    LOCATION_INDICATORS,
+    IMPLICIT_PHRASES,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,52 +66,94 @@ Output: ["Schalte alle Lichter im Erdgeschoss aus", "Schalte alle Lichter im ers
         },
     }
 
+    def _has_multi_area_pattern(self, text: str) -> bool:
+        """Check if text contains multi-area pattern that needs splitting.
+        
+        Detects patterns like:
+        - "Küche und Büro" - two areas connected by und
+        - "im Wohnzimmer und im Schlafzimmer" - explicit multi-area
+        - "Erdgeschoss und Obergeschoss" - floor-based multi-area
+        
+        Does NOT trigger for:
+        - "Licht und Rollladen" - different devices in same area
+        - "auf 22 Grad und aus" - same area, different actions on same device
+        """
+        text_lower = text.lower()
+        
+        # Quick check: must contain compound separator
+        if COMPOUND_SEPARATOR not in text_lower:
+            return False
+        
+        # Split by separator and check if both sides look like area references
+        parts = text_lower.split(COMPOUND_SEPARATOR)
+        if len(parts) < 2:
+            return False
+        
+        # Heuristic: Check for area indicator words on both sides
+        # e.g., "im Wohnzimmer und im Schlafzimmer"
+        has_area_left = any(ind in parts[0] for ind in AREA_INDICATORS)
+        has_area_right = any(ind in parts[1] for ind in AREA_INDICATORS)
+        
+        if has_area_left and has_area_right:
+            return True
+        
+        # Check for floor patterns: "Erdgeschoss und Obergeschoss"
+        has_floor_pattern = (
+            any(kw in parts[0] for kw in FLOOR_KEYWORDS) and
+            any(kw in parts[1] for kw in FLOOR_KEYWORDS)
+        )
+        if has_floor_pattern:
+            return True
+        
+        # Check for same action different areas pattern (simplified)
+        # "Licht in der Küche an und im Flur aus"
+        # Both parts mention a location indicator
+        has_location_left = any(loc in parts[0] for loc in LOCATION_INDICATORS)
+        has_location_right = any(loc in parts[1] for loc in LOCATION_INDICATORS)
+        if has_location_left and has_location_right:
+            return True
+        
+        return False
+
     async def run(self, user_input, **kwargs):
         """
         Detect vague/ambiguous language and rewrite to something clearer.
+        
+        Default: NO split unless we detect clear indicators that splitting is needed.
+        This reduces LLM overhead for simple commands.
         """
         text = user_input.text.strip()
         _LOGGER.debug("[Clarification] Input: %s", text)
 
-        # Early bypass optimization: Skip LLM for very simple, short commands
-        # Only applies to commands with no separators and very few words
-        separators = [",", " and ", " und ", "oder", " or ", " dann "]
-        text_lower = f" {text.lower()} "  # Add spaces for word boundary matching
-        has_separator = any(sep in text_lower for sep in separators)
-
-        # Implicit phrases that ALWAYS need LLM transformation
-        implicit_phrases = ["zu dunkel", "zu hell", "zu kalt", "zu warm", "zu laut", "zu leise"]
-        needs_rephrasing = any(phrase in text_lower for phrase in implicit_phrases)
-        
-        # Calendar and timer commands should NEVER be split (unless they have compound separators)
-        # The LLM confuses time ranges like "15 Uhr bis 18 Uhr" as two separate events
-        from ..constants.entity_keywords import CALENDAR_KEYWORDS, TIMER_KEYWORDS
-        is_calendar_or_timer = any(kw in text_lower for kw in CALENDAR_KEYWORDS + TIMER_KEYWORDS)
-        
-        # Only bypass for calendar/timer if there's NO compound separator (und/and)
-        # "Timer für 10 Minuten und Licht aus" should still be split
-        if is_calendar_or_timer and not has_separator:
-            _LOGGER.debug("[Clarification] Calendar/timer command without separator, bypassing LLM")
-            return [text]
-
-        # For short commands without separators AND no implicit phrases, bypass LLM
-        # Conservative threshold - single commands rarely need rephrasing
+        text_lower = text.lower()
         word_count = len(text.split())
-        is_very_simple = word_count <= 8 and not has_separator and not needs_rephrasing
 
-        if is_very_simple:
-            _LOGGER.debug(
-                "[Clarification] Very simple command (%d words, no separators), bypassing LLM",
-                word_count,
+        # === REASON 1: Implicit phrases that ALWAYS need LLM transformation ===
+        needs_rephrasing = any(phrase in text_lower for phrase in IMPLICIT_PHRASES)
+        
+        if needs_rephrasing:
+            _LOGGER.debug("[Clarification] Implicit phrase detected, calling LLM")
+            return await self._safe_prompt(
+                self.PROMPT, {"user_input": text}, temperature=0.3
             )
-            # Return same format as _safe_prompt returns: just the list
-            return [text]
-
+        
+        # === REASON 2: Very long sentence (>20 words) likely needs splitting ===
+        if word_count > 20:
+            _LOGGER.debug("[Clarification] Long sentence (%d words), calling LLM", word_count)
+            return await self._safe_prompt(
+                self.PROMPT, {"user_input": text}, temperature=0.3
+            )
+        
+        # === REASON 3: Multi-area pattern detected ===
+        if self._has_multi_area_pattern(text):
+            _LOGGER.debug("[Clarification] Multi-area pattern detected, calling LLM")
+            return await self._safe_prompt(
+                self.PROMPT, {"user_input": text}, temperature=0.3
+            )
+        
+        # === DEFAULT: No split - return as single command ===
         _LOGGER.debug(
-            "[Clarification] Calling LLM - words: %d, has_separator: %s",
+            "[Clarification] Simple command (%d words), bypassing LLM",
             word_count,
-            has_separator,
         )
-        return await self._safe_prompt(
-            self.PROMPT, {"user_input": text}, temperature=0.3
-        )
+        return [text]

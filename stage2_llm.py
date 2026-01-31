@@ -11,11 +11,13 @@ Flow:
 """
 
 import logging
+import json
 from typing import Any, Dict, List, Optional
 
 from homeassistant.components import conversation
 
 from .base_stage import BaseStage
+from .const import CONF_STAGE1_IP, CONF_STAGE1_PORT, CONF_STAGE1_MODEL
 from .capabilities.keyword_intent import KeywordIntentCapability
 from .capabilities.entity_resolver import EntityResolverCapability
 from .capabilities.area_resolver import AreaResolverCapability
@@ -24,6 +26,7 @@ from .capabilities.clarification import ClarificationCapability
 from .capabilities.multi_turn_base import MultiTurnCapability
 from .capabilities.timer import TimerCapability
 from .capabilities.calendar import CalendarCapability
+from .capabilities.mcp import McpToolCapability
 from .stage_result import StageResult
 from .conversation_utils import with_new_text
 from .constants.messages_de import SYSTEM_MESSAGES
@@ -58,6 +61,7 @@ class Stage2LLMProcessor(BaseStage):
         MultiTurnCapability,
         TimerCapability,
         CalendarCapability,
+        McpToolCapability,
     ]
 
     def __init__(self, hass, config):
@@ -233,6 +237,19 @@ class Stage2LLMProcessor(BaseStage):
         _LOGGER.debug("[Stage2LLM] Resolved %d entities: %s", 
                      len(resolved_ids), resolved_ids)
 
+        if not resolved_ids:
+            # 4a. Try MCP Recovery (LLM-guided entity lookup)
+            mcp = self.get("mcp_tool")
+            if mcp:
+                 llm_config = {
+                     "ip": self.config.get(CONF_STAGE1_IP),
+                     "port": self.config.get(CONF_STAGE1_PORT),
+                     "model": self.config.get(CONF_STAGE1_MODEL),
+                 }
+                 resolved_ids = await mcp.resolve_entity_via_llm(
+                     user_input.text, slots, intent_name, domain, llm_config
+                 )
+            
         if not resolved_ids:
             # Intent resolved but no matching entities found
             # Return success with empty entities - ExecutionPipeline handles error response

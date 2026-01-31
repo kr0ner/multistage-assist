@@ -74,3 +74,41 @@ class OllamaClient:
 
         _LOGGER.warning("Unexpected Ollama response: %s", data)
         return ""
+
+    async def chat_completion(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: float = 0.25,
+        num_ctx: int = 1024,
+    ) -> str:
+        """Send a chat request with full message history."""
+        url = f"{self.base_url}/api/chat"
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "keep_alive": -1,
+            "options": {"num_ctx": num_ctx, "temperature": temperature},
+        }
+
+        try:
+            _LOGGER.debug(
+                "Querying Ollama at %s with payload:\n%s",
+                url,
+                json.dumps(payload, ensure_ascii=False, indent=2),
+            )
+        except Exception as e:
+            _LOGGER.debug("Failed to serialize payload for logging: %s", e)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, timeout=60) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+
+        if "message" in data and "content" in data["message"]:
+            return data["message"]["content"]
+        if "response" in data:
+            return data["response"]
+            
+        return ""

@@ -133,26 +133,29 @@ AREA_PHRASE_PATTERNS = {
         ("Ist {device_nom} in {area} an?", "HassGetState", {}),
         ("Brennt {device_nom} in {area}?", "HassGetState", {}),
         
-        # === DelayedControl - delayed on/off (no specific numbers - delay parsed separately) ===
+        # === DelayedControl - delayed on/off ===
         # "in X Minuten" / "um X Uhr" = execute AFTER delay
-        ("Schalte {device} in {area} in Minuten an", "DelayedControl", {"command": "on"}),
-        ("Schalte {device} in {area} in Minuten aus", "DelayedControl", {"command": "off"}),
-        ("Mach {device} in {area} in Minuten an", "DelayedControl", {"command": "on"}),
-        ("Mach {device} in {area} in Minuten aus", "DelayedControl", {"command": "off"}),
-        ("Schalte {device} in {area} um Uhr an", "DelayedControl", {"command": "on"}),
-        ("Schalte {device} in {area} um Uhr aus", "DelayedControl", {"command": "off"}),
-        ("Mach {device} in {area} um Uhr an", "DelayedControl", {"command": "on"}),
-        ("Mach {device} in {area} um Uhr aus", "DelayedControl", {"command": "off"}),
+        # Normalized to "10 Minuten" / "10 Uhr" in cache lookup
+        ("Schalte {device} in {area} in 10 Minuten an", "DelayedControl", {"command": "on"}),
+        ("Schalte {device} in {area} in 10 Minuten aus", "DelayedControl", {"command": "off"}),
+        ("Mach {device} in {area} in 10 Minuten an", "DelayedControl", {"command": "on"}),
+        ("Mach {device} in {area} in 10 Minuten aus", "DelayedControl", {"command": "off"}),
+        ("Schalte {device} in {area} um 10 Uhr an", "DelayedControl", {"command": "on"}),
+        ("Schalte {device} in {area} um 10 Uhr aus", "DelayedControl", {"command": "off"}),
+        ("Mach {device} in {area} um 10 Uhr an", "DelayedControl", {"command": "on"}),
+        ("Mach {device} in {area} um 10 Uhr aus", "DelayedControl", {"command": "off"}),
         
-        # === TemporaryControl - temporary on/off (no specific numbers - duration parsed separately) ===
+        # === TemporaryControl - temporary on/off ===
         # "für X Minuten" = execute NOW, revert after duration
-        ("Schalte {device} in {area} für Minuten an", "TemporaryControl", {"command": "on"}),
-        ("Schalte {device} in {area} für Minuten aus", "TemporaryControl", {"command": "off"}),
-        ("Mach {device} in {area} für Minuten an", "TemporaryControl", {"command": "on"}),
-        ("Mach {device} in {area} für Minuten aus", "TemporaryControl", {"command": "off"}),
-        ("{device} in {area} für Minuten an", "TemporaryControl", {"command": "on"}),
-        ("{device} in {area} für Minuten aus", "TemporaryControl", {"command": "off"}),
+        # Normalized to "10 Minuten" in cache lookup
+        ("Schalte {device} in {area} für 10 Minuten an", "TemporaryControl", {"command": "on"}),
+        ("Schalte {device} in {area} für 10 Minuten aus", "TemporaryControl", {"command": "off"}),
+        ("Mach {device} in {area} für 10 Minuten an", "TemporaryControl", {"command": "on"}),
+        ("Mach {device} in {area} für 10 Minuten aus", "TemporaryControl", {"command": "off"}),
+        ("{device} in {area} für 10 Minuten an", "TemporaryControl", {"command": "on"}),
+        ("{device} in {area} für 10 Minuten aus", "TemporaryControl", {"command": "off"}),
     ],
+
 
     "cover": [
         # === Cover Open ===
@@ -204,9 +207,9 @@ AREA_PHRASE_PATTERNS = {
         ("{device} in {area} aus", "HassTurnOff", {}),
         ("Mach {device} in {area} aus", "HassTurnOff", {}),
         ("Ist {device} in {area} an", "HassGetState", {}),
-        # DelayedControl (no specific numbers - delay parsed separately)
-        ("Schalte {device} in {area} in Minuten an", "DelayedControl", {"command": "on"}),
-        ("Schalte {device} in {area} in Minuten aus", "DelayedControl", {"command": "off"}),
+        # DelayedControl (normalized to "10 Minuten" in cache lookup)
+        ("Schalte {device} in {area} in 10 Minuten an", "DelayedControl", {"command": "on"}),
+        ("Schalte {device} in {area} in 10 Minuten aus", "DelayedControl", {"command": "off"}),
     ],
     "fan": [
         ("Schalte {device} in {area} an", "HassTurnOn", {}),

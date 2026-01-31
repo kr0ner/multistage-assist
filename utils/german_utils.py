@@ -470,9 +470,15 @@ def normalize_for_cache(text: str) -> Tuple[str, List]:
     Replaces variable numbers with canonical values for consistent cache lookup:
     - Percentages: "30%" → "50 Prozent"
     - Temperatures: "22 Grad" → "20 Grad"
-    - Temporal delays: "in 3 Minuten" → "in Minuten" (number stripped)
-    - Temporal times: "um 15:30 Uhr" → "um Uhr" (time stripped)
-    - Durations: "für 5 Minuten" → "für Minuten" (number stripped)
+    - ALL temporal expressions: normalized to "10 Minuten"
+      - "in 37 Sekunden" → "in 10 Minuten"
+      - "in 5 Minuten" → "in 10 Minuten"
+      - "für 2 Stunden" → "für 10 Minuten"
+      - "um 15:30 Uhr" → "um 10 Uhr"
+    
+    This ensures all time-based commands match the same cache entries,
+    regardless of actual duration. The original input is passed to
+    execution pipeline for actual timing.
     
     Uses duration_utils.py for consistent German duration parsing.
     
@@ -484,11 +490,16 @@ def normalize_for_cache(text: str) -> Tuple[str, List]:
         
     Examples:
         normalize_for_cache("Licht auf 30%") → ("Licht auf 50 Prozent", [30])
-        normalize_for_cache("in 5 Minuten aus") → ("in Minuten aus", [5])
+        normalize_for_cache("in 37 Sekunden aus") → ("in 10 Minuten aus", [37])
+        normalize_for_cache("für 5 Minuten an") → ("für 10 Minuten an", [5])
     """
     from .duration_utils import parse_german_duration
     
     extracted: List = []
+    
+    # Standard normalized time value
+    STANDARD_TIME = "10 Minuten"
+    STANDARD_CLOCK = "10 Uhr"
 
     def replace_percent(match):
         val = int(match.group(1))
@@ -501,30 +512,36 @@ def normalize_for_cache(text: str) -> Tuple[str, List]:
         return "20 Grad"
 
     def replace_delay(match):
-        # Use duration_utils for robust parsing
-        full_match = match.group(0)  # e.g., "in 3 Minuten"
+        # Extract original value for logging
+        full_match = match.group(0)  # e.g., "in 3 Minuten" or "in 37 Sekunden"
         duration_part = match.group(1) + " " + match.group(2)  # "3 Minuten"
         seconds = parse_german_duration(duration_part)
-        extracted.append(seconds // 60 if seconds >= 60 else seconds)  # Store minutes or seconds
-        # Return normalized form without number
-        unit = match.group(2)
-        return f"in {unit}"
+        extracted.append(seconds // 60 if seconds >= 60 else seconds)
+        # Return STANDARD time - always "10 Minuten" regardless of original unit
+        return f"in {STANDARD_TIME}"
 
     def replace_time(match):
         # Extract time: "um 15:30 Uhr" or "um 8 Uhr"
         time_str = match.group(1)
         extracted.append(time_str)
-        return "um Uhr"
+        # Return STANDARD clock time
+        return f"um {STANDARD_CLOCK}"
 
     def replace_duration(match):
-        # "für X Minuten" → temporary control duration
-        # Use duration_utils for robust parsing
-        duration_part = match.group(1) + " " + match.group(2)  # "3 Minuten"
+        # "für X Minuten/Sekunden/Stunden" → all normalized to "für 10 Minuten"
+        duration_part = match.group(1) + " " + match.group(2)
         seconds = parse_german_duration(duration_part)
         extracted.append(seconds // 60 if seconds >= 60 else seconds)
-        # Return normalized form without number
-        unit = match.group(2)
-        return f"für {unit}"
+        # Return STANDARD time - always "10 Minuten"
+        return f"für {STANDARD_TIME}"
+    
+    def replace_timer_duration(match):
+        # "auf X Minuten/Sekunden/Stunden" → all normalized to "auf 10 Minuten"
+        duration_part = match.group(1) + " " + match.group(2)
+        seconds = parse_german_duration(duration_part)
+        extracted.append(seconds // 60 if seconds >= 60 else seconds)
+        # Return STANDARD time - always "10 Minuten"
+        return f"auf {STANDARD_TIME}"
 
     # Percentage patterns
     text_norm = re.sub(r"(\d+)\s*%", replace_percent, text)
@@ -535,6 +552,7 @@ def normalize_for_cache(text: str) -> Tuple[str, List]:
     
     # Temporal delay patterns: "in 3 Minuten", "in einer Stunde", "in 10 Sekunden"
     # For DelayedControl - action AFTER delay
+    # ALL normalized to "in 10 Minuten"
     text_norm = re.sub(
         r"\bin\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
         replace_delay, text_norm, flags=re.IGNORECASE
@@ -542,13 +560,15 @@ def normalize_for_cache(text: str) -> Tuple[str, List]:
     
     # Temporal time patterns: "um 15:30 Uhr", "um 8 Uhr"
     # For DelayedControl - action at specific time
+    # Normalized to "um 10 Uhr"
     text_norm = re.sub(
         r"\bum\s+(\d{1,2}(?::\d{2})?)\s*Uhr\b",
         replace_time, text_norm, flags=re.IGNORECASE
     )
     
-    # Duration patterns: "für 3 Minuten", "für eine Stunde"
+    # Duration patterns: "für 3 Minuten", "für eine Stunde", "für 30 Sekunden"
     # For TemporaryControl - action NOW, revert after duration
+    # ALL normalized to "für 10 Minuten"
     text_norm = re.sub(
         r"\bfür\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
         replace_duration, text_norm, flags=re.IGNORECASE
@@ -556,9 +576,10 @@ def normalize_for_cache(text: str) -> Tuple[str, List]:
     
     # Timer duration patterns: "auf 5 Minuten", "Timer auf 10 Minuten"
     # For HassTimerSet
+    # ALL normalized to "auf 10 Minuten"
     text_norm = re.sub(
         r"\bauf\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
-        replace_duration, text_norm, flags=re.IGNORECASE
+        replace_timer_duration, text_norm, flags=re.IGNORECASE
     )
 
     return text_norm, extracted

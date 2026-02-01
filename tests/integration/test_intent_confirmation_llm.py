@@ -7,7 +7,6 @@ from homeassistant.components import conversation
 from multistage_assist.capabilities.intent_confirmation import (
     IntentConfirmationCapability,
 )
-from tests.integration import get_llm_config
 
 
 pytestmark = pytest.mark.integration
@@ -32,9 +31,9 @@ def hass():
 
 
 @pytest.fixture
-def confirmation_capability(hass):
+def confirmation_capability(hass, integration_llm_config):
     """Create intent confirmation capability with real LLM."""
-    return IntentConfirmationCapability(hass, get_llm_config())
+    return IntentConfirmationCapability(hass, integration_llm_config)
 
 
 def make_input(text: str):

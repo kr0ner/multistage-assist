@@ -3,24 +3,14 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import sys
-
-sys.path.insert(0, "/home/q355934/projects/multistage_assist")
-
-from capabilities.clarification import ClarificationCapability
+from multistage_assist.capabilities.clarification import ClarificationCapability
 from homeassistant.components import conversation
 
 
 @pytest.fixture
-def clarification_capability(hass):
+def clarification_capability(hass, integration_llm_config):
     """Create clarification capability instance."""
-    import os
-    config = {
-        "stage1_ip": os.environ.get("OLLAMA_HOST", "127.0.0.1"),
-        "stage1_port": int(os.environ.get("OLLAMA_PORT", "11434")),
-        "stage1_model": os.environ.get("OLLAMA_MODEL", "qwen3:4b-instruct"),
-    }
-    return ClarificationCapability(hass, config)
+    return ClarificationCapability(hass, integration_llm_config)
 
 
 @pytest.mark.parametrize(

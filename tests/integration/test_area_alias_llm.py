@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from homeassistant.components import conversation
 
 from multistage_assist.capabilities.area_resolver import AreaResolverCapability
-from tests.integration import get_llm_config
+
 
 
 pytestmark = pytest.mark.integration
@@ -25,7 +25,7 @@ def hass():
 
 
 @pytest.fixture
-def area_resolver_capability(hass):
+def area_resolver_capability(hass, integration_llm_config):
     """Create area resolver capability with real LLM and mocked registries."""
     
     # Create mock areas
@@ -54,7 +54,7 @@ def area_resolver_capability(hass):
         mock_floor_reg.async_list_floors.return_value = mock_floors
         mock_fr.async_get.return_value = mock_floor_reg
         
-        capability = AreaResolverCapability(hass, get_llm_config())
+        capability = AreaResolverCapability(hass, integration_llm_config)
         # Store patched registries so they persist
         capability._mock_ar = mock_ar
         capability._mock_fr = mock_fr

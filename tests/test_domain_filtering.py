@@ -8,7 +8,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from homeassistant.components import conversation
 
-from tests.integration import get_llm_config
+
 
 
 @pytest.fixture
@@ -84,11 +84,11 @@ class TestDomainFiltering:
     """Tests for proper domain filtering in the resolution pipeline."""
     
     @pytest.mark.asyncio
-    async def test_keyword_intent_returns_domain(self, hass):
+    async def test_keyword_intent_returns_domain(self, hass, integration_llm_config):
         """Test that keyword_intent returns domain at top level."""
         from multistage_assist.capabilities.keyword_intent import KeywordIntentCapability
         
-        cap = KeywordIntentCapability(hass, get_llm_config())
+        cap = KeywordIntentCapability(hass, integration_llm_config)
         user_input = make_input("Mache das Licht im Wohnzimmer heller")
         
         result = await cap.run(user_input)
@@ -98,11 +98,11 @@ class TestDomainFiltering:
         assert result.get("intent") == "HassLightSet"
     
     @pytest.mark.asyncio
-    async def test_intent_resolution_injects_domain_into_slots(self, hass):
+    async def test_intent_resolution_injects_domain_into_slots(self, hass, integration_llm_config):
         """Test that intent_resolution properly injects domain from keyword_intent."""
         from multistage_assist.capabilities.intent_resolution import IntentResolutionCapability
         
-        cap = IntentResolutionCapability(hass, get_llm_config())
+        cap = IntentResolutionCapability(hass, integration_llm_config)
         
         # Mock memory
         memory = MagicMock()
@@ -143,7 +143,7 @@ class TestDomainFiltering:
             f"Domain should be 'light' in slots, but got: {received_slots}"
     
     @pytest.mark.asyncio
-    async def test_brightness_command_only_returns_lights(self, hass):
+    async def test_brightness_command_only_returns_lights(self, hass, integration_llm_config):
         """
         Integration test: "Mache das Licht im Wohnzimmer heller" should only
         return light entities, not covers or sensors.
@@ -153,7 +153,7 @@ class TestDomainFiltering:
         """
         from multistage_assist.capabilities.keyword_intent import KeywordIntentCapability
         
-        cap = KeywordIntentCapability(hass, get_llm_config())
+        cap = KeywordIntentCapability(hass, integration_llm_config)
         user_input = make_input("Mache das Licht im Wohnzimmer heller")
         
         result = await cap.run(user_input)
@@ -170,11 +170,11 @@ class TestDomainFiltering:
         assert slots.get("brightness") == "step_up" or slots.get("command") == "step_up"
     
     @pytest.mark.asyncio 
-    async def test_clarification_transforms_zu_dunkel(self, hass):
+    async def test_clarification_transforms_zu_dunkel(self, hass, integration_llm_config):
         """Test that 'zu dunkel' is transformed to 'heller' command."""
         from multistage_assist.capabilities.clarification import ClarificationCapability
         
-        cap = ClarificationCapability(hass, get_llm_config())
+        cap = ClarificationCapability(hass, integration_llm_config)
         user_input = make_input("im Wohnzimmer ist es zu dunkel")
         
         result = await cap.run(user_input)
@@ -188,7 +188,7 @@ class TestDomainFiltering:
         assert "heller" in command or "licht" in command
     
     @pytest.mark.asyncio
-    async def test_full_flow_zu_dunkel_no_disambiguation(self, hass):
+    async def test_full_flow_zu_dunkel_no_disambiguation(self, hass, integration_llm_config):
         """
         Full integration test: "im Wohnzimmer ist es zu dunkel" should NOT
         trigger disambiguation between lights, covers, and sensors.
@@ -203,14 +203,14 @@ class TestDomainFiltering:
         from multistage_assist.capabilities.keyword_intent import KeywordIntentCapability
         
         # Step 1: Clarification
-        clarification_cap = ClarificationCapability(hass, get_llm_config())
+        clarification_cap = ClarificationCapability(hass, integration_llm_config)
         user_input = make_input("im Wohnzimmer ist es zu dunkel")
         
         clarified = await clarification_cap.run(user_input)
         assert isinstance(clarified, list) and len(clarified) > 0
         
         # Step 2: Keyword Intent (on clarified text)
-        keyword_cap = KeywordIntentCapability(hass, get_llm_config())
+        keyword_cap = KeywordIntentCapability(hass, integration_llm_config)
         clarified_input = make_input(clarified[0])
         
         ki_result = await keyword_cap.run(clarified_input)
@@ -238,11 +238,11 @@ class TestImplicitCommands:
         ("es ist zu hell", "dunkler"),
         ("im Büro ist es zu dunkel", "heller"),
     ])
-    async def test_implicit_brightness_transformation(self, hass, input_text, expected_direction):
+    async def test_implicit_brightness_transformation(self, hass, input_text, expected_direction, integration_llm_config):
         """Test that implicit brightness commands are transformed correctly."""
         from multistage_assist.capabilities.clarification import ClarificationCapability
         
-        cap = ClarificationCapability(hass, get_llm_config())
+        cap = ClarificationCapability(hass, integration_llm_config)
         user_input = make_input(input_text)
         
         result = await cap.run(user_input)

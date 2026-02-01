@@ -137,20 +137,22 @@ Output: ["Schalte alle Lichter im Erdgeschoss aus", "Schalte alle Lichter im ers
                 self.PROMPT, {"user_input": text}, temperature=0.3
             )
         
-        # === REASON 2: Very long sentence (>20 words) likely needs splitting ===
-        if word_count > 20:
+        # === REASON 2: Very long/complex warning likely needs splitting ===
+        # Reverted to 12 as per user feedback (short sentences w/o separator are corner cases)
+        if word_count > 12:
             _LOGGER.debug("[Clarification] Long sentence (%d words), calling LLM", word_count)
             return await self._safe_prompt(
                 self.PROMPT, {"user_input": text}, temperature=0.3
             )
         
-        # === REASON 3: Multi-area pattern detected ===
-        if self._has_multi_area_pattern(text):
-            _LOGGER.debug("[Clarification] Multi-area pattern detected, calling LLM")
-            return await self._safe_prompt(
+        # === REASON 3: Compound command containing "und", ",", or sequence "dann" ===
+        # Safety catch-all: ANY "und" or "," or "dann" might imply multiple actions
+        if any(sep in text_lower for sep in [COMPOUND_SEPARATOR, ",", "dann"]):
+             _LOGGER.debug("[Clarification] Compound separator detected, calling LLM")
+             return await self._safe_prompt(
                 self.PROMPT, {"user_input": text}, temperature=0.3
             )
-        
+
         # === DEFAULT: No split - return as single command ===
         _LOGGER.debug(
             "[Clarification] Simple command (%d words), bypassing LLM",

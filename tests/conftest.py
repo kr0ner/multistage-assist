@@ -660,3 +660,18 @@ def mock_conversation(hass):
         "async_unset_agent": mock_mod.async_unset_agent,
         "async_converse": mock_mod.async_converse,
     }
+
+
+@pytest.fixture
+def integration_llm_config():
+    """Get LLM configuration for integration tests (from environment)."""
+    import os
+    host = os.environ.get("OLLAMA_HOST", "127.0.0.1")
+    port = int(os.environ.get("OLLAMA_PORT", "11434"))
+    model = os.environ.get("OLLAMA_MODEL", "qwen3:4b-instruct")
+    
+    return {
+        "stage1_ip": host,
+        "stage1_port": port,
+        "stage1_model": model,
+    }

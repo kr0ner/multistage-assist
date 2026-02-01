@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from homeassistant.components import conversation
 
 from multistage_assist.capabilities.vacuum import VacuumCapability
-from tests.integration import get_llm_config
 
 
 @pytest.fixture
@@ -17,9 +16,9 @@ def hass():
 
 
 @pytest.fixture
-def vacuum_capability(hass):
+def vacuum_capability(hass, integration_llm_config):
     """Create vacuum capability with real LLM."""
-    return VacuumCapability(hass, get_llm_config())
+    return VacuumCapability(hass, integration_llm_config)
 
 
 def make_input(text: str):

@@ -79,11 +79,10 @@ def patch_make_response():
 
 
 @pytest.fixture
-def agent(hass, config_entry):
+def agent(hass, config_entry, integration_llm_config):
     """Create the agent with real stages and local Ollama."""
     # Update config entry to use Ollama from environment
-    from tests.integration import get_llm_config
-    llm_config = get_llm_config()
+    llm_config = integration_llm_config
     config_entry.data["stage1_ip"] = llm_config["stage1_ip"]
     config_entry.data["stage1_port"] = llm_config["stage1_port"]
     config_entry.data["stage1_model"] = llm_config["stage1_model"]

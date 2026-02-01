@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from homeassistant.components import conversation
 
 from multistage_assist.capabilities.calendar import CalendarCapability
-from tests.integration import get_llm_config
 
 
 @pytest.fixture
@@ -40,9 +39,9 @@ def hass():
 
 
 @pytest.fixture
-def calendar_capability(hass):
+def calendar_capability(hass, integration_llm_config):
     """Create calendar capability with real LLM."""
-    return CalendarCapability(hass, get_llm_config())
+    return CalendarCapability(hass, integration_llm_config)
 
 
 def make_input(text: str):

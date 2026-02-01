@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 from homeassistant.components import conversation
 
 from multistage_assist.capabilities.keyword_intent import KeywordIntentCapability
-from tests.integration import get_llm_config
 
 
 pytestmark = pytest.mark.integration
@@ -22,9 +21,9 @@ def hass():
 
 
 @pytest.fixture
-def keyword_intent_capability(hass):
+def keyword_intent_capability(hass, integration_llm_config):
     """Create keyword intent capability instance with real LLM."""
-    return KeywordIntentCapability(hass, get_llm_config())
+    return KeywordIntentCapability(hass, integration_llm_config)
 
 
 def make_input(text: str):

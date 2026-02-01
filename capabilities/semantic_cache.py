@@ -40,6 +40,8 @@ IMPLICIT_PATTERNS = [
     r"\bzu\s+heiß\b",
     r"\bes\s+ist\s+(dunkel|hell)\b",
     r"\b(dunkel|hell)\s+hier\b",
+    r"\bheller\b",  # relative command (bypasses cache to use current state)
+    r"\bdunkler\b", # relative command (bypasses cache to use current state)
 ]
 
 

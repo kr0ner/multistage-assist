@@ -81,6 +81,13 @@ class KeywordIntentCapability(Capability):
 - Do NOT put step_up/step_down in brightness slot!
 """
             + _TEMP_RULE + _DELAYED_RULE,
+            "examples": """User: "Licht in der Küche an"
+JSON: {"intent": "HassTurnOn", "slots": {"area": "Küche", "domain": "light", "command": "an"}}
+User: "Licht im Obergeschoss aus"
+JSON: {"intent": "HassTurnOff", "slots": {"floor": "Obergeschoss", "domain": "light", "command": "aus"}}
+User: "Mach das Licht im Büro heller"
+JSON: {"intent": "HassLightSet", "slots": {"area": "Büro", "command": "step_up", "domain": "light"}}
+"""
         },
         "cover": {
             "intents": [
@@ -92,6 +99,11 @@ class KeywordIntentCapability(Capability):
                 "DelayedControl",
             ],
             "rules": _TEMP_RULE + _DELAYED_RULE,
+            "examples": """User: "Rollo im Bad auf 50%"
+JSON: {"intent": "HassSetPosition", "slots": {"area": "Bad", "position": 50, "domain": "cover"}}
+User: "Rollläden im Schlafzimmer ganz zu"
+JSON: {"intent": "HassTurnOff", "slots": {"area": "Schlafzimmer", "domain": "cover"}}
+"""
         },
         "switch": {
             "intents": [
@@ -120,6 +132,11 @@ class KeywordIntentCapability(Capability):
         "sensor": {
             "intents": ["HassGetState"],
             "rules": "- device_class: required (temperature, humidity, power, energy, battery).\n- name: EMPTY unless specific.",
+            "examples": """User: "Wie warm ist es im Bad?"
+JSON: {"intent": "HassGetState", "slots": {"area": "Bad", "device_class": "temperature"}}
+User: "Wieviel Strom verbraucht der Fernseher?"
+JSON: {"intent": "HassGetState", "slots": {"name": "Fernseher", "device_class": "power"}}
+"""
         },
         "climate": {
             "intents": [
@@ -129,14 +146,24 @@ class KeywordIntentCapability(Capability):
                 "HassGetState",
             ],
             "rules": "",
+            "examples": """User: "Heizung im Büro auf 22 Grad"
+JSON: {"intent": "HassClimateSetTemperature", "slots": {"area": "Büro", "temperature": 22}}
+User: "Wie warm ist es im Wohnzimmer?"
+JSON: {"intent": "HassGetState", "slots": {"area": "Wohnzimmer", "device_class": "temperature"}}
+"""
         },
         "timer": {
             "intents": ["HassTimerSet"],
             "rules": "",
         },
         "vacuum": {
-            "intents": ["HassVacuumStart"],
+            "intents": ["HassVacuumStart", "HassVacuumReturnToBase"],
             "rules": "",
+            "examples": """User: "Staubsauger starten"
+JSON: {"intent": "HassVacuumStart", "slots": {"domain": "vacuum"}}
+User: "Saugroboter in die Küche"
+JSON: {"intent": "HassVacuumStart", "slots": {"domain": "vacuum", "area": "Küche"}}
+"""
         },
         "calendar": {
             "intents": ["HassCalendarCreate", "HassCreateEvent"],
@@ -263,21 +290,19 @@ class KeywordIntentCapability(Capability):
   - "Ist das Rollo geschlossen?" → {{"state": "closed"}}
   - "Ist das Rollo offen?" → {{"state": "open"}}"""
 
-        system = f"""Select Home Assistant intent for domain '{domain}'.
-Allowed: {', '.join(intents)}
-Slots (only include if non-empty): area, name, domain, floor, duration, command.
-Rules: {meta.get('rules', '')}
+        system = f"""You are a smart home assistant. Identify the intent and entities.
+Allowed Intents: {', '.join(intents)}
+Allowed Slots: area, name, domain, floor, duration, command, device_class, position, temperature, brightness.
 
-IMPORTANT:
-- Only fill 'name' if a SPECIFIC device is named (e.g., "Schreibtischlampe", "Deckenleuchte").
-- If generic words (Licht, Lampe, Rollo), leave 'name' EMPTY.{get_state_instructions}
-- **FLOOR vs AREA** (CRITICAL):
-  - Use 'floor' for: Erdgeschoss, Obergeschoss, Untergeschoss, Keller, EG, OG, UG, oben, unten, erster/zweiter Stock
-  - Use 'area' for rooms: Küche, Bad, Büro, Wohnzimmer, Schlafzimmer
-  - Examples:
-    - "Licht im Obergeschoss an" → {{"floor": "Obergeschoss"}} NOT area!
-    - "Rollläden im OG runter" → {{"floor": "OG"}}
-    - "Licht im Büro an" → {{"area": "Büro"}}
+Examples:
+{meta.get('examples', '')}
+
+Rules: {meta.get('rules', '')}
+- Use 'floor' for: Erdgeschoss, OG, Keller, oben, unten.
+- Use 'area' for rooms: Küche, Bad, Büro.
+- If generic words (Licht, Lampe), 'name' is EMPTY.
+- Do NOT use 'alle', 'alles', 'ganze' for 'area' or 'name'.
+{get_state_instructions}
 """
         data = await self._safe_prompt(
             {"system": system, "schema": self.SCHEMA}, {"user_input": text}
@@ -289,5 +314,11 @@ IMPORTANT:
         slots = data.get("slots") or {}
         if "domain" not in slots:
             slots["domain"] = domain
+            
+        # Post-processing: Remove "alle" from area/name if LLM put it there
+        if slots.get("area") and slots["area"].lower() in ("alle", "alles", "ganze", "gesamte", "sämtliche"):
+            slots["area"] = None
+        if slots.get("name") and slots["name"].lower() in ("alle", "alles", "ganze", "gesamte", "sämtliche"):
+            slots["name"] = None
 
         return {"domain": domain, "intent": data["intent"], "slots": slots}

@@ -12,6 +12,7 @@ from ..conversation_utils import (
     format_seconds_to_string,
 )
 from ..utils.response_builder import build_confirmation
+from ..utils.german_utils import FRACTION_MAPPINGS
 from .base import Capability
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,6 +37,23 @@ class IntentExecutorCapability(Capability):
             seconds = parse_duration_string(duration_raw)
             return (seconds // 60, seconds % 60)
         return (0, 0)
+
+    def _normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize parameters using German utils (fractions to integers)."""
+        if not params:
+            return {}
+        
+        normalized = params.copy()
+        # key candidates for normalization
+        for key in ["position", "brightness", "percentage"]:
+            if key in normalized:
+                val = normalized[key]
+                if isinstance(val, str):
+                    val_lower = val.lower().strip()
+                    if val_lower in FRACTION_MAPPINGS:
+                        normalized[key] = FRACTION_MAPPINGS[val_lower]
+                        _LOGGER.debug("[IntentExecutor] Normalized param '%s': '%s' -> %d", key, val, normalized[key])
+        return normalized
 
     def _check_script_exists(self, script_entity_id: str) -> bool:
         """Check if a script entity exists in Home Assistant."""
@@ -194,6 +212,7 @@ class IntentExecutorCapability(Capability):
         "HassVacuumStart": "turn_on",
         "HassMediaPause": "media_pause",
         "HassMediaResume": "media_play",
+        "HassTimerSet": "start",
     }
     
     async def _resolve_prerequisites(
@@ -400,6 +419,9 @@ class IntentExecutorCapability(Capability):
             effective_intent = intent_name
             domain = eid.split(".", 1)[0]
             current_params = params.copy()
+            
+            # --- NORMALIZE PARAMS (Fraction support) ---
+            current_params = self._normalize_params(current_params)
 
             # --- 1. SENSOR LOGIC ---
             if intent_name == "HassClimateGetTemperature" and domain == "sensor":
@@ -652,6 +674,37 @@ class IntentExecutorCapability(Capability):
                     resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
                     results.append((eid, resp))
                     continue
+
+            # --- 6. TIMER: Handle HassTimerSet directly via service call ---
+            if intent_name == "HassTimerSet":
+                minutes, seconds = self._extract_duration(current_params)
+                duration_sec = minutes * 60 + seconds
+                
+                if duration_sec > 0:
+                    try:
+                        await hass.services.async_call(
+                            "timer", "start",
+                            {"entity_id": eid, "duration": duration_sec},
+                            blocking=True
+                        )
+                        
+                        resp = ha_intent.IntentResponse(language=language)
+                        resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
+                        
+                        state_obj = hass.states.get(eid)
+                        name = state_obj.attributes.get("friendly_name", eid) if state_obj else eid
+                        
+                        speech = build_confirmation(
+                            "HassTimerSet",
+                            [name],
+                            params={"duration": f"{minutes} Minuten" if minutes > 0 else f"{seconds} Sekunden"}
+                        )
+                        resp.async_set_speech(speech)
+                        results.append((eid, resp))
+                        continue
+                    except Exception as e:
+                        _LOGGER.error("[IntentExecutor] Timer start failed for %s: %s", eid, e)
+                        # Fall through to let standard handler try (or fail)
 
             # Slots
             slots = {"name": {"value": eid}}

@@ -15,7 +15,7 @@ import os
 # Integration test Ollama configuration from environment
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "127.0.0.1")
 OLLAMA_PORT = int(os.environ.get("OLLAMA_PORT", "11434"))
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:4b-instruct")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:4b-q8_0")
 
 
 def get_llm_config():

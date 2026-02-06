@@ -75,7 +75,21 @@ class ExecutionPipeline:
         if not stage_result.intent:
             raise ValueError("ExecutionPipeline requires intent to be set")
 
-        # Handle empty entity_ids - generate user-facing error
+        # Handle empty entity_ids
+        if not stage_result.entity_ids:
+            # Global Query: "Welche Lichter sind an?" -> Check ALL entities in domain
+            if stage_result.intent == "HassGetState":
+                domain = stage_result.params.get("domain")
+                if domain:
+                    _LOGGER.info("[ExecutionPipeline] Global Query for domain '%s' -> checking all entities", domain)
+                    all_entities = self.hass.states.async_entity_ids(domain)
+                    if all_entities:
+                        stage_result.entity_ids = all_entities
+                        # Fall through to execution (IntentExecutor handles filtering by state)
+                    else:
+                        _LOGGER.warning("[ExecutionPipeline] No entities found for domain '%s'", domain)
+
+        # Re-check if still empty after global retry
         if not stage_result.entity_ids:
             requested_area = stage_result.params.get("requested_area", "")
             device_class = stage_result.params.get("requested_device_class", "")

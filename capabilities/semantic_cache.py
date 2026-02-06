@@ -92,7 +92,7 @@ class SemanticCacheCapability(Capability):
         await self._load_cache()
         
         # Initialize anchor cache via builder
-        from .semantic_cache_builder import SemanticCacheBuilder
+        from ..utils.semantic_cache_builder import SemanticCacheBuilder
         builder = SemanticCacheBuilder(
             self.hass, 
             self.config, 
@@ -200,7 +200,7 @@ class SemanticCacheCapability(Capability):
         
         # Check for multiple ambiguous matches (new feature)
         # If reranker returns 'matches' array, check for ambiguity
-        AMBIGUITY_THRESHOLD = 0.70
+        AMBIGUITY_THRESHOLD = 0.73
         matches = data.get("matches", [])
         
         if matches:

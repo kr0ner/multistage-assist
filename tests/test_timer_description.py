@@ -15,7 +15,7 @@ async def test_timer_description_extraction():
     config = {
         "stage1_ip": os.environ.get("OLLAMA_HOST", "127.0.0.1"),
         "stage1_port": int(os.environ.get("OLLAMA_PORT", "11434")),
-        "stage1_model": os.environ.get("OLLAMA_MODEL", "qwen3:4b-instruct"),
+        "stage1_model": os.environ.get("OLLAMA_MODEL", "qwen3:4b-q8_0"),
     }
 
     timer_cap = TimerCapability(hass, config)
@@ -54,7 +54,7 @@ async def test_timer_with_description_end_to_end(hass):
     config = {
         "stage1_ip": os.environ.get("OLLAMA_HOST", "127.0.0.1"),
         "stage1_port": int(os.environ.get("OLLAMA_PORT", "11434")),
-        "stage1_model": os.environ.get("OLLAMA_MODEL", "qwen3:4b-instruct"),
+        "stage1_model": os.environ.get("OLLAMA_MODEL", "qwen3:4b-q8_0"),
     }
 
     # Mock mobile services

@@ -7,6 +7,32 @@ needing LLM processing.
 The SemanticCacheCapability imports this builder for initial cache population.
 
 ================================================================================
+CRITICAL DESIGN PRINCIPLES - DO NOT VIOLATE
+================================================================================
+
+1. INTENT SEPARATION IS PARAMOUNT
+   - TurnOn shall NEVER be mistaken for TurnOff (and vice versa)
+   - Intent confusion is a critical failure
+
+2. NO MATCH IS ACCEPTABLE
+   - If we cannot find a confident match, return None
+   - Multiple equal-ranked matches should escalate, not guess
+
+3. WRONG ACTION IS UNACCEPTABLE
+   - Doing the wrong thing is a HUGE NO-GO
+   - A false positive is worse than a false negative
+
+4. ESCALATE RATHER THAN GUESS
+   - When uncertain, escalate to Stage 2 LLM
+   - Never execute a command we're not confident about
+
+5. ONLY EXPOSED ENTITIES
+   - Only entities exposed to Assist/Conversation should generate anchors
+   - async_should_expose must pass for every entity
+
+These principles prioritize PRECISION over RECALL.
+
+================================================================================
 ANCHOR GENERATION LOGIC - DO NOT MODIFY WITHOUT UNDERSTANDING THIS!
 ================================================================================
 
@@ -45,10 +71,22 @@ from typing import Any, Dict, List, Optional, Tuple, Set
 
 import numpy as np
 
-from ..utils.semantic_cache_types import (
+from .semantic_cache_types import (
     CacheEntry,
     MIN_CACHE_WORDS,
 )
+
+# Increment to force cache regeneration when patterns change
+CACHE_VERSION = 4
+
+# Import async_should_expose at module level for testability
+# Falls back to a function that always returns True if HA components not available
+try:
+    from homeassistant.components.homeassistant.exposed_entities import async_should_expose
+except ImportError:
+    def async_should_expose(hass, domain, entity_id):
+        """Fallback: always return True if exposure check unavailable."""
+        return True
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -64,461 +102,20 @@ _LOGGER = logging.getLogger(__name__)
 # Format: (pattern, intent, extra_slots)
 
 # AREA-SCOPE patterns: {device} + {area} → resolves to all entities in area
-AREA_PHRASE_PATTERNS = {
-    "light": [
-        # === HassTurnOn - multiple word orders ===
-        ("Schalte {device} in {area} an", "HassTurnOn", {}),
-        # Word order variants (troublesome patterns)
-        ("{device} in {area} an", "HassTurnOn", {}),  # "Licht in Küche an"
-        ("{device} an in {area}", "HassTurnOn", {}),  # "Licht an in der Küche"
-        ("Mach {device} in {area} an", "HassTurnOn", {}),  # "Mach das Licht in Küche an"
-        # Colloquial/informal
-        ("{area} {device} an", "HassTurnOn", {}),  # "Küche Licht an"
-        ("{device} {area} an", "HassTurnOn", {}),  # "Licht Küche an"
-        # Synonyms: Lampe, Beleuchtung, einschalten, Aktiviere
-        ("die Lampe in {area} an", "HassTurnOn", {}),
-        ("Lampe in {area} anschalten", "HassTurnOn", {}),
-        ("Mach die Lampe in {area} an", "HassTurnOn", {}),
-        ("{area} Lampe an", "HassTurnOn", {}),
-        ("Beleuchtung in {area} an", "HassTurnOn", {}),
-        ("Aktiviere Beleuchtung in {area}", "HassTurnOn", {}),
-        ("Aktiviere {device} in {area}", "HassTurnOn", {}),
-        ("{device} in {area} einschalten", "HassTurnOn", {}),
-        ("Mach mal {device} in {area} an", "HassTurnOn", {}),
-        # Colloquial "anmachen"
-        ("Kannst du {device} in {area} anmachen", "HassTurnOn", {}),
-        ("{device} in {area} anmachen", "HassTurnOn", {}),
-        
-        # === HassTurnOff - multiple word orders ===
-        ("Schalte {device} in {area} aus", "HassTurnOff", {}),
-        # Word order variants
-        ("{device} in {area} aus", "HassTurnOff", {}),  # "Licht in Küche aus"
-        ("{device} aus in {area}", "HassTurnOff", {}),  # "Licht aus in der Küche"
-        ("Mach {device} in {area} aus", "HassTurnOff", {}),  # "Mach das Licht in Küche aus"
-        # Colloquial/informal
-        ("{area} {device} aus", "HassTurnOff", {}),  # "Küche Licht aus"
-        ("{device} {area} aus", "HassTurnOff", {}),  # "Licht Küche aus"
-        # Synonyms: Lampe, Beleuchtung, ausschalten, Deaktiviere
-        ("die Lampe in {area} aus", "HassTurnOff", {}),
-        ("Lampe in {area} ausschalten", "HassTurnOff", {}),
-        ("Mach die Lampe in {area} aus", "HassTurnOff", {}),
-        ("{area} Lampe aus", "HassTurnOff", {}),
-        ("Beleuchtung in {area} aus", "HassTurnOff", {}),
-        ("Deaktiviere Beleuchtung in {area}", "HassTurnOff", {}),
-        ("Deaktiviere {device} in {area}", "HassTurnOff", {}),
-        ("{device} in {area} ausschalten", "HassTurnOff", {}),
-        ("Mach mal {device} in {area} aus", "HassTurnOff", {}),
-        
-        # === HassLightSet - formal brightness patterns ===
-        # Use dative case after 'von': "von dem Licht"
-        ("Erhöhe die Helligkeit von {device_dat} in {area}", "HassLightSet", {"command": "step_up"}),
-        ("Reduziere die Helligkeit von {device_dat} in {area}", "HassLightSet", {"command": "step_down"}),
-        ("Dimme {device} in {area} auf 50 Prozent", "HassLightSet", {"brightness": 50}),
-        # Informal brightness patterns - "heller/dunkler" variations
-        ("Mach {device} in {area} heller", "HassLightSet", {"command": "step_up"}),
-        ("Mach {device} in {area} dunkler", "HassLightSet", {"command": "step_down"}),
-        ("{device} in {area} heller", "HassLightSet", {"command": "step_up"}),
-        ("{device} in {area} dunkler", "HassLightSet", {"command": "step_down"}),
-        ("Dimme {device} in {area}", "HassLightSet", {"command": "step_down"}),
-        # More informal brightness variants
-        ("{device} heller in {area}", "HassLightSet", {"command": "step_up"}),
-        ("{device} dunkler in {area}", "HassLightSet", {"command": "step_down"}),
-        # "Mehr/Weniger" variants
-        ("Mehr Licht in {area}", "HassLightSet", {"command": "step_up"}),
-        ("Weniger Licht in {area}", "HassLightSet", {"command": "step_down"}),
-        ("Mehr Helligkeit in {area}", "HassLightSet", {"command": "step_up"}),
-        ("Weniger Helligkeit in {area}", "HassLightSet", {"command": "step_down"}),
-        
-        # === HassGetState (nominative + question mark) ===
-        ("Ist {device_nom} in {area} an?", "HassGetState", {}),
-        ("Brennt {device_nom} in {area}?", "HassGetState", {}),
-        
-        # === DelayedControl - delayed on/off ===
-        # "in X Minuten" / "um X Uhr" = execute AFTER delay
-        # Normalized to "10 Minuten" / "10 Uhr" in cache lookup
-        ("Schalte {device} in {area} in 10 Minuten an", "DelayedControl", {"command": "on"}),
-        ("Schalte {device} in {area} in 10 Minuten aus", "DelayedControl", {"command": "off"}),
-        ("Mach {device} in {area} in 10 Minuten an", "DelayedControl", {"command": "on"}),
-        ("Mach {device} in {area} in 10 Minuten aus", "DelayedControl", {"command": "off"}),
-        ("Schalte {device} in {area} um 10 Uhr an", "DelayedControl", {"command": "on"}),
-        ("Schalte {device} in {area} um 10 Uhr aus", "DelayedControl", {"command": "off"}),
-        ("Mach {device} in {area} um 10 Uhr an", "DelayedControl", {"command": "on"}),
-        ("Mach {device} in {area} um 10 Uhr aus", "DelayedControl", {"command": "off"}),
-        
-        # === TemporaryControl - temporary on/off ===
-        # "für X Minuten" = execute NOW, revert after duration
-        # Normalized to "10 Minuten" in cache lookup
-        ("Schalte {device} in {area} für 10 Minuten an", "TemporaryControl", {"command": "on"}),
-        ("Schalte {device} in {area} für 10 Minuten aus", "TemporaryControl", {"command": "off"}),
-        ("Mach {device} in {area} für 10 Minuten an", "TemporaryControl", {"command": "on"}),
-        ("Mach {device} in {area} für 10 Minuten aus", "TemporaryControl", {"command": "off"}),
-        ("{device} in {area} für 10 Minuten an", "TemporaryControl", {"command": "on"}),
-        ("{device} in {area} für 10 Minuten aus", "TemporaryControl", {"command": "off"}),
-    ],
 
 
-    "cover": [
-        # === Cover Open ===
-        ("Öffne {device} in {area}", "HassSetPosition", {"position": 100}),
-        ("{device} in {area} öffnen", "HassSetPosition", {"position": 100}),
-        ("{device} in {area} hoch", "HassSetPosition", {"position": 100}),
-        ("Mach {device} in {area} auf", "HassSetPosition", {"position": 100}),
-        # === Cover Close ===
-        ("Schließe {device} in {area}", "HassSetPosition", {"position": 0}),
-        ("{device} in {area} schließen", "HassSetPosition", {"position": 0}),
-        ("{device} in {area} runter", "HassSetPosition", {"position": 0}),
-        ("Mach {device} in {area} zu", "HassSetPosition", {"position": 0}),
-        # === Cover Step (formal) ===
-        ("Fahre {device} in {area} weiter hoch", "HassSetPosition", {"command": "step_up"}),
-        ("Fahre {device} in {area} weiter runter", "HassSetPosition", {"command": "step_down"}),
-        ("Stelle {device} in {area} auf 50 Prozent", "HassSetPosition", {"position": 50}),
-        # === Cover Step (relative - open more) ===
-        ("Öffne {device} in {area} ein bisschen mehr", "HassSetPosition", {"command": "step_up"}),
-        ("Öffne {device} in {area} ein wenig", "HassSetPosition", {"command": "step_up"}),
-        ("Öffne {device} in {area} etwas mehr", "HassSetPosition", {"command": "step_up"}),
-        ("{device} in {area} etwas mehr öffnen", "HassSetPosition", {"command": "step_up"}),
-        ("{device} in {area} ein bisschen mehr auf", "HassSetPosition", {"command": "step_up"}),
-        ("Mach {device} in {area} etwas weiter auf", "HassSetPosition", {"command": "step_up"}),
-        # === Cover Step (relative - close more) ===
-        ("Schließe {device} in {area} ein bisschen mehr", "HassSetPosition", {"command": "step_down"}),
-        ("Schließe {device} in {area} ein wenig", "HassSetPosition", {"command": "step_down"}),
-        ("Schließe {device} in {area} etwas mehr", "HassSetPosition", {"command": "step_down"}),
-        ("{device} in {area} etwas mehr schließen", "HassSetPosition", {"command": "step_down"}),
-        ("{device} in {area} ein bisschen mehr zu", "HassSetPosition", {"command": "step_down"}),
-        ("Mach {device} in {area} etwas weiter zu", "HassSetPosition", {"command": "step_down"}),
-        # === Cover State (nominative + question mark) ===
-        ("Ist {device_nom} in {area} offen?", "HassGetState", {}),
-        ("Sind {device} in {area} offen?", "HassGetState", {}),
-    ],
 
-    "climate": [
-        ("Schalte {device} in {area} an", "HassTurnOn", {}),
-        ("Schalte {device} in {area} aus", "HassTurnOff", {}),
-        ("Stelle {device} in {area} auf 21 Grad", "HassClimateSetTemperature", {}),
-        ("Mach es in {area} wärmer", "HassClimateSetTemperature", {"command": "step_up"}),
-        ("Mach es in {area} kälter", "HassClimateSetTemperature", {"command": "step_down"}),
-        ("Wie warm ist es in {area}", "HassGetState", {}),
-    ],
-    "switch": [
-        ("Schalte {device} in {area} an", "HassTurnOn", {}),
-        ("{device} in {area} an", "HassTurnOn", {}),
-        ("Mach {device} in {area} an", "HassTurnOn", {}),
-        ("Schalte {device} in {area} aus", "HassTurnOff", {}),
-        ("{device} in {area} aus", "HassTurnOff", {}),
-        ("Mach {device} in {area} aus", "HassTurnOff", {}),
-        ("Ist {device} in {area} an", "HassGetState", {}),
-        # DelayedControl (normalized to "10 Minuten" in cache lookup)
-        ("Schalte {device} in {area} in 10 Minuten an", "DelayedControl", {"command": "on"}),
-        ("Schalte {device} in {area} in 10 Minuten aus", "DelayedControl", {"command": "off"}),
-    ],
-    "fan": [
-        ("Schalte {device} in {area} an", "HassTurnOn", {}),
-        ("Schalte {device} in {area} aus", "HassTurnOff", {}),
-        ("Ist {device} in {area} an", "HassGetState", {}),
-    ],
-    "media_player": [
-        ("Schalte {device} in {area} an", "HassTurnOn", {}),
-        ("Schalte {device} in {area} aus", "HassTurnOff", {}),
-        ("Ist {device} in {area} an", "HassGetState", {}),
-    ],
-    "automation": [
-        ("Aktiviere {device} in {area}", "HassTurnOn", {}),
-        ("Deaktiviere {device} in {area}", "HassTurnOff", {}),
-        ("Ist {device} in {area} aktiv", "HassGetState", {}),
-    ],
-}
 
-# ENTITY-SCOPE patterns: {device} + {entity_name} + {area} → single entity
-# For rooms with multiple entities of same domain, e.g.:
-#   "Öffne den Rollladen Büro Nord im Büro" (specific)
-#   vs "Öffne die Rollläden im Büro" (all in area)
-# NOTE: {device} = accusative case, {device_nom} = nominative case (for questions)
-ENTITY_PHRASE_PATTERNS = {
-    "light": [
-        ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
-        ("Schalte {device} {entity_name} in {area} aus", "HassTurnOff", {}),
-        # Formal brightness patterns
-        ("Erhöhe die Helligkeit von {device} {entity_name} in {area}", "HassLightSet", {"command": "step_up"}),
-        ("Reduziere die Helligkeit von {device} {entity_name} in {area}", "HassLightSet", {"command": "step_down"}),
-        ("Dimme {device} {entity_name} in {area} auf 50 Prozent", "HassLightSet", {"brightness": 50}),
-        # Informal brightness patterns
-        ("Mach {device} {entity_name} in {area} heller", "HassLightSet", {"command": "step_up"}),
-        ("Mach {device} {entity_name} in {area} dunkler", "HassLightSet", {"command": "step_down"}),
-        ("{device} {entity_name} in {area} heller", "HassLightSet", {"command": "step_up"}),
-        ("{device} {entity_name} in {area} dunkler", "HassLightSet", {"command": "step_down"}),
-        # State query (nominative case + question mark)
-        ("Ist {device_nom} {entity_name} in {area} an?", "HassGetState", {}),
-        # UNIQUE (No Area)
-        ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
-        ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
-        ("Mach {device} {entity_name} an", "HassTurnOn", {}),
-        ("Mach {device} {entity_name} aus", "HassTurnOff", {}),
-        ("{device} {entity_name} an", "HassTurnOn", {}),
-        ("{device} {entity_name} aus", "HassTurnOff", {}),
-        # Formal brightness (Unique)
-        ("Erhöhe die Helligkeit von {device} {entity_name}", "HassLightSet", {"command": "step_up"}),
-        ("Reduziere die Helligkeit von {device} {entity_name}", "HassLightSet", {"command": "step_down"}),
-        ("Dimme {device} {entity_name} auf 50 Prozent", "HassLightSet", {"brightness": 50}),
-        # Informal brightness (Unique)
-        ("Mach {device} {entity_name} heller", "HassLightSet", {"command": "step_up"}),
-        ("Mach {device} {entity_name} dunkler", "HassLightSet", {"command": "step_down"}),
-        ("{device} {entity_name} heller", "HassLightSet", {"command": "step_up"}),
-        ("{device} {entity_name} dunkler", "HassLightSet", {"command": "step_down"}),
-        # Query (Unique)
-        ("Ist {device_nom} {entity_name} an?", "HassGetState", {}),
-        ("Ist {device_nom} {entity_name} aus?", "HassGetState", {}),
-        # NATURAL ENTITY PATTERNS (Without Device Word)
-        # "Ist Deckenlampe an?", "Schalte Stehlampe an"
-        ("Schalte {entity_name} in {area} an", "HassTurnOn", {}),
-        ("Schalte {entity_name} in {area} aus", "HassTurnOff", {}),
-        ("Ist {entity_name} in {area} an?", "HassGetState", {}),
-        ("Schalte {entity_name} an", "HassTurnOn", {}),
-        ("Schalte {entity_name} aus", "HassTurnOff", {}),
-        ("Ist {entity_name} an?", "HassGetState", {}),
-    ],
-    "cover": [
-        ("Öffne {device} {entity_name} in {area}", "HassTurnOn", {}),
-        ("Schließe {device} {entity_name} in {area}", "HassTurnOff", {}),
-        ("Fahre {device} {entity_name} in {area} weiter hoch", "HassSetPosition", {"command": "step_up"}),
-        ("Fahre {device} {entity_name} in {area} weiter runter", "HassSetPosition", {"command": "step_down"}),
-        ("Stelle {device} {entity_name} in {area} auf 50 Prozent", "HassSetPosition", {"position": 50}),
-        # State queries (nominative case + question mark)
-        ("Ist {device_nom} {entity_name} in {area} offen?", "HassGetState", {"state": "open"}),
-        ("Ist {device_nom} {entity_name} in {area} geschlossen?", "HassGetState", {"state": "closed"}),
-        # UNIQUE
-        ("Öffne {device} {entity_name}", "HassTurnOn", {}),
-        ("Schließe {device} {entity_name}", "HassTurnOff", {}),
-        ("Mach {device} {entity_name} auf", "HassTurnOn", {}),
-        ("Mach {device} {entity_name} zu", "HassTurnOff", {}),
-        ("Fahre {device} {entity_name} hoch", "HassTurnOn", {}),
-        ("Fahre {device} {entity_name} runter", "HassTurnOff", {}),
-        ("Fahre {device} {entity_name} weiter hoch", "HassSetPosition", {"command": "step_up"}),
-        ("Fahre {device} {entity_name} weiter runter", "HassSetPosition", {"command": "step_down"}),
-        ("Stelle {device} {entity_name} auf 50 Prozent", "HassSetPosition", {"position": 50}),
-        # Query (Unique)
-        ("Ist {device_nom} {entity_name} offen?", "HassGetState", {"state": "open"}),
-        ("Ist {device_nom} {entity_name} geschlossen?", "HassGetState", {"state": "closed"}),
-        # NATURAL ENTITY PATTERNS (Without Device Word)
-        ("Öffne {entity_name} in {area}", "HassTurnOn", {}),
-        ("Schließe {entity_name} in {area}", "HassTurnOff", {}),
-        ("Ist {entity_name} in {area} offen?", "HassGetState", {"state": "open"}),
-        ("Öffne {entity_name}", "HassTurnOn", {}),
-        ("Schließe {entity_name}", "HassTurnOff", {}),
-        ("Ist {entity_name} offen?", "HassGetState", {"state": "open"}),
-    ],
-    "climate": [
-        ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
-        ("Schalte {device} {entity_name} in {area} aus", "HassTurnOff", {}),
-        ("Stelle {device} {entity_name} in {area} auf 21 Grad", "HassClimateSetTemperature", {}),
-        # UNIQUE
-        ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
-        ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
-        ("Stelle {device} {entity_name} auf 21 Grad", "HassClimateSetTemperature", {}),
-        # NATURAL ENTITY PATTERNS
-        ("Schalte {entity_name} in {area} an", "HassTurnOn", {}),
-        ("Schalte {entity_name} in {area} aus", "HassTurnOff", {}),
-        ("Stelle {entity_name} in {area} auf 21 Grad", "HassClimateSetTemperature", {}),
-        ("Schalte {entity_name} an", "HassTurnOn", {}),
-        ("Schalte {entity_name} aus", "HassTurnOff", {}),
-        ("Stelle {entity_name} auf 21 Grad", "HassClimateSetTemperature", {}),
-    ],
-    "switch": [
-        ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
-        ("Schalte {device} {entity_name} in {area} aus", "HassTurnOff", {}),
-        ("Ist {device_nom} {entity_name} in {area} an?", "HassGetState", {}),
-        # UNIQUE
-        ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
-        ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
-        ("Mach {device} {entity_name} an", "HassTurnOn", {}),
-        ("Mach {device} {entity_name} aus", "HassTurnOff", {}),
-        ("Ist {device_nom} {entity_name} an?", "HassGetState", {}),
-        ("Ist {device_nom} {entity_name} aus?", "HassGetState", {}),
-        # NATURAL ENTITY PATTERNS
-        ("Schalte {entity_name} in {area} an", "HassTurnOn", {}),
-        ("Schalte {entity_name} in {area} aus", "HassTurnOff", {}),
-        ("Ist {entity_name} in {area} an?", "HassGetState", {}),
-        ("Schalte {entity_name} an", "HassTurnOn", {}),
-        ("Schalte {entity_name} aus", "HassTurnOff", {}),
-        ("Ist {entity_name} an?", "HassGetState", {}),
-    ],
-    "fan": [
-        ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
-        ("Schalte {device} {entity_name} in {area} aus", "HassTurnOff", {}),
-        # UNIQUE
-        ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
-        ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
-        # NATURAL ENTITY PATTERNS
-        ("Schalte {entity_name} in {area} an", "HassTurnOn", {}),
-        ("Schalte {entity_name} in {area} aus", "HassTurnOff", {}),
-        ("Schalte {entity_name} an", "HassTurnOn", {}),
-        ("Schalte {entity_name} aus", "HassTurnOff", {}),
-    ],
-    "media_player": [
-        ("Schalte {device} {entity_name} in {area} an", "HassTurnOn", {}),
-        ("Schalte {device} {entity_name} in {area} aus", "HassTurnOff", {}),
-        # UNIQUE
-        ("Schalte {device} {entity_name} an", "HassTurnOn", {}),
-        ("Schalte {device} {entity_name} aus", "HassTurnOff", {}),
-        # NATURAL ENTITY PATTERNS
-        ("Schalte {entity_name} in {area} an", "HassTurnOn", {}),
-        ("Schalte {entity_name} in {area} aus", "HassTurnOff", {}),
-        ("Schalte {entity_name} an", "HassTurnOn", {}),
-        ("Schalte {entity_name} aus", "HassTurnOff", {}),
-    ],
-    "automation": [
-        ("Aktiviere {device} {entity_name} in {area}", "HassTurnOn", {}),
-        ("Deaktiviere {device} {entity_name} in {area}", "HassTurnOff", {}),
-        # UNIQUE
-        ("Aktiviere {device} {entity_name}", "HassTurnOn", {}),
-        ("Deaktiviere {device} {entity_name}", "HassTurnOff", {}),
-        # NATURAL ENTITY PATTERNS
-        ("Aktiviere {entity_name} in {area}", "HassTurnOn", {}),
-        ("Deaktiviere {entity_name} in {area}", "HassTurnOff", {}),
-        ("Aktiviere {entity_name}", "HassTurnOn", {}),
-        ("Deaktiviere {entity_name}", "HassTurnOff", {}),
-    ],
-}
-
-# Import keywords to generate device words with articles
-from ..constants.entity_keywords import (
-    LIGHT_KEYWORDS,
-    COVER_KEYWORDS,
-    SWITCH_KEYWORDS,
-    FAN_KEYWORDS,
-    MEDIA_KEYWORDS,
-    SENSOR_KEYWORDS,
-    CLIMATE_KEYWORDS,
+# Import patterns from cache_patterns package
+from .cache_patterns.base import (
+    DOMAIN_DEVICE_WORDS,
+    DOMAIN_DEVICE_WORDS_SINGULAR,
+    DOMAIN_DEVICE_WORDS_NOMINATIVE,
+    DOMAIN_DEVICE_WORDS_DATIVE
 )
-
-def _get_first_keyword(keywords_dict):
-    """Get first keyword (singular form with article)."""
-    return next(iter(keywords_dict.keys()))
-
-def _get_first_plural(keywords_dict):
-    """Get first keyword's plural form with article."""
-    return next(iter(keywords_dict.values()))
-
-# Import german_utils helpers for article case conversion
-from ..utils.german_utils import nominative_to_accusative, nominative_to_dative, capitalize_article_phrase
-
-
-def _get_device_words(domain: str):
-    """Get device words for a domain in all grammatical cases.
-    
-    Returns tuple of (nominative, accusative, dative, plural) 
-    all properly capitalized.
-    
-    Uses entity_keywords.py as source of truth.
-    """
-    keyword_maps = {
-        "light": LIGHT_KEYWORDS,
-        "cover": COVER_KEYWORDS,
-        "climate": CLIMATE_KEYWORDS,
-        "switch": SWITCH_KEYWORDS,
-        "fan": FAN_KEYWORDS,
-        "media_player": MEDIA_KEYWORDS,
-        "sensor": SENSOR_KEYWORDS,
-    }
-    
-    if domain not in keyword_maps:
-        # Fallback for domains without keyword mapping
-        fallback = f"das {domain.title()}"
-        return (fallback, fallback, fallback, f"die {domain.title()}s")
-    
-    keywords = keyword_maps[domain]
-    singular_nom = _get_first_keyword(keywords)  # e.g. "der rollladen"
-    plural = _get_first_plural(keywords)          # e.g. "die rollläden"
-    
-    # Capitalize properly
-    singular_nom = capitalize_article_phrase(singular_nom)  # "der Rollladen"
-    plural = capitalize_article_phrase(plural)              # "die Rollläden"
-    
-    # Derive accusative and dative from nominative
-    singular_acc = nominative_to_accusative(singular_nom)   # "den Rollladen"
-    singular_dat = nominative_to_dative(singular_nom)       # "dem Rollladen"
-    
-    return (singular_nom, singular_acc, singular_dat, plural)
-
-
-# Build device word dictionaries dynamically from entity_keywords
-DOMAIN_DEVICE_WORDS = {}           # Plural (for area/floor scope)
-DOMAIN_DEVICE_WORDS_SINGULAR = {}  # Singular accusative (for commands)
-DOMAIN_DEVICE_WORDS_NOMINATIVE = {} # Singular nominative (for questions)
-DOMAIN_DEVICE_WORDS_DATIVE = {}     # Singular dative (for "von dem Licht")
-
-for _domain in ["light", "cover", "climate", "switch", "fan", "media_player", "sensor"]:
-    _nom, _acc, _dat, _plural = _get_device_words(_domain)
-    DOMAIN_DEVICE_WORDS[_domain] = _plural
-    DOMAIN_DEVICE_WORDS_SINGULAR[_domain] = _acc
-    DOMAIN_DEVICE_WORDS_NOMINATIVE[_domain] = _nom
-    DOMAIN_DEVICE_WORDS_DATIVE[_domain] = _dat
-
-# Add automation (not in entity_keywords)
-DOMAIN_DEVICE_WORDS["automation"] = "die Automatisierungen"
-DOMAIN_DEVICE_WORDS_SINGULAR["automation"] = "die Automatisierung"
-DOMAIN_DEVICE_WORDS_NOMINATIVE["automation"] = "die Automatisierung"
-DOMAIN_DEVICE_WORDS_DATIVE["automation"] = "der Automatisierung"
-
-# GLOBAL-SCOPE patterns: Domain-wide commands without area restriction
-# ⚠️ RULE: 1 ENTRY per domain + intent (same as AREA and ENTITY patterns)
-# Format: (text, intent, extra_slots)
-GLOBAL_PHRASE_PATTERNS = {
-    "light": [
-        ("Schalte alle Lichter aus", "HassTurnOff", {}),
-        ("Schalte alle Lichter an", "HassTurnOn", {}),
-        ("Mach alle Lichter heller", "HassLightSet", {"command": "step_up"}),
-        ("Mach alle Lichter dunkler", "HassLightSet", {"command": "step_down"}),
-        ("Dimme alle Lichter auf 50 Prozent", "HassLightSet", {"brightness": 50}),
-        ("Stelle alle Lichter auf 50 Prozent", "HassLightSet", {"brightness": 50}),
-        # Colloquial Global Match
-        ("Alle Lichter an", "HassTurnOn", {}),
-        ("Alle Lichter aus", "HassTurnOff", {}),
-        # State queries
-        ("Welche Lichter sind an?", "HassGetState", {"state": "on"}),
-        ("Welche Lichter sind aus?", "HassGetState", {"state": "off"}),
-        ("Sind alle Lichter an?", "HassGetState", {"state": "on"}),
-        ("Sind alle Lichter aus?", "HassGetState", {"state": "off"}),
-    ],
-    "cover": [
-        ("Schließe alle Rollläden", "HassTurnOff", {}),  # Close = TurnOff
-        ("Öffne alle Rollläden", "HassTurnOn", {}),  # Open = TurnOn
-        ("Fahre alle Rollläden weiter hoch", "HassSetPosition", {"command": "step_up"}),
-        ("Fahre alle Rollläden weiter runter", "HassSetPosition", {"command": "step_down"}),
-        ("Stelle alle Rollläden auf 50 Prozent", "HassSetPosition", {"position": 50}),
-        # State queries
-        ("Welche Rollläden sind offen?", "HassGetState", {"state": "open"}),
-        ("Welche Rollläden sind geschlossen?", "HassGetState", {"state": "closed"}),
-        ("Welche Rollläden sind zu?", "HassGetState", {"state": "closed"}),
-        ("Sind alle Rollläden offen?", "HassGetState", {"state": "open"}),
-        ("Sind alle Rollläden geschlossen?", "HassGetState", {"state": "closed"}),
-        ("Sind alle Rollläden zu?", "HassGetState", {"state": "closed"}),
-    ],
-    "switch": [
-        ("Schalte alle Schalter aus", "HassTurnOff", {}),
-        ("Schalte alle Schalter an", "HassTurnOn", {}),
-    ],
-    "fan": [
-        ("Schalte alle Ventilatoren aus", "HassTurnOff", {}),
-        ("Schalte alle Ventilatoren an", "HassTurnOn", {}),
-    ],
-    "media_player": [
-        ("Schalte alle Fernseher aus", "HassTurnOff", {}),
-        ("Schalte alle Fernseher an", "HassTurnOn", {}),
-    ],
-    "automation": [
-        ("Deaktiviere alle Automatisierungen", "HassTurnOff", {}),
-        ("Aktiviere alle Automatisierungen", "HassTurnOn", {}),
-    ],
-    # =========================================================================
-    # TIMER/CALENDAR - EXCLUDED FROM CACHE (see stage1_cache.py)
-    # =========================================================================
-    # Timer and calendar commands bypass cache because they often contain
-    # variable context that normalization strips out, e.g.:
-    #   "Timer auf 15 Minuten der mich an das Gulasch erinnert"
-    # The "der mich an das Gulasch erinnert" part is lost during normalization.
-    # LLM must handle these to preserve the full command context.
-    # =========================================================================
-}
+from .cache_patterns.area import AREA_PHRASE_PATTERNS
+from .cache_patterns.entity import ENTITY_PHRASE_PATTERNS
+from .cache_patterns.global_patterns import GLOBAL_PHRASE_PATTERNS
 
 # UNIQUE-ENTITY-SCOPE patterns: {device} + {entity_name} → single entity (NO AREA)
 # For entities with GLOBALLY UNIQUE names (e.g. "Ambilight", "Weihnachtsbaum")
@@ -569,6 +166,15 @@ class SemanticCacheBuilder:
 
             data = await self.hass.async_add_executor_job(_read)
             
+            # Version check - force regeneration if version mismatch
+            if data.get("version") != CACHE_VERSION:
+                _LOGGER.info(
+                    "[SemanticCache] Cache version mismatch (found %s, need %s). Regenerating.",
+                    data.get("version"),
+                    CACHE_VERSION
+                )
+                return False, []
+            
             # Load anchors (add-on handles model consistency)
             entries = []
             for entry_data in data.get("anchors", []):
@@ -589,7 +195,7 @@ class SemanticCacheBuilder:
         )
         
         data = {
-            "version": 2,
+            "version": CACHE_VERSION,
             "anchors": [asdict(e) for e in anchors],
         }
 
@@ -655,7 +261,7 @@ class SemanticCacheBuilder:
             List of generated CacheEntry objects
         """
         # Import INTENT_DATA from keyword_intent
-        from .keyword_intent import KeywordIntentCapability
+        from ..capabilities.keyword_intent import KeywordIntentCapability
         intent_data = KeywordIntentCapability.INTENT_DATA
 
         # Get areas from Home Assistant area registry
@@ -700,6 +306,16 @@ class SemanticCacheBuilder:
                 domain = entity.entity_id.split(".")[0]
                 if domain not in intent_data:
                     continue
+
+                # Check exposure to Assist/Conversation
+                try:
+                    exposed = async_should_expose(self.hass, "conversation", entity.entity_id)
+                    if not exposed:
+                        _LOGGER.debug(f"[SemanticCache] Skipping {entity.entity_id} (Not exposed)")
+                        continue
+                except Exception as e:
+                    # Fallback: If we can't verify exposure, INCLUDE IT (Fail Open for old HA versions)
+                    _LOGGER.debug(f"[SemanticCache] Exposure check unavailable for {entity.entity_id}: {e}. Including.")
 
                 area_name = None
                 floor_name = None

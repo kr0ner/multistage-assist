@@ -178,11 +178,30 @@ class Stage2LLMProcessor(BaseStage):
         domain = ki_data.get("domain")
 
         if not intent_name:
-            _LOGGER.debug("[Stage2LLM] No intent derived → escalate")
-            return StageResult.escalate(
-                context={**context, "llm_failed": True},
-                raw_text=user_input.text,
-            )
+            # Try MCP-based intent reasoning before escalating
+            mcp = self.get("mcp_tool")
+            if mcp:
+                llm_config = {
+                    "ip": self.config.get(CONF_STAGE1_IP),
+                    "port": self.config.get(CONF_STAGE1_PORT),
+                    "model": self.config.get(CONF_STAGE1_MODEL),
+                }
+                mcp_result = await mcp.resolve_intent_via_llm(user_input.text, llm_config)
+                if mcp_result and mcp_result.get("intent"):
+                    _LOGGER.info("[Stage2LLM] MCP reasoning resolved intent: %s", mcp_result["intent"])
+                    intent_name = mcp_result["intent"]
+                    slots = mcp_result.get("slots", {})
+                    domain = mcp_result.get("domain")
+                    # Continue to entity resolution below
+                else:
+                    _LOGGER.debug("[Stage2LLM] MCP reasoning failed → escalate")
+            
+            if not intent_name:
+                _LOGGER.debug("[Stage2LLM] No intent derived → escalate")
+                return StageResult.escalate(
+                    context={**context, "llm_failed": True},
+                    raw_text=user_input.text,
+                )
 
         _LOGGER.debug("[Stage2LLM] Intent='%s', domain='%s', slots=%s", 
                      intent_name, domain, list(slots.keys()))
@@ -474,26 +493,37 @@ class Stage2LLMProcessor(BaseStage):
                 raw_text=user_input.text,
             )
         
-        # Learn the alias
-        resolver = self.get("area_resolver")
-        await resolver.learn_area_alias(unknown_alias, matched_area)
+        # Update slots with resolved area
+        original_slots = pending_data.get("original_slots", {}).copy()
+        original_slots["area"] = matched_area
+
+        # Entity Resolution for the new area
+        resolver = self.get("entity_resolver")
+        entities_for_resolver = {**original_slots, "intent": pending_data.get("intent", "")}
+        if pending_data.get("domain"):
+             entities_for_resolver["domain"] = pending_data["domain"]
+
+        resolved = await resolver.run(user_input, entities=entities_for_resolver)
+        resolved_ids = (resolved or {}).get("resolved_ids", [])
         
-        _LOGGER.info("[Stage2LLM] Learned area alias: '%s' → '%s'", unknown_alias, matched_area)
+        _LOGGER.info("[Stage2LLM] Resolved %d entities for alias '%s' -> '%s'", 
+                     len(resolved_ids), unknown_alias, matched_area)
         
-        # Return success with context for re-running original command
-        # The original_text will be processed through pipeline again
+        # Return success with learning request (CommandProcessor will ask for confirmation)
+        # We do NOT learn here - we wait for user confirmation
         return StageResult.success(
             intent=pending_data.get("intent", ""),
-            entity_ids=[],  # Will be resolved when original command re-runs
+            entity_ids=resolved_ids,
             params={
-                "learned_alias": unknown_alias,
-                "learned_area": matched_area,
-                "original_text": original_text,
-                "rerun_command": True,  # Signal to conversation.py to re-run
+                **original_slots,
             },
             context={
-                "area_learned": True,
-                "from_stage2": True,
+                "area_learned": True, # Flag that we bridged an unknown area
+                "learning_data": {
+                    "type": "area",
+                    "source": unknown_alias,
+                    "target": matched_area
+                }
             },
             raw_text=original_text,
         )

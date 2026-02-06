@@ -6,7 +6,7 @@ and yes/no response detection.
 
 import re
 from datetime import date, datetime, timedelta
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 
 # --- Articles and Prepositions ---
@@ -40,6 +40,43 @@ LOCATION_INDICATORS: List[str] = [" in ", " im "]
 # Implicit phrases that need LLM transformation (e.g., "zu dunkel" → "Licht heller")
 IMPLICIT_PHRASES: List[str] = [
     "zu dunkel", "zu hell", "zu kalt", "zu warm", "zu laut", "zu leise",
+]
+
+# Exit commands to abort operation immediately
+EXIT_COMMANDS: Set[str] = {
+    "abbruch", "stop", "vergiss es", "cancel", "halt", "beenden", "abbrechen",
+}
+
+# Fraction mappings for position/brightness normalization
+FRACTION_MAPPINGS: Dict[str, int] = {
+    "hälfte": 50,
+    "halb": 50,
+    "viertel": 25,
+    "dreiviertel": 75,
+    "ganz": 100,  # Context dependent, handled in executor
+    "voll": 100,
+}
+
+# State translations for user-facing responses
+STATE_TRANSLATIONS: Dict[str, str] = {
+    "closing": "schließt",
+    "opening": "öffnet",
+    "buffering": "lädt",
+    "playing": "spielt",
+    "paused": "pausiert",
+    "idle": "inaktiv",
+    "off": "aus",
+    "on": "an",
+    "open": "offen",
+    "closed": "geschlossen",
+    "unavailable": "nicht verfügbar",
+}
+
+# Prompts used for alias learning confirmation
+LEARNING_CONFIRMATION_PROMPTS: List[str] = [
+    "Soll ich mir das für die Zukunft merken?",
+    "Soll ich das als neuen Namen speichern?",
+    "Möchtest du, dass ich mir diese Bezeichnung merke?",
 ]
 
 

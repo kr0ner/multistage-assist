@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 # Conversation timeout constants
 PENDING_TIMEOUT_SECONDS = 15  # Ask again after 15 seconds
 PENDING_MAX_RETRIES = 2  # Give up after 2 retries (total 30 seconds)
+PENDING_ABSOLUTE_TIMEOUT = 300 # Discard pending state if older than 5 mins (prevents zombies)
 
 from homeassistant.components import conversation
 
@@ -28,6 +29,7 @@ from .stage_result import StageResult
 from .execution_pipeline import ExecutionPipeline
 from .conversation_utils import with_new_text, make_response
 from .constants.messages_de import SYSTEM_MESSAGES
+from .utils.german_utils import EXIT_COMMANDS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -109,6 +111,16 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
         _LOGGER.info("Received utterance: %s", user_input.text)
         
         conv_id = user_input.conversation_id or "default"
+        text_lower = user_input.text.strip().lower()
+
+        # ZERO: Check for global exit commands
+        # Matches against exact set {"abbruch", "stop", ...} or checks if it starts with "abbruch "
+        if text_lower in EXIT_COMMANDS or any(text_lower.startswith(cmd + " ") for cmd in EXIT_COMMANDS):
+            _LOGGER.info("[Pipeline] Global exit command detected: '%s'", user_input.text)
+            if conv_id in self._execution_pending:
+                del self._execution_pending[conv_id]
+                _LOGGER.info("[Pipeline] Cleared pending state for %s", conv_id)
+            return await make_response("Vorgang abgebrochen.", user_input)
         
         # CLEANUP: Remove any stale pending states from OTHER conversations
         self._cleanup_stale_pending(current_conv_id=conv_id)
@@ -124,7 +136,13 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
             # Check if this pending is stale (user took too long to respond)
             if created_at:
                 age = time.time() - created_at
-                if age > PENDING_TIMEOUT_SECONDS:
+                
+                # Zombie Check: If very old, discard completely
+                if age > PENDING_ABSOLUTE_TIMEOUT:
+                     _LOGGER.info("[Pipeline] Pending state too old (%.1fs > %ds) - discarding zombie", age, PENDING_ABSOLUTE_TIMEOUT)
+                     # Fall through to process new command fresh (drop pending)
+                
+                elif age > PENDING_TIMEOUT_SECONDS:
                     if retry_count >= PENDING_MAX_RETRIES:
                         # Too many retries - give up and start fresh
                         _LOGGER.info("[Pipeline] Pending timeout after %d retries, clearing state", retry_count)

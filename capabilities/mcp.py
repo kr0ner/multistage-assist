@@ -10,6 +10,14 @@ from homeassistant.core import HomeAssistant
 
 from .base import Capability
 
+# Import exposure check
+try:
+    from homeassistant.components.homeassistant.exposed_entities import async_should_expose
+except ImportError:
+    def async_should_expose(hass, conversation_agent_id, entity_id):
+        """Fallback: always return True."""
+        return True
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -80,6 +88,11 @@ class McpToolCapability(Capability):
         for entry in er_reg.entities.values():
             if entry.disabled_by:
                 continue
+            
+            # Check exposure
+            if not async_should_expose(self.hass, "conversation", entry.entity_id):
+                continue
+
                 
             # Filter by Domain
             if domain and entry.domain != domain:
@@ -127,6 +140,64 @@ class McpToolCapability(Capability):
                 
         return results
 
+    async def list_automations(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """List all available automations."""
+        er_reg = er.async_get(self.hass)
+        results = []
+        
+        # Get all automation entities
+        automations = [e for e in er_reg.entities.values() if e.domain == "automation"]
+        
+        # Iterate and verify exposure
+        for entry in automations:
+            # Check exposure relative to "conversation" agent
+            if not async_should_expose(self.hass, "conversation", entry.entity_id):
+                continue
+                
+            state = self.hass.states.get(entry.entity_id)
+            name = entry.original_name or entry.name or entry.entity_id
+            if state and state.attributes.get("friendly_name"):
+                name = state.attributes.get("friendly_name")
+            
+            description = state.attributes.get("description", "") if state else ""
+            
+            results.append({
+                "entity_id": entry.entity_id,
+                "name": name,
+                "description": description,
+                "state": state.state if state else "unknown"
+            })
+            
+            if len(results) >= limit:
+                break
+                
+        return results
+
+    async def get_automation_details(self, entity_id: str) -> Dict[str, Any]:
+        """Get detailed configuration of an automation."""
+        state = self.hass.states.get(entity_id)
+        if not state:
+            return {"error": "Automation not found"}
+        
+        # Verify exposure
+        if not async_should_expose(self.hass, "conversation", entity_id):
+             return {"error": "Automation not exposed to voice"}
+
+        er_reg = er.async_get(self.hass)
+        entry = er_reg.async_get(entity_id)
+        
+        # Try to get existing config if possible (limited access from HA core)
+        # We return attributes which might contain useful info
+        details = {
+            "entity_id": entity_id,
+            "name": state.attributes.get("friendly_name", entity_id),
+            "state": state.state,
+            "last_triggered": str(state.attributes.get("last_triggered", "never")),
+            "mode": state.attributes.get("mode", "single"),
+            "attributes": dict(state.attributes)
+        }
+        return details
+
     async def get_entity_details(self, entity_id: str) -> Dict[str, Any]:
         """Get detailed info about a specific entity."""
         state = self.hass.states.get(entity_id)
@@ -155,8 +226,218 @@ class McpToolCapability(Capability):
             
         return details
 
-    def get_tools(self) -> List[Dict[str, Any]]:
-        """Return tool definitions (compatible with Gemini/OpenAI)."""
+    def get_tools(self, intent: str = None, domain: str = None) -> List[Dict[str, Any]]:
+        """Return tool definitions (compatible with Gemini/OpenAI).
+        
+        Args:
+            intent: Optional intent context to filter tools
+            domain: Optional domain context to filter tools
+        """
+        tools = []
+        
+        # 1. Area Tools (Always useful)
+        tools.append({
+            "name": "list_areas",
+            "description": "List all areas (rooms) in the smart home with their floors.",
+            "parameters": {"type": "object", "properties": {}}
+        })
+        
+        # 2. Automation Tools (Only if domain is automation or unknown)
+        if not domain or domain == "automation":
+            tools.extend([
+                {
+                    "name": "list_automations",
+                    "description": "List all automations exposed to voice assistants.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {"type": "integer", "description": "Max results (default 50)"}
+                        }
+                    }
+                },
+                {
+                    "name": "get_automation_details",
+                    "description": "Get details/config of a specific automation.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "entity_id": {"type": "string", "description": "The automation entity ID"}
+                        },
+                        "required": ["entity_id"]
+                    }
+                }
+            ])
+            
+        # 3. Entity Tools (Only if domain is NOT automation)
+        if domain != "automation":
+            tools.extend([
+                {
+                    "name": "list_entities",
+                    "description": "List entities filtered by domain, area name, or device class.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "domain": {"type": "string", "description": "Filter by domain (light, cover, switch, climate, sensor)"},
+                            "area_name": {"type": "string", "description": "Filter by area/room name"},
+                            "device_class": {"type": "string", "description": "Filter by device class (temperature, humidity, power)"},
+                            "limit": {"type": "integer", "description": "Max results (default 50)"}
+                        }
+                    }
+                },
+                {
+                    "name": "get_entity_details",
+                    "description": "Get detailed info about a specific entity including its current state.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "entity_id": {"type": "string", "description": "The entity ID to look up"}
+                        },
+                        "required": ["entity_id"]
+                    }
+                }
+            ])
+            
+        _LOGGER.debug("[McpToolCapability] Returning %d tools (domain=%s, intent=%s)", len(tools), domain, intent)
+        return tools
+
+    async def resolve_intent_via_llm(
+        self,
+        text: str,
+        llm_config: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Resolve user intent using MCP tools via multi-turn LLM reasoning.
+        
+        This is used when keyword_intent fails to parse intent from the utterance.
+        The LLM can use tools to explore the smart home state and derive the intent.
+        
+        Args:
+            text: User input text
+            llm_config: Dict containing 'ip', 'port', 'model' for Ollama
+            
+        Returns:
+            Dict with 'intent', 'slots', 'domain' if successful, None otherwise
+        """
+        from ..ollama_client import OllamaClient
+        import json
+        
+        ip = llm_config.get("ip")
+        port = llm_config.get("port")
+        model = llm_config.get("model")
+        
+        if not ip or not port:
+            _LOGGER.warning("[McpToolCapability] Missing Ollama config, skipping intent reasoning.")
+            return None
+            
+        client = OllamaClient(ip, int(port))
+        
+        # System prompt for intent reasoning
+        # Pass unknown domain/intent so it gets useful generalized tools
+        tools_def = json.dumps(self.get_tools(intent=None, domain=None), indent=2)
+        system_prompt = f"""You are a smart home assistant. Analyze the user's request and determine the intent.
+
+Available Intents (ONLY use these):
+- HassTurnOn: Turn on (lights, switches, etc.)
+- HassTurnOff: Turn off (lights, switches, etc.)
+- HassLightSet: Set brightness or color
+- HassSetPosition: Set position (covers, blinds)
+- HassGetState: Query state (temperature, status)
+- HassClimateSetTemperature: Set thermostat temperature
+- HassVacuumStart: Start vacuum
+- HassVacuumStop: Stop vacuum
+
+Available Slots:
+- area: Room/area name (Küche, Bad, Büro, etc.)
+- name: Specific device name (optional)
+- domain: Device type (light, cover, climate, switch, sensor, vacuum)
+- device_class: For sensors (temperature, humidity, power)
+- brightness: 0-100 for lights
+- temperature: Degrees for climate
+- position: 0-100 for covers
+
+Tools you can use:
+{tools_def}
+
+Instructions:
+1. Analyze the user's natural language request.
+2. If needed, use tools to understand the smart home context (e.g., what areas exist, what devices are available).
+3. Determine the most likely intent and slots.
+
+OUTPUT FORMAT (Strict JSON):
+- To Call Tool: {{"tool": "tool_name", "args": {{...}}}}
+- To Finish: {{"intent": "IntentName", "slots": {{"area": "...", "domain": "..."}}, "reasoning": "brief explanation"}}
+- If unsure or cannot determine: {{"intent": null, "reason": "explanation"}}
+
+Do not output any text outside the JSON.
+"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"User request: '{text}'"}
+        ]
+
+        # ReAct loop
+        max_turns = 4
+        for i in range(max_turns):
+            _LOGGER.debug("[McpToolCapability] Intent reasoning Turn %d/%d", i+1, max_turns)
+            
+            try:
+                response = await client.chat_completion(model, messages, temperature=0.0)
+            except Exception as e:
+                _LOGGER.error("[McpToolCapability] Ollama chat failed: %s", e)
+                return None
+                
+            messages.append({"role": "assistant", "content": response})
+            _LOGGER.debug("[McpToolCapability] LLM Response: %s", response[:200] if len(response) > 200 else response)
+            
+            # Parse JSON
+            try:
+                cleaned = response.strip()
+                if "{" in cleaned and "}" in cleaned:
+                    cleaned = cleaned[cleaned.find("{") : cleaned.rfind("}") + 1]
+                
+                data = json.loads(cleaned)
+            except (json.JSONDecodeError, ValueError):
+                _LOGGER.warning("[McpToolCapability] Invalid JSON from LLM in intent reasoning")
+                messages.append({"role": "user", "content": "Error: Invalid JSON. Please output ONLY valid JSON."})
+                continue
+            
+            # Check for final answer
+            if "intent" in data:
+                intent = data.get("intent")
+                if intent:
+                    _LOGGER.info("[McpToolCapability] Intent reasoning resolved: %s", intent)
+                    return {
+                        "intent": intent,
+                        "slots": data.get("slots", {}),
+                        "domain": data.get("slots", {}).get("domain"),
+                        "reasoning": data.get("reasoning", "")
+                    }
+                else:
+                    _LOGGER.info("[McpToolCapability] Intent reasoning returned null intent: %s", data.get("reason", "unknown"))
+                    return None
+                
+            # Handle tool calls
+            if "tool" in data:
+                tool_name = data["tool"]
+                args = data.get("args", {})
+                _LOGGER.info("[McpToolCapability] Intent reasoning calling tool '%s' with args %s", tool_name, args)
+                
+                try:
+                    tool_result = await self._execute_internal_tool(tool_name, args)
+                    result_str = json.dumps(tool_result, ensure_ascii=False)
+                    # Truncate if too long
+                    if len(result_str) > 2000:
+                        result_str = result_str[:2000] + "... (truncated)"
+                        
+                    messages.append({"role": "user", "content": f"Tool '{tool_name}' Output: {result_str}"})
+                except Exception as e:
+                    messages.append({"role": "user", "content": f"Tool execution error: {str(e)}"})
+            else:
+                messages.append({"role": "user", "content": "Error: Output must contain 'tool' or 'intent'."})
+
+        _LOGGER.warning("[McpToolCapability] Intent reasoning exhausted turns without result.")
+        return None
+
     async def resolve_entity_via_llm(
         self, 
         text: str, 
@@ -189,7 +470,8 @@ class McpToolCapability(Capability):
         client = OllamaClient(ip, int(port))
         
         # 2. System Prompt
-        tools_def = json.dumps(self.get_tools(), indent=2)
+        # Filter tools to only those relevant for this domain
+        tools_def = json.dumps(self.get_tools(intent=intent, domain=domain), indent=2)
         system_prompt = f"""You are a smart home agent assistant.
 Your goal is to find the correct entity ID for the user's request using the available tools.
 
@@ -277,4 +559,10 @@ Do not output any text outside the JSON.
         elif tool_name == "get_entity_details":
             if "entity_id" not in args: return {"error": "Missing entity_id"}
             return await self.get_entity_details(args["entity_id"])
+        elif tool_name == "list_automations":
+            limit = args.get("limit", 50)
+            return await self.list_automations(limit=limit)
+        elif tool_name == "get_automation_details":
+             if "entity_id" not in args: return {"error": "Missing entity_id"}
+             return await self.get_automation_details(args["entity_id"])
         return {"error": f"Unknown tool: {tool_name}"}

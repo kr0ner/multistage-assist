@@ -635,7 +635,7 @@ def config_entry():
     entry.data = {
         "stage1_ip": os.environ.get("OLLAMA_HOST", "127.0.0.1"),
         "stage1_port": int(os.environ.get("OLLAMA_PORT", "11434")),
-        "stage1_model": os.environ.get("OLLAMA_MODEL", "qwen3:4b-instruct"),
+        "stage1_model": os.environ.get("OLLAMA_MODEL", "qwen3:4b-q8_0"),
         "google_api_key": "test_key",
         "stage2_model": "gemini-test",
     }
@@ -668,7 +668,7 @@ def integration_llm_config():
     import os
     host = os.environ.get("OLLAMA_HOST", "127.0.0.1")
     port = int(os.environ.get("OLLAMA_PORT", "11434"))
-    model = os.environ.get("OLLAMA_MODEL", "qwen3:4b-instruct")
+    model = os.environ.get("OLLAMA_MODEL", "qwen3:4b-q8_0")
     
     return {
         "stage1_ip": host,

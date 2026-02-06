@@ -115,6 +115,13 @@ class CommandProcessorCapability(Capability):
         self, user_input, pending_data: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Handle the user's selection from disambiguation."""
+        pending_type = pending_data.get("type")
+        
+        # --- Handle Learning Confirmation ---
+        if pending_type == "learning_confirmation":
+            return await self._handle_learning_confirmation(user_input, pending_data)
+            
+        # --- Handle Entity Disambiguation ---
         candidates = [
             {"entity_id": eid, "name": name, "ordinal": i + 1}
             for i, (eid, name) in enumerate(pending_data["candidates"].items())
@@ -142,6 +149,36 @@ class CommandProcessorCapability(Capability):
             pending_data.get("learning_data"),
             is_disambiguation_response=True,  # Mark as disambiguation follow-up
         )
+
+    async def _handle_learning_confirmation(
+        self, user_input, pending_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Handle Yes/No for learning alias."""
+        from ..utils.german_utils import is_affirmative
+        
+        text = user_input.text
+        if is_affirmative(text):
+            learning_type = pending_data.get("learning_type", "area")
+            src = pending_data.get("source")
+            tgt = pending_data.get("target")
+            
+            if learning_type == "area" and src and tgt:
+                from .area_resolver import AreaResolverCapability
+                # We need access to AreaResolver to learn
+                # But CommandProcessor doesn't have it directly. 
+                # Use MemoryCapability directly as it is the backend.
+                await self.memory.learn_area_alias(src, tgt)
+                _LOGGER.info("[CommandProcessor] Learned confirmed area alias: '%s' -> '%s'", src, tgt)
+                return {
+                    "status": "handled",
+                    "result": await make_response("Alles klar, habe ich gespeichert.", user_input),
+                }
+        
+        # Default: No or neutral -> "Okay"
+        return {
+            "status": "handled",
+            "result": await make_response("Okay.", user_input),
+        }
 
     async def re_prompt_pending(
         self, user_input, pending_data: Dict[str, Any]

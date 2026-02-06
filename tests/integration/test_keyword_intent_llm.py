@@ -42,7 +42,7 @@ def make_input(text: str):
         (
             "Mache das Licht heller",
             "HassLightSet",
-            {"domain": "light", "brightness": "step_up"},
+            {"domain": "light", "command": "step_up"},
         ),
         ("Licht auf 50%", "HassLightSet", {"domain": "light", "brightness": "50"}),
         ("Licht im Bad an", "HassTurnOn", {"domain": "light", "area": "Bad"}),

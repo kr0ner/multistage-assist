@@ -198,6 +198,8 @@ async def test_no_specific_name_extraction(keyword_intent_capability):
         ("Alle Lichter im Keller aus", "Keller"),
         ("Rollo im Untergeschoss hoch", "Untergeschoss"),
         ("Licht im EG aus", "EG"),
+        ("Rollo im UG hoch", "UG"),
+        ("Licht im DG aus", "DG"),
     ],
 )
 async def test_floor_slot_extraction(keyword_intent_capability, user_text, expected_floor):
@@ -215,4 +217,5 @@ async def test_floor_slot_extraction(keyword_intent_capability, user_text, expec
     assert (
         expected_floor.lower() in floor_val.lower()
         or floor_val.lower() in expected_floor.lower()
+        or (expected_floor.lower() == "dg" and "dachgeschoss" in floor_val.lower())
     ), f"Expected floor '{expected_floor}' in slots, got floor='{floor_val}', area='{area_val}' for: {user_text}"

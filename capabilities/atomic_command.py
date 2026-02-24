@@ -1,21 +1,21 @@
 import logging
-from typing import Any, Dict
+from typing import List, Dict, Any
+
 from .base import Capability
-from ..utils.german_utils import (
-    AREA_INDICATORS,
-    FLOOR_KEYWORDS,
-    COMPOUND_SEPARATOR,
-    LOCATION_INDICATORS,
-    IMPLICIT_PHRASES,
-)
+from ..utils.german_utils import COMPOUND_SEPARATOR, AREA_INDICATORS, FLOOR_KEYWORDS, LOCATION_INDICATORS
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class ClarificationCapability(Capability):
-    """Split or rephrase unclear commands."""
+class AtomicCommandCapability(Capability):
+    """Split compound commands into atomic actions.
+    
+    Handles commands connected with "und", "dann", or commas.
+    Example: "Licht im Büro an und Rollo runter" -> ["Licht im Büro an", "Rollo runter"]
+    """
 
-    name = "clarification"
+    name = "atomic_command"
+    description = "Splits compound commands into atomic actions."
 
     PROMPT = {
         "system": """You are a smart home intent parser.
@@ -24,29 +24,15 @@ Task: Split the input into precise atomic German commands.
 CRITICAL RULES:
 1. **ALWAYS** split compound commands with "und" into separate array elements.
 2. Each action must be its own string in the output array.
-3. **IMPLICIT BRIGHTNESS/TEMPERATURE RULES** (VERY IMPORTANT):
-   - "Zu dunkel" / "es ist dunkel" → "Mache Licht heller" (increase brightness)
-   - "Zu hell" / "es ist hell" → "Mache Licht dunkler" (decrease brightness)
-   - "Zu kalt" → "Mache Heizung wärmer" / "Stelle Heizung höher"
-   - "Zu warm" → "Mache Heizung kälter" / "Stelle Heizung niedriger"
-4. Use specific device names if given.
-5. **PRESERVE** time/duration constraints (e.g., "für 5 Minuten", "für 1 Stunde").
-6. **SPLIT** opposite actions (an/aus, auf/zu, heller/dunkler) in different locations into separate commands.
-7. **MULTI-AREA COMMANDS**: If "und" connects AREAS/FLOORS with the same action, split into separate commands for each area.
-8. **NEVER INVENT** durations or constraints that are not in the original input!
+3. Use specific device names if given.
+4. **PRESERVE** time/duration constraints (e.g., "für 5 Minuten", "für 1 Stunde").
+5. **SPLIT** opposite actions (an/aus, auf/zu, heller/dunkler) in different locations into separate commands.
+6. **MULTI-AREA COMMANDS**: If "und" connects AREAS/FLOORS with the same action, split into separate commands for each area.
+7. **NEVER INVENT** durations or constraints that are not in the original input!
 
 Examples:
 Input: "Licht im Bad an und Rollo runter"
 Output: ["Schalte Licht im Bad an", "Fahre Rollo runter"]
-
-Input: "Im Büro ist es zu dunkel"
-Output: ["Mache das Licht im Büro heller"]
-
-Input: "Es ist zu hell im Wohnzimmer"
-Output: ["Mache das Licht im Wohnzimmer dunkler"]
-
-Input: "Schalte das Licht für 10 Minuten an"
-Output: ["Schalte das Licht für 10 Minuten an"]
 
 Input: "Mache das Licht in der Küche an und im Flur aus"
 Output: ["Mache das Licht in der Küche an", "Mache das Licht im Flur aus"]
@@ -115,47 +101,17 @@ Output: ["Schalte alle Lichter im Erdgeschoss aus", "Schalte alle Lichter im ers
         
         return False
 
-    async def run(self, user_input, **kwargs):
-        """
-        Detect vague/ambiguous language and rewrite to something clearer.
-        
-        Default: NO split unless we detect clear indicators that splitting is needed.
-        This reduces LLM overhead for simple commands.
-        """
+    async def run(self, user_input, **kwargs) -> List[str]:
+        """Split compound commands if necessary."""
         text = user_input.text.strip()
-        _LOGGER.debug("[Clarification] Input: %s", text)
-
         text_lower = text.lower()
-        word_count = len(text.split())
 
-        # === REASON 1: Implicit phrases that ALWAYS need LLM transformation ===
-        needs_rephrasing = any(phrase in text_lower for phrase in IMPLICIT_PHRASES)
-        
-        if needs_rephrasing:
-            _LOGGER.debug("[Clarification] Implicit phrase detected, calling LLM")
-            return await self._safe_prompt(
-                self.PROMPT, {"user_input": text}, temperature=0.3
-            )
-        
-        # === REASON 2: Very long/complex warning likely needs splitting ===
-        # Reverted to 12 as per user feedback (short sentences w/o separator are corner cases)
-        if word_count > 12:
-            _LOGGER.debug("[Clarification] Long sentence (%d words), calling LLM", word_count)
-            return await self._safe_prompt(
-                self.PROMPT, {"user_input": text}, temperature=0.3
-            )
-        
-        # === REASON 3: Compound command containing "und", ",", or sequence "dann" ===
-        # Safety catch-all: ANY "und" or "," or "dann" might imply multiple actions
+        # Check for compound separators
         if any(sep in text_lower for sep in [COMPOUND_SEPARATOR, ",", "dann"]):
-             _LOGGER.debug("[Clarification] Compound separator detected, calling LLM")
+             _LOGGER.debug("[AtomicCommand] Compound separator detected, calling LLM")
              return await self._safe_prompt(
-                self.PROMPT, {"user_input": text}, temperature=0.3
+                self.PROMPT, {"user_input": text}, temperature=0.1
             )
-
-        # === DEFAULT: No split - return as single command ===
-        _LOGGER.debug(
-            "[Clarification] Simple command (%d words), bypassing LLM",
-            word_count,
-        )
+        
+        _LOGGER.debug("[AtomicCommand] No compound structure detected.")
         return [text]

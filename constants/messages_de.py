@@ -193,7 +193,7 @@ STATE_RESPONSES: Dict[str, str] = {
     "no_some_other": "Nein, {count} sind noch {state}.",
     
     # State reports
-    "none_match": "Keine Geräte sind {state}.",
+    "none_match": "Keine {device} sind {state}.",
     "state_is": "{device} ist {state}.",
     "states_are": "{devices} sind {state}.",
 }
@@ -308,6 +308,10 @@ from typing import List
 ACTION_VERBS = {
     "on": "an",
     "off": "aus",
+    "opening": "öffnet",
+    "closing": "schließt",
+    "open": "offen",
+    "closed": "geschlossen",
 }
 
 # Domain-specific response templates

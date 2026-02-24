@@ -81,12 +81,24 @@ class KeywordIntentCapability(Capability):
 - Do NOT put step_up/step_down in brightness slot!
 """
             + _TEMP_RULE + _DELAYED_RULE,
-            "examples": """User: "Licht in der Küche an"
+            "examples": """User: "Schalte das Licht an"
+JSON: {"intent": "HassTurnOn", "slots": {"domain": "light", "command": "an"}}
+User: "Licht aus"
+JSON: {"intent": "HassTurnOff", "slots": {"domain": "light", "command": "aus"}}
+User: "Licht in der Küche an"
 JSON: {"intent": "HassTurnOn", "slots": {"area": "Küche", "domain": "light", "command": "an"}}
+User: "Mache das Licht heller"
+JSON: {"intent": "HassLightSet", "slots": {"domain": "light", "command": "step_up"}}
+User: "Licht auf 50%"
+JSON: {"intent": "HassLightSet", "slots": {"domain": "light", "brightness": 50}}
+User: "Licht für 10 Minuten an"
+JSON: {"intent": "TemporaryControl", "slots": {"domain": "light", "command": "an", "duration": "10 Minuten"}}
 User: "Licht im Obergeschoss aus"
 JSON: {"intent": "HassTurnOff", "slots": {"floor": "Obergeschoss", "domain": "light", "command": "aus"}}
-User: "Mach das Licht im Büro heller"
-JSON: {"intent": "HassLightSet", "slots": {"area": "Büro", "command": "step_up", "domain": "light"}}
+User: "Ist das Licht an?"
+JSON: {"intent": "HassGetState", "slots": {"domain": "light", "state": "on"}}
+User: "Licht im DG aus"
+JSON: {"intent": "HassTurnOff", "slots": {"floor": "DG", "domain": "light", "command": "aus"}}
 """
         },
         "cover": {
@@ -114,6 +126,11 @@ JSON: {"intent": "HassTurnOff", "slots": {"area": "Schlafzimmer", "domain": "cov
                 "DelayedControl",
             ],
             "rules": _TEMP_RULE + _DELAYED_RULE,
+            "examples": """User: "Schalter an"
+JSON: {"intent": "HassTurnOn", "slots": {"domain": "switch", "command": "an"}}
+User: "Steckdose im Bad aus"
+JSON: {"intent": "HassTurnOff", "slots": {"area": "Bad", "domain": "switch", "command": "aus"}}
+"""
         },
         "fan": {
             "intents": [
@@ -124,6 +141,11 @@ JSON: {"intent": "HassTurnOff", "slots": {"area": "Schlafzimmer", "domain": "cov
                 "DelayedControl",
             ],
             "rules": _TEMP_RULE + _DELAYED_RULE,
+            "examples": """User: "Ventilator an"
+JSON: {"intent": "HassTurnOn", "slots": {"domain": "fan", "command": "an"}}
+User: "Mach den Lüfter im Büro aus"
+JSON: {"intent": "HassTurnOff", "slots": {"area": "Büro", "domain": "fan", "command": "aus"}}
+"""
         },
         "media_player": {
             "intents": ["HassTurnOn", "HassTurnOff", "HassGetState"],
@@ -155,6 +177,9 @@ JSON: {"intent": "HassGetState", "slots": {"area": "Wohnzimmer", "device_class":
         "timer": {
             "intents": ["HassTimerSet"],
             "rules": "",
+            "examples": """User: "Stelle einen Timer auf 5 Minuten"
+JSON: {"intent": "HassTimerSet", "slots": {"domain": "timer", "duration": "5 Minuten"}}
+"""
         },
         "vacuum": {
             "intents": ["HassVacuumStart", "HassVacuumReturnToBase"],
@@ -241,6 +266,8 @@ JSON: {"intent": "HassVacuumStart", "slots": {"domain": "vacuum", "area": "Küch
             return matches[0]
         if "climate" in matches and "sensor" in matches:
             return "climate"
+        if "switch" in matches and "sensor" in matches:
+            return "sensor"
         if "calendar" in matches:
             return "calendar"
         if "timer" in matches:
@@ -294,15 +321,15 @@ JSON: {"intent": "HassVacuumStart", "slots": {"domain": "vacuum", "area": "Küch
 Allowed Intents: {', '.join(intents)}
 Allowed Slots: area, name, domain, floor, duration, command, device_class, position, temperature, brightness.
 
-Examples:
-{meta.get('examples', '')}
-
 Rules: {meta.get('rules', '')}
-- Use 'floor' for: Erdgeschoss, OG, Keller, oben, unten.
+- Use 'floor' for: Erdgeschoss, EG, Obergeschoss, OG, Untergeschoss, UG, Keller, Dachgeschoss, DG, oben, unten.
 - Use 'area' for rooms: Küche, Bad, Büro.
 - If generic words (Licht, Lampe), 'name' is EMPTY.
 - Do NOT use 'alle', 'alles', 'ganze' for 'area' or 'name'.
 {get_state_instructions}
+
+Examples:
+{meta.get('examples', '')}
 """
         data = await self._safe_prompt(
             {"system": system, "schema": self.SCHEMA}, {"user_input": text}

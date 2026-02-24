@@ -207,13 +207,41 @@ class SemanticCacheCapability(Capability):
             # Filter matches above threshold
             above_threshold = [m for m in matches if m.get("score", 0) >= AMBIGUITY_THRESHOLD]
             
-            if len(above_threshold) > 1:
-                # Multiple matches above threshold - ambiguous!
-                _LOGGER.info(
-                    "[SemanticCache] AMBIGUOUS: %d matches above %.2f for '%s'",
-                    len(above_threshold), AMBIGUITY_THRESHOLD, text[:40]
-                )
-                # Return with ambiguous_matches flag for Stage1Cache to escalate
+            if above_threshold:
+                if len(above_threshold) > 1:
+                    # Multiple matches above threshold - ambiguous!
+                    
+                    # EXCEPTION: HassGetState
+                    # For state queries ("Sind die Lichter an?"), we want to report on ALL matches
+                    # rather than asking "Which one?". The IntentExecutor will use build_state_response
+                    # to handle the group response.
+                    if above_threshold[0].get("intent") == "HassGetState":
+                        _LOGGER.info(
+                            "[SemanticCache] HassGetState ambiguity bypassed: %d matches -> return group",
+                            len(above_threshold)
+                        )
+                        # Return as a successful single match with ALL entities merged
+                        # This lets IntentExecutor receive all entity_ids
+                        all_ids = []
+                        for m in above_threshold:
+                            all_ids.extend(m.get("entity_ids", []))
+                        
+                        best = above_threshold[0]
+                        return {
+                            "intent": "HassGetState",
+                            "entity_ids": list(set(all_ids)), # Unique list
+                            "slots": best.get("slots", {}),
+                            "score": best.get("score", 0),
+                            "original_text": best.get("original_text", ""),
+                            "source": best.get("source", "learned"),
+                        }
+
+                    _LOGGER.info(
+                        "[SemanticCache] AMBIGUOUS: %d matches above %.2f for '%s'",
+                        len(above_threshold), AMBIGUITY_THRESHOLD, text[:40]
+                    )
+                    # Return with ambiguous_matches flag for Stage1Cache to escalate
+
                 best = above_threshold[0]
                 return {
                     "intent": best.get("intent"),
@@ -222,7 +250,7 @@ class SemanticCacheCapability(Capability):
                     "score": best.get("score", 0),
                     "original_text": best.get("original_text", ""),
                     "source": "anchor" if best.get("is_anchor") else "learned",
-                    "ambiguous_matches": above_threshold,  # Include all candidates
+                    "ambiguous_matches": above_threshold if len(above_threshold) > 1 else None,
                 }
         
         # Single match or no matches array - use legacy format

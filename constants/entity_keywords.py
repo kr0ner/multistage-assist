@@ -55,6 +55,10 @@ SENSOR_KEYWORDS: Dict[str, str] = {
     "der wert": "die werte",
     "der status": "die status",
     "der zustand": "die zustände",
+    "der stromverbrauch": "die stromverbräuche",
+    "der verbrauch": "die verbräuche",
+    "die leistung": "die leistungen",
+    "der batteriestand": "die batteriestände",
 }
 
 CLIMATE_KEYWORDS: Dict[str, str] = {

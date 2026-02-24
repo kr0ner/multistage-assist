@@ -22,7 +22,7 @@ from .capabilities.keyword_intent import KeywordIntentCapability
 from .capabilities.entity_resolver import EntityResolverCapability
 from .capabilities.area_resolver import AreaResolverCapability
 from .capabilities.memory import MemoryCapability
-from .capabilities.clarification import ClarificationCapability
+
 from .capabilities.multi_turn_base import MultiTurnCapability
 from .capabilities.timer import TimerCapability
 from .capabilities.calendar import CalendarCapability
@@ -57,7 +57,7 @@ class Stage2LLMProcessor(BaseStage):
         EntityResolverCapability,
         AreaResolverCapability,
         MemoryCapability,
-        ClarificationCapability,
+
         MultiTurnCapability,
         TimerCapability,
         CalendarCapability,
@@ -138,11 +138,7 @@ class Stage2LLMProcessor(BaseStage):
         # 1. Get clarified commands from Stage1 or run clarification ourselves
         clarified_commands = context.get("commands", [])
         
-        if not clarified_commands:
-            # Stage1 didn't provide clarified commands - run clarification ourselves
-            clarification = self.get("clarification")
-            if clarification:
-                clarified_commands = await clarification.run(user_input) or []
+
         
         # 2. Handle based on clarification result
         if not clarified_commands:

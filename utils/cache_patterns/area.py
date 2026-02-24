@@ -63,6 +63,20 @@ AREA_PHRASE_PATTERNS = {
         # === ABSOLUTE CONTROL (Position) ===
         ("Stelle {device} in {area} auf 50 Prozent", "HassSetPosition", {"position": 50}),
         ("Fahre {device} in {area} auf 50 Prozent", "HassSetPosition", {"position": 50}),
+        ("Fahre {device} in {area} zur Hälfte", "HassSetPosition", {"position": 50}),
+        ("Fahre {device} in {area} zur Hälfte runter", "HassSetPosition", {"position": 50}),
+        ("Fahre {device} in {area} zur Hälfte hoch", "HassSetPosition", {"position": 50}),
+        ("Mach {device} in {area} halb zu", "HassSetPosition", {"position": 50}),
+        ("Mach {device} in {area} halb auf", "HassSetPosition", {"position": 50}),
+        
+        ("Fahre {device} in {area} ein Viertel", "HassSetPosition", {"position": 25}),
+        ("Fahre {device} in {area} dreiviertel", "HassSetPosition", {"position": 75}),
+        
+        # "Komplett" = Open/Close (100% / 0%)
+        ("Mach {device} in {area} ganz auf", "HassTurnOn", {}),
+        ("Mach {device} in {area} komplett auf", "HassTurnOn", {}),
+        ("Mach {device} in {area} ganz zu", "HassTurnOff", {}),
+        ("Mach {device} in {area} komplett zu", "HassTurnOff", {}),
         
         # === RELATIVE CONTROL (Position) ===
         ("Fahre {device} in {area} weiter hoch", "HassSetPosition", {"command": "step_up"}),

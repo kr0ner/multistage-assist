@@ -26,9 +26,8 @@ AREA_INDICATORS: List[str] = [
     "in der", "im", "in", "auf dem", "auf der",
 ]
 
-# Floor keywords for detecting floor-based commands
 FLOOR_KEYWORDS: List[str] = [
-    "geschoss", "stock", "etage",
+    "geschoss", "stock", "etage", "eg", "og", "ug", "dg",
 ]
 
 # Compound separator (used to detect multi-part commands)

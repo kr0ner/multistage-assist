@@ -18,7 +18,9 @@ from typing import Any, Dict, List, Optional
 from homeassistant.components import conversation
 
 from .base_stage import BaseStage
-from .capabilities.clarification import ClarificationCapability
+from .capabilities.implicit_intent import ImplicitIntentCapability
+from .capabilities.atomic_command import AtomicCommandCapability
+
 from .capabilities.semantic_cache import SemanticCacheCapability
 from .capabilities.memory import MemoryCapability
 from .capabilities.entity_resolver import EntityResolverCapability
@@ -61,7 +63,8 @@ class Stage1CacheProcessor(BaseStage):
 
     name = "stage1_cache"
     capabilities = [
-        ClarificationCapability,
+        ImplicitIntentCapability,
+        AtomicCommandCapability,
         SemanticCacheCapability,
         MemoryCapability,
         EntityResolverCapability,
@@ -123,9 +126,23 @@ class Stage1CacheProcessor(BaseStage):
         # 1. Normalize area aliases
         user_input = await self._normalize_area_aliases(user_input)
 
-        # 2. Use clarification to split multi-commands
-        clarification_cap = self.get("clarification")
-        commands = await clarification_cap.run(user_input)
+        # 2. Use ImplicitIntent to clean phrasing (e.g., "too dark" -> "make brighter")
+        implicit_cap = self.get("implicit_intent")
+        rephrased_terms = await implicit_cap.run(user_input)
+        
+        # ImplicitIntent returns a list, usually singular but could be multiple if it decides to split (unlikely in current impl)
+        # We iterate over these rephrased terms and pass them to AtomicCommand splitting
+        
+        all_commands = []
+        atomic_cap = self.get("atomic_command")
+        
+        for term in rephrased_terms:
+            # Create a temporary input object for the atomic capability
+            temp_input = with_new_text(user_input, term)
+            split_cmds = await atomic_cap.run(temp_input)
+            all_commands.extend(split_cmds)
+            
+        commands = all_commands
         
         if not commands:
             commands = [user_input.text]

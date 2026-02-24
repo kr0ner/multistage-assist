@@ -25,42 +25,44 @@ from .capabilities.google_gemini_client import GoogleGeminiClient, GeminiError
 from .stage_result import StageResult
 from .conversation_utils import make_response
 from .constants.messages_de import ERROR_MESSAGES
+from .const import CONF_STAGE3_MODEL
 
 _LOGGER = logging.getLogger(__name__)
 
 
 # System prompt for intent derivation
-INTENT_SYSTEM_PROMPT = """Du bist ein Smart Home Assistent.
+INTENT_SYSTEM_PROMPT = """You are a Smart Home Assistant.
 
-Aufgabe: Analysiere die Benutzereingabe und extrahiere den Intent.
+Task: Analyze the user input and extract the intent.
 
-Verfügbare Intents:
-- HassTurnOn: Einschalten (Licht an, Rollo auf)
-- HassTurnOff: Ausschalten (Licht aus, Rollo zu)
-- HassLightSet: Helligkeit/Farbe einstellen (Licht dimmen, auf 50%)
-- HassSetPosition: Position setzen (Rollo auf 50%)
-- HassGetState: Status abfragen (Ist das Licht an?)
-- HassClimateSetTemperature: Temperatur einstellen (Heizung auf 21 Grad)
-- TemporaryControl: Zeitlich begrenzt (für 10 Minuten an)
-- DelayedControl: Verzögert (in 10 Minuten aus)
-- HassTimerSet: Timer stellen
+Available Intents:
+- HassTurnOn: Turn on (Light on, open blinds)
+- HassTurnOff: Turn off (Light off, close blinds)
+- HassLightSet: Set brightness/color (Dim light, to 50%)
+- HassSetPosition: Set position (Blinds to 50%)
+- HassGetState: Get state (Is the light on?)
+- HassClimateSetTemperature: Set temperature (Heater to 21 degrees)
+- TemporaryControl: Time-limited (on for 10 minutes)
+- DelayedControl: Delayed (off in 10 minutes)
+- HassTimerSet: Set timer
 
-Wenn der Benutzer eine allgemeine Frage stellt oder chatten möchte, antworte mit:
-{{"mode": "chat", "response": "Deine Antwort hier"}}
+If the user asks a general question or wants to chat, answer with:
+{{"mode": "chat", "response": "Your answer here in German"}}
 
-Bei einem Smart Home Befehl, antworte mit:
-{{"mode": "intent", "intent": "IntentName", "area": "Bereich", "domain": "light/cover/switch/climate", "params": {{}}}}
+For a Smart Home command, answer with:
+{{"mode": "intent", "intent": "IntentName", "area": "Area", "domain": "light/cover/switch/climate", "params": {{}}}}
 
-Verfügbare Bereiche: {areas}
-Verfügbare Etagen: {floors}
+Available Areas: {areas}
+Available Floors: {floors}
 
-Benutzereingabe: {user_input}
+User Input: {user_input}
+IMPORTANT: The user speaks German. You must output the 'response' field in German.
 """
 
 # Minimal chat prompt (when chat_mode is True)
-CHAT_SYSTEM_PROMPT = """Du bist ein freundlicher Smart Home Assistent.
-Antworte kurz und natürlich auf Deutsch (Du-Form).
-Der Benutzer möchte plaudern, nicht Geräte steuern."""
+CHAT_SYSTEM_PROMPT = """You are a friendly Smart Home Assistant.
+Answer briefly and naturally in German (Du-form).
+The user wants to chat, not control devices."""
 
 
 class Stage3GeminiProcessor(BaseStage):
@@ -77,7 +79,7 @@ class Stage3GeminiProcessor(BaseStage):
         api_key = config.get("gemini_api_key") or config.get("google_api_key")
         self._gemini_client = None
         if api_key:
-            model = config.get("gemini_model", "gemini-2.0-flash")
+            model = config.get(CONF_STAGE3_MODEL, "gemini-2.5-flash")
             self._gemini_client = GoogleGeminiClient(api_key, model)
             _LOGGER.info("[Stage3Gemini] Initialized with model: %s", model)
         else:
@@ -130,7 +132,7 @@ class Stage3GeminiProcessor(BaseStage):
             _LOGGER.error("[Stage3Gemini] No Gemini client available")
             return StageResult.error(
                 response=await make_response(
-                    "Entschuldigung, der Cloud-Dienst ist nicht konfiguriert.",
+                    ERROR_MESSAGES["gemini_unavailable"],
                     user_input
                 ),
                 raw_text=user_input.text,
@@ -248,7 +250,7 @@ class Stage3GeminiProcessor(BaseStage):
             _LOGGER.warning("[Stage3Gemini] Unexpected response format: %s", response_text)
             return StageResult.error(
                 response=await make_response(
-                    "Entschuldigung, ich konnte das nicht verstehen.",
+                    ERROR_MESSAGES["not_understood"],
                     user_input
                 ),
                 raw_text=user_input.text,

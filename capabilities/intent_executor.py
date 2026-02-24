@@ -13,6 +13,7 @@ from ..conversation_utils import (
 )
 from ..utils.response_builder import build_confirmation
 from ..utils.german_utils import FRACTION_MAPPINGS
+from ..constants.messages_de import ERROR_MESSAGES, get_state_response
 from .base import Capability
 
 _LOGGER = logging.getLogger(__name__)
@@ -392,7 +393,7 @@ class IntentExecutorCapability(Capability):
                     
                     resp = ha_intent.IntentResponse(language=language)
                     resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
-                    resp.async_set_speech(f"Keine {device_name} sind {state_word}.")
+                    resp.async_set_speech(get_state_response("none_match", device=device_name, state=state_word))
                     return {
                         "result": ConversationResult(
                             response=resp,
@@ -769,7 +770,7 @@ class IntentExecutorCapability(Capability):
             )
             resp = ha_intent.IntentResponse(language=language)
             resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
-            resp.async_set_speech("Fehler beim Ausführen der zeitlichen Steuerung.")
+            resp.async_set_speech(ERROR_MESSAGES["timebox_failed"])
             return {
                 "result": ConversationResult(
                     response=resp,

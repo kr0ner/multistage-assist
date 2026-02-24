@@ -145,6 +145,9 @@ OTHER_ENTITY_PLURALS: Dict[str, str] = {
 # Keywords that trigger global operations (all entities in domain)
 ALL_KEYWORDS: Set[str] = {"alle", "sämtliche", "ganze", "gesamte", "alles", "ganzes", "komplettes"}
 
+# Keywords for list questions
+LIST_QUESTION_WORDS: Set[str] = {"welche", "welches", "was für", "was ist", "wie viele"}
+
 # --- DOMAIN NAME MAPPING ---
 
 # Helper to get noun from "article noun" format
@@ -165,6 +168,21 @@ DOMAIN_NAMES: Dict[str, str] = {
     "sensor": _get_noun(next(iter(SENSOR_KEYWORDS))),
 }
 
+def _get_plural_noun(keywords_dict: Dict[str, str]) -> str:
+    """Extract plural noun from the first value of a keywords dict."""
+    return next(iter(keywords_dict.values())).split()[-1].capitalize()
+
+DOMAIN_NAMES_PLURAL: Dict[str, str] = {
+    "light": _get_plural_noun(LIGHT_KEYWORDS),
+    "cover": _get_plural_noun(COVER_KEYWORDS),
+    "switch": _get_plural_noun(SWITCH_KEYWORDS),
+    "fan": _get_plural_noun(FAN_KEYWORDS),
+    "climate": _get_plural_noun(CLIMATE_KEYWORDS),
+    "sensor": _get_plural_noun(SENSOR_KEYWORDS),
+    "media_player": "Geräte",
+    "vacuum": VACUUM_KEYWORDS[0].capitalize(),
+    "automation": "Automatisierungen",
+}
 
 # --- COMBINED MAPPINGS ---
 

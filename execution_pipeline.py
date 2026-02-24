@@ -84,7 +84,27 @@ class ExecutionPipeline:
                     _LOGGER.info("[ExecutionPipeline] Global Query for domain '%s' -> checking all entities", domain)
                     all_entities = self.hass.states.async_entity_ids(domain)
                     if all_entities:
-                        stage_result.entity_ids = all_entities
+                        # CRITICAL: Must filter out non-exposed entities even for global queries
+                        from homeassistant.components.conversation import DOMAIN as CONVERSATION_DOMAIN
+                        from homeassistant.components.homeassistant.exposed_entities import async_should_expose
+                        
+                        # service domains (like notify) can't be exposed via UI, so skip
+                        SERVICE_DOMAINS = {"notify", "tts", "script", "automation", "scene"}
+
+                        exposed_entities = [
+                            eid for eid in all_entities
+                            if (
+                                eid.split(".")[0] in SERVICE_DOMAINS
+                                or async_should_expose(self.hass, CONVERSATION_DOMAIN, eid)
+                            )
+                        ]
+                        
+                        _LOGGER.debug(
+                            "[ExecutionPipeline] Global Query: Filtered %d entities down to %d exposed entities", 
+                            len(all_entities), len(exposed_entities)
+                        )
+                        
+                        stage_result.entity_ids = exposed_entities
                         # Fall through to execution (IntentExecutor handles filtering by state)
                     else:
                         _LOGGER.warning("[ExecutionPipeline] No entities found for domain '%s'", domain)
@@ -96,16 +116,18 @@ class ExecutionPipeline:
             not_exposed = stage_result.context.get("filtered_not_exposed", [])
             
             # Build helpful error message
+            from .constants.messages_de import get_error_message
+
             if device_class and requested_area:
-                error_msg = f"Es gibt keinen {device_class}-Sensor in {requested_area}."
+                error_msg = get_error_message("no_sensor_in_area", device_class=device_class, requested_area=requested_area)
             elif requested_area:
-                error_msg = f"Kein passendes Gerät in {requested_area} gefunden."
+                error_msg = get_error_message("no_device_in_area", requested_area=requested_area)
             else:
-                error_msg = "Kein passendes Gerät gefunden."
+                error_msg = get_error_message("no_devices")
             
             # Add exposure hint if entities were filtered due to not being exposed
             if not_exposed:
-                error_msg += f" ({len(not_exposed)} Gerät(e) sind nicht für Sprachassistenten freigegeben)"
+                error_msg += get_error_message("not_exposed_hint", count=len(not_exposed))
                 _LOGGER.warning(
                     "[ExecutionPipeline] Entities not exposed to conversation: %s", not_exposed
                 )

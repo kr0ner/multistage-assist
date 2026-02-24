@@ -78,10 +78,13 @@ ERROR_MESSAGES: Dict[str, str] = {
     # Area/Location errors
     "area_not_found": "Diesen Bereich konnte ich nicht finden.",
     "no_devices_in_area": "In diesem Bereich gibt es keine passenden Geräte.",
+    "no_device_in_area": "Kein passendes Gerät in {requested_area} gefunden.",
+    "no_sensor_in_area": "Es gibt keinen {device_class}-Sensor in {requested_area}.",
     
     # Permission/Access errors
     "no_permission": "Dafür habe ich keine Berechtigung.",
     "not_exposed": "Dieses Gerät ist nicht für Sprachbefehle freigegeben.",
+    "not_exposed_hint": " ({count} Gerät(e) sind nicht für Sprachassistenten freigegeben)",
     
     # Connection errors
     "connection_error": "Verbindungsproblem.",
@@ -225,7 +228,11 @@ SYSTEM_MESSAGES: Dict[str, str] = {
 
     # Generic error
     "error_short": "Fehler.",
+
+    # Fallbacks
+    "none_known": "Keine bekannt",
 }
+
 
 
 

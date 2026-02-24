@@ -207,10 +207,12 @@ class Stage3GeminiProcessor(BaseStage):
         # Get areas and floors for context
         areas, floors = self._get_areas_and_floors()
 
+        from .constants.messages_de import SYSTEM_MESSAGES
+        
         # Build prompt with full context
         prompt = INTENT_SYSTEM_PROMPT.format(
-            areas=", ".join(areas) if areas else "Keine bekannt",
-            floors=", ".join(floors) if floors else "Keine bekannt",
+            areas=", ".join(areas) if areas else SYSTEM_MESSAGES["none_known"],
+            floors=", ".join(floors) if floors else SYSTEM_MESSAGES["none_known"],
             user_input=user_input.text,
         )
 

@@ -382,14 +382,9 @@ class IntentExecutorCapability(Capability):
                     from ..utils.response_builder import STATE_DESCRIPTIONS_DE
                     state_word = STATE_DESCRIPTIONS_DE.get(domain, {}).get(requested_state, requested_state)
                     
-                    device_names = {
-                        "light": "Lichter",
-                        "cover": "Rollläden", 
-                        "switch": "Schalter",
-                        "fan": "Ventilatoren",
-                        "media_player": "Geräte",
-                    }
-                    device_name = device_names.get(domain, "Geräte")
+                    from ..constants.entity_keywords import DOMAIN_NAMES_PLURAL
+                    
+                    device_name = DOMAIN_NAMES_PLURAL.get(domain, "Geräte")
                     
                     resp = ha_intent.IntentResponse(language=language)
                     resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
@@ -809,10 +804,12 @@ class IntentExecutorCapability(Capability):
                 user_text = user_input.text.lower()
                 query_state = params.get("state", "").lower()
                 
+                from ..constants.entity_keywords import LIST_QUESTION_WORDS, ALL_KEYWORDS
+                
                 # "Welche Lichter sind an?" → LIST the matching ones
                 # "Sind alle Lichter an?" → YES/NO about ALL entities
-                is_list_question = any(w in user_text for w in ["welche", "welches", "was für", "was ist", "wie viele"])
-                is_all_question = "alle" in user_text or "sämtliche" in user_text
+                is_list_question = any(w in user_text for w in LIST_QUESTION_WORDS)
+                is_all_question = any(w in user_text for w in ALL_KEYWORDS)
                 
                 from ..utils.response_builder import STATE_DESCRIPTIONS_DE, build_state_response
                 
@@ -832,20 +829,29 @@ class IntentExecutorCapability(Capability):
                 # Get German state words
                 domain_states = STATE_DESCRIPTIONS_DE.get(domain, {})
                 positive_word = domain_states.get(expected_states[0], query_state) if expected_states else ""
+                
+                # Note: OPPOSITE state mapping has been hardcoded here but in the future could be moved to constants.
                 opposite_map = {"an": "aus", "aus": "an", "offen": "geschlossen", "geschlossen": "offen"}
                 opposite_word = opposite_map.get(positive_word, "anders")
+                
+                from ..constants.messages_de import get_state_response
+                from ..constants.entity_keywords import DOMAIN_NAMES_PLURAL
                 
                 if is_list_question and query_state:
                     # LIST QUESTION: "Welche Lichter sind an?" → list the matching ones (names)
                     # names/states come from filtered results (only matching entities)
+                    
+                    plural_device = DOMAIN_NAMES_PLURAL.get(domain, "Geräte")
+                    
                     if len(names) == 0:
-                        speech_text = f"Keine sind {positive_word}."
+                        speech_text = get_state_response("none_match", device=plural_device, state=positive_word)
                     elif len(names) == 1:
-                        speech_text = f"{names[0]} ist {positive_word}."
+                        speech_text = get_state_response("state_is", device=names[0], state=positive_word)
                     elif len(names) <= 5:
-                        speech_text = f"{join_names(names)} sind {positive_word}."
+                        speech_text = get_state_response("states_are", devices=join_names(names), state=positive_word)
                     else:
-                        speech_text = f"{len(names)} sind {positive_word}."
+                        speech_text = get_state_response("states_are", devices=str(len(names)), state=positive_word)
+                        
                         
                 elif is_all_question and query_state:
                     # YES/NO QUESTION: "Sind alle Lichter an?" → check ALL entities

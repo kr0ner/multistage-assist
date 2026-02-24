@@ -82,23 +82,45 @@ class KeywordIntentCapability(Capability):
 """
             + _TEMP_RULE + _DELAYED_RULE,
             "examples": """User: "Schalte das Licht an"
-JSON: {"intent": "HassTurnOn", "slots": {"domain": "light", "command": "an"}}
+intent: HassTurnOn
+domain: light
+command: an
 User: "Licht aus"
-JSON: {"intent": "HassTurnOff", "slots": {"domain": "light", "command": "aus"}}
+intent: HassTurnOff
+domain: light
+command: aus
 User: "Licht in der Küche an"
-JSON: {"intent": "HassTurnOn", "slots": {"area": "Küche", "domain": "light", "command": "an"}}
+intent: HassTurnOn
+area: Küche
+domain: light
+command: an
 User: "Mache das Licht heller"
-JSON: {"intent": "HassLightSet", "slots": {"domain": "light", "command": "step_up"}}
+intent: HassLightSet
+domain: light
+command: step_up
 User: "Licht auf 50%"
-JSON: {"intent": "HassLightSet", "slots": {"domain": "light", "brightness": 50}}
+intent: HassLightSet
+domain: light
+brightness: 50
 User: "Licht für 10 Minuten an"
-JSON: {"intent": "TemporaryControl", "slots": {"domain": "light", "command": "an", "duration": "10 Minuten"}}
+intent: TemporaryControl
+domain: light
+command: an
+duration: 10 Minuten
 User: "Licht im Obergeschoss aus"
-JSON: {"intent": "HassTurnOff", "slots": {"floor": "Obergeschoss", "domain": "light", "command": "aus"}}
+intent: HassTurnOff
+floor: Obergeschoss
+domain: light
+command: aus
 User: "Ist das Licht an?"
-JSON: {"intent": "HassGetState", "slots": {"domain": "light", "state": "on"}}
+intent: HassGetState
+domain: light
+state: on
 User: "Licht im DG aus"
-JSON: {"intent": "HassTurnOff", "slots": {"floor": "DG", "domain": "light", "command": "aus"}}
+intent: HassTurnOff
+floor: DG
+domain: light
+command: aus
 """
         },
         "cover": {
@@ -112,9 +134,14 @@ JSON: {"intent": "HassTurnOff", "slots": {"floor": "DG", "domain": "light", "com
             ],
             "rules": _TEMP_RULE + _DELAYED_RULE,
             "examples": """User: "Rollo im Bad auf 50%"
-JSON: {"intent": "HassSetPosition", "slots": {"area": "Bad", "position": 50, "domain": "cover"}}
+intent: HassSetPosition
+area: Bad
+position: 50
+domain: cover
 User: "Rollläden im Schlafzimmer ganz zu"
-JSON: {"intent": "HassTurnOff", "slots": {"area": "Schlafzimmer", "domain": "cover"}}
+intent: HassTurnOff
+area: Schlafzimmer
+domain: cover
 """
         },
         "switch": {
@@ -127,9 +154,14 @@ JSON: {"intent": "HassTurnOff", "slots": {"area": "Schlafzimmer", "domain": "cov
             ],
             "rules": _TEMP_RULE + _DELAYED_RULE,
             "examples": """User: "Schalter an"
-JSON: {"intent": "HassTurnOn", "slots": {"domain": "switch", "command": "an"}}
+intent: HassTurnOn
+domain: switch
+command: an
 User: "Steckdose im Bad aus"
-JSON: {"intent": "HassTurnOff", "slots": {"area": "Bad", "domain": "switch", "command": "aus"}}
+intent: HassTurnOff
+area: Bad
+domain: switch
+command: aus
 """
         },
         "fan": {
@@ -142,9 +174,14 @@ JSON: {"intent": "HassTurnOff", "slots": {"area": "Bad", "domain": "switch", "co
             ],
             "rules": _TEMP_RULE + _DELAYED_RULE,
             "examples": """User: "Ventilator an"
-JSON: {"intent": "HassTurnOn", "slots": {"domain": "fan", "command": "an"}}
+intent: HassTurnOn
+domain: fan
+command: an
 User: "Mach den Lüfter im Büro aus"
-JSON: {"intent": "HassTurnOff", "slots": {"area": "Büro", "domain": "fan", "command": "aus"}}
+intent: HassTurnOff
+area: Büro
+domain: fan
+command: aus
 """
         },
         "media_player": {
@@ -155,9 +192,13 @@ JSON: {"intent": "HassTurnOff", "slots": {"area": "Büro", "domain": "fan", "com
             "intents": ["HassGetState"],
             "rules": "- device_class: required (temperature, humidity, power, energy, battery).\n- name: EMPTY unless specific.",
             "examples": """User: "Wie warm ist es im Bad?"
-JSON: {"intent": "HassGetState", "slots": {"area": "Bad", "device_class": "temperature"}}
+intent: HassGetState
+area: Bad
+device_class: temperature
 User: "Wieviel Strom verbraucht der Fernseher?"
-JSON: {"intent": "HassGetState", "slots": {"name": "Fernseher", "device_class": "power"}}
+intent: HassGetState
+name: Fernseher
+device_class: power
 """
         },
         "climate": {
@@ -169,25 +210,34 @@ JSON: {"intent": "HassGetState", "slots": {"name": "Fernseher", "device_class": 
             ],
             "rules": "",
             "examples": """User: "Heizung im Büro auf 22 Grad"
-JSON: {"intent": "HassClimateSetTemperature", "slots": {"area": "Büro", "temperature": 22}}
+intent: HassClimateSetTemperature
+area: Büro
+temperature: 22
 User: "Wie warm ist es im Wohnzimmer?"
-JSON: {"intent": "HassGetState", "slots": {"area": "Wohnzimmer", "device_class": "temperature"}}
+intent: HassGetState
+area: Wohnzimmer
+device_class: temperature
 """
         },
         "timer": {
             "intents": ["HassTimerSet"],
             "rules": "",
             "examples": """User: "Stelle einen Timer auf 5 Minuten"
-JSON: {"intent": "HassTimerSet", "slots": {"domain": "timer", "duration": "5 Minuten"}}
+intent: HassTimerSet
+domain: timer
+duration: 5 Minuten
 """
         },
         "vacuum": {
             "intents": ["HassVacuumStart", "HassVacuumReturnToBase"],
             "rules": "",
             "examples": """User: "Staubsauger starten"
-JSON: {"intent": "HassVacuumStart", "slots": {"domain": "vacuum"}}
+intent: HassVacuumStart
+domain: vacuum
 User: "Saugroboter in die Küche"
-JSON: {"intent": "HassVacuumStart", "slots": {"domain": "vacuum", "area": "Küche"}}
+intent: HassVacuumStart
+domain: vacuum
+area: Küche
 """
         },
         "calendar": {
@@ -328,17 +378,22 @@ Rules: {meta.get('rules', '')}
 - Do NOT use 'alle', 'alles', 'ganze' for 'area' or 'name'.
 {get_state_instructions}
 
+OUTPUT FORMAT:
+Do NOT output JSON. Output exactly in this strict Key-Value format:
+intent: <intent_name>
+<slot_name>: <slot_value>
+
 Examples:
 {meta.get('examples', '')}
 """
         data = await self._safe_prompt(
-            {"system": system, "schema": self.SCHEMA}, {"user_input": text}
+            {"system": system}, {"user_input": text}
         )
 
         if not isinstance(data, dict) or not data.get("intent"):
             return {}
 
-        slots = data.get("slots") or {}
+        slots = data.get("slots") or {k: v for k, v in data.items() if k != "intent"}
         if "domain" not in slots:
             slots["domain"] = domain
             

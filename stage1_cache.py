@@ -216,7 +216,7 @@ class Stage1CacheProcessor(BaseStage):
         if not cached["entity_ids"] and cached.get("slots"):
             _LOGGER.debug("[Stage1Cache] Cache hit has empty entities - attempting dynamic resolution...")
             resolver_cap = self.get("entity_resolver")
-            resolution = await resolver_cap.run(user_input, entities=cached["slots"])
+            resolution = await resolver_cap.run(user_input, entities=cached["slots"], intent=cached["intent"])
             
             if resolution.get("resolved_ids"):
                 cached["entity_ids"] = resolution["resolved_ids"]

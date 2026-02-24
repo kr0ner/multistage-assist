@@ -69,8 +69,9 @@ async def make_response(
 async def error_response(
     user_input: conversation.ConversationInput, msg: str = None
 ) -> conversation.ConversationResult:
+    from .constants.messages_de import get_error_message
     return await make_response(
-        msg or "Entschuldigung, ich habe das nicht verstanden.", user_input
+        msg or get_error_message("not_understood"), user_input
     )
 
 

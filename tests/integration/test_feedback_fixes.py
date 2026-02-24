@@ -141,3 +141,54 @@ async def test_hass_get_state_ambiguity_bypass():
         assert result["intent"] == "HassGetState"
         assert "ambiguous_matches" not in result
         assert set(result["entity_ids"]) == {"light.kitchen", "light.living"}
+
+@pytest.mark.asyncio
+async def test_global_query_exposure_filtering():
+    """Test ExecutionPipeline filters out non-exposed entities during global queries."""
+    hass = MagicMock()
+    
+    # Mock hass.states.async_entity_ids to return our entities
+    hass.states.async_entity_ids = MagicMock(return_value=["light.kitchen", "light.hidden", "light.script_light"])
+    
+    from multistage_assist.execution_pipeline import ExecutionPipeline
+    from multistage_assist.stage_result import StageResult
+    
+    pipeline = ExecutionPipeline(hass, {})
+    
+    # Mock CommandProcessor.process so the test doesn't actually try to execute
+    pipeline._processor.process = AsyncMock(return_value={"status": "handled", "result": None})
+    
+    stage_result = StageResult(
+        status="success",
+        intent="HassGetState",
+        entity_ids=[],  # Empty triggers the global query logic
+        params={"domain": "light"},
+        context={}
+    )
+    
+    user_input = conversation.ConversationInput(
+        text="Welche Lichter sind an?",
+        context={}, conversation_id="1", device_id="1", language="de"
+    )
+
+    with patch("homeassistant.components.homeassistant.exposed_entities.async_should_expose") as mock_expose:
+        # light.kitchen = exposed
+        # light.hidden = not exposed
+        # light.script_light = exposed but assume it's something we might filter (or let it pass if domain is light)
+        
+        def mock_should_expose(hass_instance, domain, entity_id):
+            if entity_id == "light.kitchen":
+                return True
+            return False
+            
+        mock_expose.side_effect = mock_should_expose
+        
+        await pipeline.execute(user_input, stage_result)
+        
+        # After execution pipeline logic, the entity_ids should be exactly ["light.kitchen"]
+        assert stage_result.entity_ids == ["light.kitchen"]
+        
+        # Verify CommandProcessor was called with the filtered list
+        pipeline._processor.process.assert_called_once()
+        args, kwargs = pipeline._processor.process.call_args
+        assert kwargs["candidates"] == ["light.kitchen"]

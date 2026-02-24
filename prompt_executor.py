@@ -225,8 +225,29 @@ class PromptExecutor:
                 cleaned = resp_text[resp_text.find("{") : resp_text.rfind("}") + 1]
             else:
                 cleaned = resp_text.strip()
+            
             _LOGGER.debug("Stage %s cleaned response: %s", stage.name, cleaned)
-            return json.loads(cleaned)
+            try:
+                return json.loads(cleaned)
+            except Exception:
+                # Fallback to pure KV mapping if strict JSON fails or is intentionally bypassed
+                result = {}
+                for line in cleaned.splitlines():
+                    line = line.strip()
+                    if not line or ":" not in line:
+                        continue
+                    k, v = line.split(":", 1)
+                    k = k.strip().lower()
+                    v = v.strip().strip('"\'')
+                    if v.lower() == "null" or not v:
+                        continue
+                    if v.isdigit():
+                        v = int(v)
+                    result[k] = v
+                if result:
+                    return result
+                raise
+
         except Exception as err:
             _LOGGER.warning("Stage %s execution failed: %s", stage.name, err)
             return None

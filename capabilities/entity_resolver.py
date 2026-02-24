@@ -67,7 +67,7 @@ class EntityResolverCapability(Capability):
         return all_entities
 
     async def run(
-        self, user_input, *, entities: Dict[str, Any] | None = None, **_: Any
+        self, user_input, *, entities: Dict[str, Any] | None = None, intent: str | None = None, **_: Any
     ) -> Dict[str, Any]:
         """Resolve entities from NLU slot data.
         
@@ -157,15 +157,20 @@ class EntityResolverCapability(Capability):
             # Otherwise "Schalte Spots an" -> "Spot" is generic -> triggers this -> turns on whole house.
             has_all_keyword = any(k in user_input.text.lower() for k in ALL_KEYWORDS)
             
-            if has_all_keyword:
-                _LOGGER.debug("[EntityResolver] No name/area. Fetching ALL entities for domain '%s'", domain)
+            # Exceptions:
+            # 1. State queries (HassGetState) don't need "alle". E.g. "Welche Lichter sind an?"
+            is_global_query = intent == "HassGetState"
+            
+            if has_all_keyword or is_global_query:
+                reason = "global query bypass" if is_global_query else "has 'all' keyword"
+                _LOGGER.debug("[EntityResolver] No name/area. Fetching ALL entities for domain '%s' (%s)", domain, reason)
                 all_domain_entities = self._collect_all_domain_entities(domain)
                 for eid in all_domain_entities:
                     if eid not in seen:
                         resolved.append(eid)
                         seen.add(eid)
             else:
-                _LOGGER.debug("[EntityResolver] Global fallback skipped (no 'all' keyword in '%s')", user_input.text)
+                _LOGGER.debug("[EntityResolver] Global fallback skipped (no 'all' keyword in '%s' and not a query)", user_input.text)
 
         # Filter by floor
         if floor_obj:

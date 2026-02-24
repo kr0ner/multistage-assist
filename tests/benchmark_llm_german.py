@@ -9,7 +9,7 @@ OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 MODELS = [
     "qwen3:4b-q8_0",
     "qwen3:4b-instruct",
-    "qwen3:8b-instruct"
+    "qwen3:8b-q4_K_M"
 ]
 
 def pull_model(model_name):

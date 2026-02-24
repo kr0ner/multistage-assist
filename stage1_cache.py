@@ -244,6 +244,23 @@ class Stage1CacheProcessor(BaseStage):
             if "state" in nlu_entities:
                 cache_slots["state"] = nlu_entities["state"]
                 _LOGGER.debug("[Stage1Cache] Using NLU state='%s' instead of cache", nlu_entities["state"])
+                
+        # Override generalized numeric values (e.g., 50% generic cache hit -> 25% actual)
+        from .utils.german_utils import normalize_for_cache
+        _, extracted_numbers = normalize_for_cache(user_input.text)
+        if extracted_numbers:
+            # Depending on intent, patch the corresponding slot
+            intent = cached["intent"]
+            if intent in ("HassSetPosition", "HassLightSet"):
+                if "position" in cache_slots:
+                    cache_slots["position"] = extracted_numbers[0]
+                elif "brightness" in cache_slots:
+                    cache_slots["brightness"] = extracted_numbers[0]
+            elif intent == "HassClimateSetTemperature":
+                if "temperature" in cache_slots:
+                    cache_slots["temperature"] = extracted_numbers[0]
+            
+            _LOGGER.debug("[Stage1Cache] Injected %s into cache slots from raw text", extracted_numbers)
         
         # For DelayedControl: Extract delay from raw text since cache uses generic patterns
         # "in 3 Minuten" / "um 15 Uhr" → delay slot

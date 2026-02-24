@@ -81,46 +81,15 @@ class KeywordIntentCapability(Capability):
 - Do NOT put step_up/step_down in brightness slot!
 """
             + _TEMP_RULE + _DELAYED_RULE,
-            "examples": """User: "Schalte das Licht an"
-intent: HassTurnOn
-domain: light
-command: an
-User: "Licht aus"
-intent: HassTurnOff
-domain: light
-command: aus
-User: "Licht in der Küche an"
-intent: HassTurnOn
-area: Küche
-domain: light
-command: an
-User: "Mache das Licht heller"
-intent: HassLightSet
-domain: light
-command: step_up
-User: "Licht auf 50%"
-intent: HassLightSet
-domain: light
-brightness: 50
-User: "Licht für 10 Minuten an"
-intent: TemporaryControl
-domain: light
-command: an
-duration: 10 Minuten
-User: "Licht im Obergeschoss aus"
-intent: HassTurnOff
-floor: Obergeschoss
-domain: light
-command: aus
-User: "Ist das Licht an?"
-intent: HassGetState
-domain: light
-state: on
-User: "Licht im DG aus"
-intent: HassTurnOff
-floor: DG
-domain: light
-command: aus
+            "examples": """User: "Schalte das Licht an" -> intent: HassTurnOn, domain: light, command: an
+User: "Licht aus" -> intent: HassTurnOff, domain: light, command: aus
+User: "Licht in der Küche an" -> intent: HassTurnOn, area: Küche, domain: light, command: an
+User: "Mache das Licht heller" -> intent: HassLightSet, domain: light, command: step_up
+User: "Licht auf 50%" -> intent: HassLightSet, domain: light, brightness: 50
+User: "Licht für 10 Minuten an" -> intent: TemporaryControl, domain: light, command: an, duration: 10 Minuten
+User: "Licht im Obergeschoss aus" -> intent: HassTurnOff, floor: Obergeschoss, domain: light, command: aus
+User: "Ist das Licht an?" -> intent: HassGetState, domain: light, state: on
+User: "Licht im DG aus" -> intent: HassTurnOff, floor: DG, domain: light, command: aus
 """
         },
         "cover": {
@@ -133,15 +102,8 @@ command: aus
                 "DelayedControl",
             ],
             "rules": _TEMP_RULE + _DELAYED_RULE,
-            "examples": """User: "Rollo im Bad auf 50%"
-intent: HassSetPosition
-area: Bad
-position: 50
-domain: cover
-User: "Rollläden im Schlafzimmer ganz zu"
-intent: HassTurnOff
-area: Schlafzimmer
-domain: cover
+            "examples": """User: "Rollo im Bad auf 50%" -> intent: HassSetPosition, area: Bad, domain: cover, position: 50
+User: "Rollläden im Schlafzimmer ganz zu" -> intent: HassTurnOff, area: Schlafzimmer, domain: cover
 """
         },
         "switch": {
@@ -153,15 +115,8 @@ domain: cover
                 "DelayedControl",
             ],
             "rules": _TEMP_RULE + _DELAYED_RULE,
-            "examples": """User: "Schalter an"
-intent: HassTurnOn
-domain: switch
-command: an
-User: "Steckdose im Bad aus"
-intent: HassTurnOff
-area: Bad
-domain: switch
-command: aus
+            "examples": """User: "Schalter an" -> intent: HassTurnOn, domain: switch, command: an
+User: "Steckdose im Bad aus" -> intent: HassTurnOff, area: Bad, domain: switch, command: aus
 """
         },
         "fan": {
@@ -173,15 +128,8 @@ command: aus
                 "DelayedControl",
             ],
             "rules": _TEMP_RULE + _DELAYED_RULE,
-            "examples": """User: "Ventilator an"
-intent: HassTurnOn
-domain: fan
-command: an
-User: "Mach den Lüfter im Büro aus"
-intent: HassTurnOff
-area: Büro
-domain: fan
-command: aus
+            "examples": """User: "Ventilator an" -> intent: HassTurnOn, domain: fan, command: an
+User: "Mach den Lüfter im Büro aus" -> intent: HassTurnOff, area: Büro, domain: fan, command: aus
 """
         },
         "media_player": {
@@ -191,14 +139,8 @@ command: aus
         "sensor": {
             "intents": ["HassGetState"],
             "rules": "- device_class: required (temperature, humidity, power, energy, battery).\n- name: EMPTY unless specific.",
-            "examples": """User: "Wie warm ist es im Bad?"
-intent: HassGetState
-area: Bad
-device_class: temperature
-User: "Wieviel Strom verbraucht der Fernseher?"
-intent: HassGetState
-name: Fernseher
-device_class: power
+            "examples": """User: "Wie warm ist es im Bad?" -> intent: HassGetState, area: Bad, domain: sensor, device_class: temperature
+User: "Wieviel Strom verbraucht der Fernseher?" -> intent: HassGetState, domain: sensor, name: Fernseher, device_class: power
 """
         },
         "climate": {
@@ -209,35 +151,21 @@ device_class: power
                 "HassGetState",
             ],
             "rules": "",
-            "examples": """User: "Heizung im Büro auf 22 Grad"
-intent: HassClimateSetTemperature
-area: Büro
-temperature: 22
-User: "Wie warm ist es im Wohnzimmer?"
-intent: HassGetState
-area: Wohnzimmer
-device_class: temperature
+            "examples": """User: "Heizung im Büro auf 22 Grad" -> intent: HassClimateSetTemperature, area: Büro, domain: climate, temperature: 22
+User: "Wie warm ist es im Wohnzimmer?" -> intent: HassGetState, area: Wohnzimmer, domain: climate, device_class: temperature
 """
         },
         "timer": {
             "intents": ["HassTimerSet"],
             "rules": "",
-            "examples": """User: "Stelle einen Timer auf 5 Minuten"
-intent: HassTimerSet
-domain: timer
-duration: 5 Minuten
+            "examples": """User: "Stelle einen Timer auf 5 Minuten" -> intent: HassTimerSet, domain: timer, duration: 5 Minuten
 """
         },
         "vacuum": {
             "intents": ["HassVacuumStart", "HassVacuumReturnToBase"],
             "rules": "",
-            "examples": """User: "Staubsauger starten"
-intent: HassVacuumStart
-domain: vacuum
-User: "Saugroboter in die Küche"
-intent: HassVacuumStart
-domain: vacuum
-area: Küche
+            "examples": """User: "Staubsauger starten" -> intent: HassVacuumStart, domain: vacuum
+User: "Saugroboter in die Küche" -> intent: HassVacuumStart, area: Küche, domain: vacuum
 """
         },
         "calendar": {
@@ -259,10 +187,17 @@ area: Küche
     }
 
     SCHEMA = {
+        "type": "object",
         "properties": {
             "intent": {"type": ["string", "null"]},
-            "slots": {"type": "object"},
-        }
+            "area": {"type": ["string", "null"]},
+            "domain": {"type": ["string", "null"]},
+            "slots": {
+                "type": "object",
+                "additionalProperties": True
+            }
+        },
+        "required": ["intent", "slots"]
     }
 
     def _levenshtein(self, word: str, keyword: str) -> int:
@@ -362,10 +297,10 @@ area: Küche
         if "HassGetState" in intents:
             get_state_instructions = """
 - For HassGetState: use 'state' slot to capture the QUERIED state:
-  - "Sind alle Lichter aus?" → {{"state": "off"}}
-  - "Sind alle Lichter an?" → {{"state": "on"}}
-  - "Ist das Rollo geschlossen?" → {{"state": "closed"}}
-  - "Ist das Rollo offen?" → {{"state": "open"}}"""
+  - "Sind alle Lichter aus?" → state: off
+  - "Sind alle Lichter an?" → state: on
+  - "Ist das Rollo geschlossen?" → state: closed
+  - "Ist das Rollo offen?" → state: open"""
 
         system = f"""You are a smart home assistant. Identify the intent and entities.
 Allowed Intents: {', '.join(intents)}
@@ -378,19 +313,18 @@ Rules: {meta.get('rules', '')}
 - Do NOT use 'alle', 'alles', 'ganze' for 'area' or 'name'.
 {get_state_instructions}
 
-OUTPUT FORMAT:
-Do NOT output JSON. Output exactly in this strict Key-Value format:
-intent: <intent_name>
-<slot_name>: <slot_value>
-
 Examples:
 {meta.get('examples', '')}
 """
         data = await self._safe_prompt(
-            {"system": system}, {"user_input": text}
+            {"system": system, "schema": self.SCHEMA}, {"user_input": text}
         )
 
-        if not isinstance(data, dict) or not data.get("intent"):
+        if not isinstance(data, dict):
+            _LOGGER.warning("[KeywordIntent] Bad data type from prompt_executor: %s", type(data))
+            return {}
+        if not data.get("intent"):
+            _LOGGER.warning("[KeywordIntent] No intent extracted: %s", data)
             return {}
 
         slots = data.get("slots") or {k: v for k, v in data.items() if k != "intent"}

@@ -34,20 +34,6 @@ _PLURAL_CUES = {
     "viele",
     "verschiedene",
 }
-_NUM_WORDS = {
-    "zwei",
-    "drei",
-    "vier",
-    "fünf",
-    "sechs",
-    "sieben",
-    "acht",
-    "neun",
-    "zehn",
-    "elf",
-    "zwölf",
-}
-_NUMERIC_PATTERN = re.compile(r"\b\d+\b")
 
 # --- CONVERSATION HELPERS ---
 

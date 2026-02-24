@@ -61,11 +61,8 @@ class PromptExecutor:
         system_prompt = prompt["system"]
         schema = prompt.get("schema")
 
-        if schema:
-            system_prompt = system_prompt.strip() + self._schema_to_prompt(schema)
-
         for stage in self.escalation_path:
-            result = await self._execute(stage, system_prompt, context, temperature)
+            result = await self._execute(stage, system_prompt, context, temperature, schema)
             if result is None:
                 _LOGGER.info("Stage %s returned None, escalating...", stage.name)
                 continue
@@ -83,62 +80,7 @@ class PromptExecutor:
 
         return [] if (schema and schema.get("type") == "array") else {}
 
-    @staticmethod
-    def _schema_to_prompt(schema: dict) -> str:
-        """
-        Generate a STRICT output-format block that nudges small models
-        to return valid, minified JSON and nothing else.
-        """
-        if not schema:
-            return ""
-
-        # Array schema
-        if schema.get("type") == "array":
-            item_type = (schema.get("items") or {}).get("type", "string")
-            return (
-                "\n\n## Output format (STRICT)\n"
-                f"Return ONLY a minified JSON array of {item_type}s.\n"
-                "- No text, no markdown, no backticks.\n"
-                '- Example: ["item1","item2"]\n'
-                '- Invalid: ```["item1"]```  or  Here you go: ["item1"]'
-            )
-
-        # Object schema (default)
-        props = (schema or {}).get("properties") or {}
-        if not props:
-            return (
-                "\n\n## Output format (STRICT)\n"
-                "Return ONLY a minified JSON object.\n"
-                "- No text, no markdown, no backticks.\n"
-                "- Example: {}"
-            )
-
-        keys = list(props.keys())
-
-        def _slot(t: str, spec: dict) -> str:
-            if t == "array":
-                it = (spec.get("items") or {}).get("type", "string")
-                return f"[<{it}>]"
-            return f"<{t}>"
-
-        example_pairs = []
-        for k, spec in props.items():
-            t = spec.get("type", "string")
-            example_pairs.append(f'"{k}":{_slot(t, spec)}')
-
-        example_obj = "{" + ",".join(example_pairs) + "}"
-
-        lines = [
-            "\n\n## Output format (STRICT)",
-            "Return ONLY a **minified JSON object** with **exactly** these keys and **no others**, in this order:",
-            ", ".join(f'"{k}"' for k in keys),
-            "",
-            "- No text, no explanations, no markdown, no backticks.",
-            f"- Example shape: {example_obj}",
-            '- Invalid: {"unexpected":true}, ```{...}```, or any leading/trailing text.',
-        ]
-
-        return "\n".join(lines)
+    # Removed old _schema_to_prompt which injected string descriptions of the JSON schema
 
     @staticmethod
     def _validate_schema(result: Any, schema: dict | None) -> bool:
@@ -208,6 +150,7 @@ class PromptExecutor:
         system_prompt: str,
         context: dict[str, Any],
         temperature: float,
+        schema: dict | None = None,
     ) -> dict[str, Any] | list | None:
         ip, port, model = _get_stage_config(self.config, stage)
         client = OllamaClient(ip, port)
@@ -217,36 +160,22 @@ class PromptExecutor:
                 system_prompt,
                 json.dumps(context, ensure_ascii=False),
                 temperature=temperature,
+                format=schema,  # Pass native JSON schema for Structured Outputs
             )
-            # tolerant JSON block extraction
-            if "[" in resp_text and "]" in resp_text:
-                cleaned = resp_text[resp_text.find("[") : resp_text.rfind("]") + 1]
-            elif "{" in resp_text and "}" in resp_text:
-                cleaned = resp_text[resp_text.find("{") : resp_text.rfind("}") + 1]
-            else:
-                cleaned = resp_text.strip()
             
-            _LOGGER.debug("Stage %s cleaned response: %s", stage.name, cleaned)
-            try:
-                return json.loads(cleaned)
-            except Exception:
-                # Fallback to pure KV mapping if strict JSON fails or is intentionally bypassed
-                result = {}
-                for line in cleaned.splitlines():
-                    line = line.strip()
-                    if not line or ":" not in line:
-                        continue
-                    k, v = line.split(":", 1)
-                    k = k.strip().lower()
-                    v = v.strip().strip('"\'')
-                    if v.lower() == "null" or not v:
-                        continue
-                    if v.isdigit():
-                        v = int(v)
-                    result[k] = v
-                if result:
-                    return result
-                raise
+            _LOGGER.debug("Stage %s raw response: %s", stage.name, resp_text)
+            print(f"\nRAW OLLAMA RESPONSE: {repr(resp_text)}")
+            print(f"RAW OLLAMA SCHEMA PASSED: {json.dumps(schema)}")
+            
+            # Since we're using Native Structured Outputs, Ollama guarantees valid JSON.
+            # However, some models still wrap the output in markdown code blocks like ```json ... ```
+            cleaned = resp_text.strip()
+            if cleaned.startswith("```"):
+                lines = cleaned.splitlines()
+                if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].startswith("```"):
+                    cleaned = "\n".join(lines[1:-1]).strip()
+            
+            return json.loads(cleaned)
 
         except Exception as err:
             _LOGGER.warning("Stage %s execution failed: %s", stage.name, err)

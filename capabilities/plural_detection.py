@@ -4,8 +4,6 @@ from .base import Capability
 from custom_components.multistage_assist.conversation_utils import (
     _ENTITY_PLURALS,
     _PLURAL_CUES,
-    _NUM_WORDS,
-    _NUMERIC_PATTERN,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -54,8 +52,6 @@ class PluralDetectionCapability(Capability):
 
         # Fast Path: Check for explicit plural cues ("alle", "beide", etc.)
         if any(cue in text for cue in _PLURAL_CUES):
-            return {"multiple_entities": True}
-        if any(num in text for num in _NUM_WORDS) or _NUMERIC_PATTERN.search(text):
             return {"multiple_entities": True}
 
         # Check for plural nouns (without articles)

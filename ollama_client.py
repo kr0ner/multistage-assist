@@ -37,6 +37,7 @@ class OllamaClient:
         prompt: str,
         temperature: float = 0.25,
         num_ctx: int = 800,
+        format: dict | None = None,
     ) -> str:
         """Send a chat request to Ollama."""
         url = f"{self.base_url}/api/chat"
@@ -50,6 +51,8 @@ class OllamaClient:
             "keep_alive": -1,  # Keep model loaded in memory permanently
             "options": {"num_ctx": num_ctx, "temperature": temperature},
         }
+        if format:
+            payload["format"] = format
 
 
         # 🔎 Log full payload for debugging
@@ -81,6 +84,7 @@ class OllamaClient:
         messages: list[dict[str, str]],
         temperature: float = 0.25,
         num_ctx: int = 1024,
+        format: dict | None = None,
     ) -> str:
         """Send a chat request with full message history."""
         url = f"{self.base_url}/api/chat"
@@ -91,6 +95,8 @@ class OllamaClient:
             "keep_alive": -1,
             "options": {"num_ctx": num_ctx, "temperature": temperature},
         }
+        if format:
+            payload["format"] = format
 
         try:
             _LOGGER.debug(

@@ -33,6 +33,31 @@ class BaseStage(ABC):
         self.capabilities_map: Dict[str, Capability] = {
             cap.name: cap(hass, config) for cap in self.capabilities
         }
+        
+        # Automatic Dependency Injection
+        memory = self.capabilities_map.get("memory")
+        knowledge_graph = self.capabilities_map.get("knowledge_graph")
+        area_resolver = self.capabilities_map.get("area_resolver")
+        
+        for name, cap in self.capabilities_map.items():
+            # Inject Memory (Legacy support)
+            if memory and hasattr(cap, "set_memory"):
+                cap.set_memory(memory)
+                _LOGGER.debug("[%s] Auto-injected memory into %s", self.name, name)
+            elif knowledge_graph and hasattr(cap, "set_memory"):
+                # KnowledgeGraph can act as Memory for legacy components
+                cap.set_memory(knowledge_graph)
+                _LOGGER.debug("[%s] Auto-injected knowledge_graph (as memory) into %s", self.name, name)
+            
+            # Inject Knowledge Graph (New)
+            if knowledge_graph and hasattr(cap, "set_knowledge_graph"):
+                cap.set_knowledge_graph(knowledge_graph)
+                _LOGGER.debug("[%s] Auto-injected knowledge_graph into %s", self.name, name)
+                
+            # Inject Area Resolver
+            if area_resolver and name != "area_resolver" and hasattr(cap, "set_area_resolver"):
+                cap.set_area_resolver(area_resolver)
+                _LOGGER.debug("[%s] Auto-injected area_resolver into %s", self.name, name)
 
     def has(self, name: str) -> bool:
         """Check if a capability is available."""

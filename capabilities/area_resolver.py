@@ -5,7 +5,6 @@ Provides area/floor name resolution with:
 - Fuzzy matching on HA area/floor names  
 - LLM fallback for complex cases
 
-Renamed from area_alias.py and expanded with find_area/find_floor from entity_resolver.
 """
 
 import logging
@@ -15,7 +14,7 @@ from homeassistant.helpers import area_registry as ar, floor_registry as fr
 from .base import Capability
 from ..constants.messages_de import GLOBAL_KEYWORDS
 from ..constants.domain_config import FLOOR_ALIASES_DE
-from ..utils.german_utils import canonicalize
+from ..utils.german_utils import canonicalize, map_area_alias
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,7 +30,17 @@ class AreaResolverCapability(Capability):
     """
 
     name = "area_resolver"
-    description = "Map a location string to a Home Assistant area/floor or detect global scope."
+    description = "Resolve area and floor names from natural language using a hierarchical search: 1. Exact Name/Alias 2. Home Assistant Registry Aliases 3. Fuzzy matching (rapidfuzz) 4. Regulated partial matching. Detects GLOBAL scope (whole house) and supports German floor abbreviations (e.g. EG)."
+    
+    knowledge_graph = None
+
+    def __init__(self, hass, config):
+        super().__init__(hass, config)
+        self.knowledge_graph = None
+
+    def set_knowledge_graph(self, kg_cap):
+        """Inject knowledge graph capability for alias resolution."""
+        self.knowledge_graph = kg_cap
 
     PROMPT = {
         "system": """
@@ -77,7 +86,9 @@ You are a smart home helper that maps a user's spoken location to the correct in
             return None
             
         area_reg = ar.async_get(self.hass)
-        needle = canonicalize(area_name)
+        # Apply German aliases (eg -> Erdgeschoss, bad -> Badezimmer)
+        text_mapped = map_area_alias(area_name)
+        needle = canonicalize(text_mapped)
         areas = area_reg.async_list_areas()
         
         # First pass: exact name match
@@ -94,12 +105,30 @@ You are a smart home helper that maps a user's spoken location to the correct in
                     _LOGGER.debug("[AreaResolver] Area alias match: '%s' → '%s'", area_name, a.name)
                     return a
         
-        # Third pass: partial match (name contains needle or vice versa)
+        # Third pass: Fuzzy match with rapidfuzz (Fuzzy before Partial to respect specific matches)
+        from ..utils.fuzzy_utils import fuzzy_match
+        best_match = None
+        best_score = 0
+        for a in areas:
+            canon_name = canonicalize(a.name or "")
+            score = fuzzy_match(needle, canon_name)
+            if score >= 80 and score > best_score:
+                best_score = score
+                best_match = a
+        
+        if best_match:
+            _LOGGER.debug("[AreaResolver] Area fuzzy match: '%s' → '%s' (score %d)", area_name, best_match.name, best_score)
+            return best_match
+        
+        # Fourth pass: partial match (name contains needle or vice versa, with safety guard)
         for a in areas:
             canon_name = canonicalize(a.name or "")
             if needle in canon_name or canon_name in needle:
-                _LOGGER.debug("[AreaResolver] Area partial match: '%s' → '%s'", area_name, a.name)
-                return a
+                # Guard: Length ratio check (at least 50%)
+                ratio = min(len(needle), len(canon_name)) / max(len(needle), len(canon_name))
+                if ratio >= 0.5:
+                    _LOGGER.debug("[AreaResolver] Area partial match (ratio %.2f): '%s' → '%s'", ratio, area_name, a.name)
+                    return a
         
         return None
 
@@ -117,7 +146,10 @@ You are a smart home helper that maps a user's spoken location to the correct in
         
         floor_reg = fr.async_get(self.hass)
         floors = list(floor_reg.async_list_floors())
-        needle = canonicalize(floor_name)
+        
+        # Apply German aliases (eg -> Erdgeschoss)
+        text_mapped = map_area_alias(floor_name)
+        needle = canonicalize(text_mapped)
         
         # Expand needle to include common German floor aliases
         search_terms = {needle}
@@ -139,13 +171,32 @@ You are a smart home helper that maps a user's spoken location to the correct in
                     _LOGGER.debug("[AreaResolver] Floor HA alias match: '%s' → '%s'", floor_name, floor.name)
                     return floor
         
-        # Third pass: partial match (name contains search term or vice versa)
+        # Third pass: Fuzzy match with rapidfuzz
+        from ..utils.fuzzy_utils import fuzzy_match
+        best_match = None
+        best_score = 0
+        for floor in floors:
+            floor_canon = canonicalize(floor.name)
+            for term in search_terms:
+                score = fuzzy_match(term, floor_canon)
+                if score > best_score:
+                    best_score = score
+                    best_match = floor
+                    
+        if best_match and best_score >= 80:
+            _LOGGER.debug("[AreaResolver] Floor fuzzy match: '%s' → '%s' (score %d)", floor_name, best_match.name, best_score)
+            return best_match
+
+        # Fourth pass: partial match (name contains search term or vice versa, with safety guard)
         for floor in floors:
             floor_canon = canonicalize(floor.name)
             for term in search_terms:
                 if term in floor_canon or floor_canon in term:
-                    _LOGGER.debug("[AreaResolver] Floor partial match: '%s' → '%s'", floor_name, floor.name)
-                    return floor
+                    # Guard: Length ratio check (at least 50%)
+                    ratio = min(len(term), len(floor_canon)) / max(len(term), len(floor_canon))
+                    if ratio >= 0.5:
+                        _LOGGER.debug("[AreaResolver] Floor partial match (ratio %.2f): '%s' → '%s'", ratio, floor_name, floor.name)
+                        return floor
         
         _LOGGER.debug("[AreaResolver] No floor found for '%s'", floor_name)
         return None
@@ -158,6 +209,7 @@ You are a smart home helper that maps a user's spoken location to the correct in
         search_text: str = None,
         area_name: str = None,  # Convenience alias for search_text
         mode: str = "area",  # "area" or "floor"
+        candidates: List[str] = None,
         **_: Any
     ) -> Dict[str, Any]:
         """Resolve area/floor name with LLM fallback.
@@ -180,25 +232,38 @@ You are a smart home helper that maps a user's spoken location to the correct in
         if not text:
             return {"match": None}
 
-        # Check for global keywords locally (faster than LLM)
+        # 1. Check knowledge graph aliases first (learned by user)
+        if self.knowledge_graph:
+            if mode == "floor":
+                memory_match = await self.knowledge_graph.get_floor_alias(text.lower())
+            else:
+                memory_match = await self.knowledge_graph.get_area_alias(text.lower())
+                
+            if memory_match:
+                _LOGGER.debug("[AreaResolver] KnowledgeGraph hit: '%s' → '%s' (mode=%s)", text, memory_match, mode)
+                return {"match": memory_match}
+
+        # 2. Check for global keywords locally (faster than LLM)
         if text.lower() in GLOBAL_KEYWORDS:
             return {"match": "GLOBAL"}
 
-        # Try fast path first
+        # 3. Try fast path registry lookup
         if mode == "floor":
             floor_obj = self.find_floor(text)
             if floor_obj:
                 return {"match": floor_obj.name}
-            # Load candidates for LLM
-            floor_reg = fr.async_get(self.hass)
-            candidates = [f.name for f in floor_reg.async_list_floors() if f.name]
+            # Load candidates for LLM if not provided
+            if not candidates:
+                floor_reg = fr.async_get(self.hass)
+                candidates = [f.name for f in floor_reg.async_list_floors() if f.name]
         else:
             area_obj = self.find_area(text)
             if area_obj:
                 return {"match": area_obj.name}
-            # Load candidates for LLM
-            area_reg = ar.async_get(self.hass)
-            candidates = [a.name for a in area_reg.async_list_areas() if a.name]
+            # Load candidates for LLM if not provided
+            if not candidates:
+                area_reg = ar.async_get(self.hass)
+                candidates = [a.name for a in area_reg.async_list_areas() if a.name]
 
         if not candidates:
             return {"match": None}
@@ -244,9 +309,10 @@ You are a smart home helper that maps a user's spoken location to the correct in
             alias: The unknown text user said (e.g., "Ki-Bad")
             area_name: The actual area name (e.g., "Kinder Badezimmer")
         """
-        from .memory import MemoryCapability
-        memory = MemoryCapability(self.hass, self._config)
-        await memory.learn_area_alias(alias.lower(), area_name)
-        _LOGGER.info("[AreaResolver] Learned area alias: '%s' → '%s'", alias, area_name)
+        if self.knowledge_graph:
+            await self.knowledge_graph.learn_area_alias(alias.lower(), area_name)
+            _LOGGER.info("[AreaResolver] Learned area alias: '%s' → '%s'", alias, area_name)
+        else:
+            _LOGGER.warning("[AreaResolver] Could not learn alias (no knowledge_graph)")
 
 

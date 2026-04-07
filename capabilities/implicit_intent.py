@@ -2,27 +2,14 @@ import logging
 from typing import List
 
 from .base import Capability
-from ..utils.german_utils import IMPLICIT_PHRASES
+from ..constants.messages_de import IMPLICIT_PHRASES, IMPLICIT_INTENT_MAPPINGS
 
 _LOGGER = logging.getLogger(__name__)
 
 
 # Direct mappings for fast path (skip LLM)
 # Mappings for common implicit phrases to explicit commands
-DIRECT_MAPPINGS = {
-    "zu dunkel": "Mache das Licht heller",
-    "es ist zu dunkel": "Mache das Licht heller",
-    "zu hell": "Mache das Licht dunkler",
-    "es ist zu hell": "Mache das Licht dunkler",
-    "zu kalt": "Stelle die Heizung wärmer",
-    "es ist zu kalt": "Stelle die Heizung wärmer",
-    "zu warm": "Stelle die Heizung kälter",
-    "es ist zu warm": "Stelle die Heizung kälter",
-    "zu laut": "Mache die Lautstärke leiser",
-    "es ist zu laut": "Mache die Lautstärke leiser",
-    "zu leise": "Mache die Lautstärke lauter",
-    "es ist zu leise": "Mache die Lautstärke lauter",
-}
+DIRECT_MAPPINGS = IMPLICIT_INTENT_MAPPINGS
 
 
 class ImplicitIntentCapability(Capability):
@@ -33,7 +20,7 @@ class ImplicitIntentCapability(Capability):
     """
 
     name = "implicit_intent"
-    description = "Handles implicit intents like 'too dark' or 'too cold'."
+    description = "Handles implicit intents like 'too dark' or 'too cold' by translating them into explicit smart home commands. Uses fast path for common phrases and LLM for complex context-aware rephrasing."
 
     PROMPT = {
         "system": """You are a smart home intent parser.

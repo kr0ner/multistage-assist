@@ -26,10 +26,14 @@ class TestMcpToolCapability:
         hass = Mock()
         mcp = McpToolCapability(hass, {})
         
-        # Mock internal methods
-        # Use Mock for sync, AsyncMock for async
+        # Mock internal tools in the tools registry
+        # The capability uses self.tools[name].execute
+        list_entities_tool = AsyncMock()
+        list_entities_tool.execute = AsyncMock(return_value=[{"entity_id": "light.kitchen_main"}])
+        mcp.tools = {"list_entities": list_entities_tool}
+        
+        # Other mocks for the loop
         mcp.get_tools = Mock(return_value=[{"name": "list_entities"}])
-        mcp.list_entities = AsyncMock(return_value=[{"entity_id": "light.kitchen_main"}])
         mcp.get_entity_details = AsyncMock(return_value={})
         
         # Patch OllamaClient where it is imported (inside resolve_entity_via_llm)
@@ -48,8 +52,8 @@ class TestMcpToolCapability:
             
             assert result == ["light.kitchen_main"]
             
-            # Verify tool execution (internal)
-            mcp.list_entities.assert_called_with(area_name="kitchen")
+            # Verify tool execution via the tool's execute method
+            list_entities_tool.execute.assert_called_with(area_name="kitchen")
 
 @pytest.mark.asyncio
 class TestStage2CallsMcp:

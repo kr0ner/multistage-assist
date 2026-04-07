@@ -5,7 +5,7 @@ from .base import Capability
 from .keyword_intent import KeywordIntentCapability
 from .entity_resolver import EntityResolverCapability
 from .area_resolver import AreaResolverCapability
-from .memory import MemoryCapability
+from .knowledge_graph import KnowledgeGraphCapability
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class IntentResolutionCapability(Capability):
     """
 
     name = "intent_resolution"
-    description = "Resolves a command string to intent and entities."
+    description = "Orchestrates the conversion of a raw command string into a structured Intent + Entity set. Combines KeywordIntent extraction with hierarchical name/area resolution, context recovery from full text, and memory-based alias mapping. Manages the high-level intent-to-entity logic loop."
 
     ENTITY_MATCH_PROMPT = {
         "system": """

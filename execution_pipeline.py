@@ -33,6 +33,7 @@ class ExecutionResult:
     success: bool
     response: Any  # ConversationResponse
     pending_data: Optional[Dict[str, Any]] = None  # For disambiguation follow-up
+    escalate: bool = False
 
 
 class ExecutionPipeline:
@@ -207,6 +208,7 @@ class ExecutionPipeline:
             success=result.get("status") == "handled",
             response=result.get("result"),
             pending_data=result.get("pending_data"),
+            escalate=result.get("status") == "escalate",
         )
 
     async def re_prompt_pending(

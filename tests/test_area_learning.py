@@ -53,7 +53,8 @@ def mock_hass():
 
 @pytest.fixture
 def mock_config():
-    return {"reranker_ip": "localhost", "reranker_port": 9876}
+    from multistage_assist.const import CONF_CACHE_ADDON_IP, CONF_CACHE_ADDON_PORT
+    return {CONF_CACHE_ADDON_IP: "localhost", CONF_CACHE_ADDON_PORT: 9876}
 
 
 class TestAreaResolverUnknownArea:
@@ -181,7 +182,8 @@ class TestConversationAreaLearning:
             
             # Mock the AreaResolverCapability inside stage2
             with patch('multistage_assist.capabilities.area_resolver.AreaResolverCapability') as mock_resolver_class:
-                mock_resolver = MagicMock()
+                mock_resolver = AsyncMock() # Must be AsyncMock for .run and .learn_area_alias
+                mock_resolver.run = AsyncMock(return_value={"match": "Kinder Badezimmer"})
                 mock_resolver.learn_area_alias = AsyncMock()
                 mock_resolver_class.return_value = mock_resolver
                 
@@ -192,15 +194,16 @@ class TestConversationAreaLearning:
                 # Call continue_pending directly on stage2
                 result = await stage2.continue_pending(user_input, pending_data)
                 
-                # Verify alias was learned
-                mock_resolver.learn_area_alias.assert_called_once_with(
-                    "Ki-Bad", "Kinder Badezimmer"
-                )
-                
-                # Verify success result with rerun instructions
+                # Verify learning request is returned in context (CommandProcessor handles it)
                 assert result.status == "success"
-                assert result.params["rerun_command"] is True
-                assert result.params["learned_alias"] == "Ki-Bad"
+                assert result.params["rerun_command"] is True # Or learned_alias check matches your implementation
+                # result.context["learning_data"] is the new way it's handled
+                assert result.context["area_learned"] is True
+                assert result.context["learning_data"]["source"] == "Ki-Bad"
+                assert result.context["learning_data"]["target"] == "Kinder Badezimmer"
+                
+                # Verify alias was NOT learned directly yet (reserved for confirmation)
+                mock_resolver.learn_area_alias.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_continue_area_learning_reprompts_on_no_match(self, mock_hass, mock_config):
@@ -271,22 +274,27 @@ class TestAreaResolverLearnAlias:
 
     @pytest.mark.asyncio
     async def test_learn_area_alias_calls_memory(self, mock_hass, mock_config):
-        """learn_area_alias should call MemoryCapability.learn_area_alias."""
+        """learn_area_alias should call KnowledgeGraphCapability.learn_area_alias."""
         from multistage_assist.capabilities.area_resolver import AreaResolverCapability
         
-        # Patch MemoryCapability where it's imported (from .memory)
-        with patch('multistage_assist.capabilities.memory.MemoryCapability') as mock_memory_class:
-            mock_memory = MagicMock()
-            mock_memory.learn_area_alias = AsyncMock()
-            mock_memory_class.return_value = mock_memory
+        # Patch KnowledgeGraphCapability where it's imported (from .knowledge_graph)
+        with patch('multistage_assist.capabilities.knowledge_graph.KnowledgeGraphCapability') as mock_memory_class:
+            memory = AsyncMock()
+            memory.get_area_alias = AsyncMock(return_value=None)
+            memory.get_floor_alias = AsyncMock(return_value=None)
+            memory.get_entity_alias = AsyncMock(return_value=None)
+            memory.learn_area_alias = AsyncMock()
+            mock_memory_class.return_value = memory
             
             with patch.object(AreaResolverCapability, '__init__', lambda self, h, c: None):
                 resolver = AreaResolverCapability.__new__(AreaResolverCapability)
                 resolver.hass = mock_hass
                 resolver._config = mock_config
+                # MUST inject knowledge_graph separately if __init__ is skipped
+                resolver.knowledge_graph = memory
                 
                 await resolver.learn_area_alias("ki-bad", "Kinder Badezimmer")
                 
-                mock_memory.learn_area_alias.assert_called_once_with(
+                memory.learn_area_alias.assert_called_once_with(
                     "ki-bad", "Kinder Badezimmer"
                 )

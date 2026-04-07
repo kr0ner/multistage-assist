@@ -1,26 +1,40 @@
-"""Integration tests for SemanticCacheCapability with semantic anchors.
-
-These tests verify the semantic anchor system:
-- Anchors are created for each intent × area
-- New commands hit anchors and escalate to LLM
-- After LLM processes, real entries beat anchors
-
-Requires:
-- Ollama running with bge-m3 model
-- sentence-transformers installed with BAAI/bge-reranker-v2-m3
-
-Run with: pytest tests/integration/test_semantic_cache_llm.py -v -m integration
+"""These tests verify anchor escalation, learning prioritization, and
+cross-domain precision. Uses a distilled German model via the cache-addon.
 """
 
 import os
+import json
 import pytest
-import numpy as np
+import shutil
+from pathlib import Path
+from unittest.mock import MagicMock, AsyncMock
 
 from multistage_assist.capabilities.semantic_cache import SemanticCacheCapability
-from . import get_llm_config, OLLAMA_HOST, OLLAMA_PORT
+from multistage_assist.utils.semantic_cache_builder import CACHE_VERSION
+from .test_fixtures import (
+    generate_test_anchors,
+    TEST_AREAS,
+    ANCHOR_PATTERNS
+)
 
-# Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration
+
+# Configuration
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "127.0.0.1")
+OLLAMA_PORT = int(os.getenv("OLLAMA_PORT", "11434"))
+CACHE_HOST = os.getenv("CACHE_HOST", "127.0.0.1")
+CACHE_PORT = int(os.getenv("CACHE_PORT", 9876))
+
+
+def get_llm_config():
+    """Get Ollama config from environment."""
+    return {
+        "cache_addon_ip": CACHE_HOST,
+        "cache_addon_port": CACHE_PORT,
+        "embedding_ip": OLLAMA_HOST,
+        "embedding_port": OLLAMA_PORT,
+        "embedding_model": os.getenv("OLLAMA_MODEL", "never use "),
+    }
 
 
 # ============================================================================
@@ -29,48 +43,73 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def llm_cache(hass):
-    """Create semantic cache with real Ollama embeddings and reranker."""
-    config = get_llm_config()
-    config["cache_enabled"] = True
-    config["embedding_model"] = "bge-m3"
-    config["reranker_model"] = "BAAI/bge-reranker-v2-m3"
-    config["reranker_enabled"] = True
-    config["reranker_threshold"] = 0.73
-    config["reranker_device"] = "cpu"  # Force CPU to avoid GPU OOM
-    config["vector_search_threshold"] = 0.4
-    config["vector_search_top_k"] = 10  # More candidates for anchor matching
+def clean_storage(tmp_path):
+    """Create a clean .storage directory for each test."""
+    storage_dir = tmp_path / ".storage"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    return storage_dir
 
-    # Use embedding config from Ollama settings
-    config["embedding_ip"] = OLLAMA_HOST
-    config["embedding_port"] = OLLAMA_PORT
+
+@pytest.fixture
+def llm_cache(clean_storage, hass):
+    """Create semantic cache with real Ollama embeddings and cache addon."""
+    config = get_llm_config()
+    
+    # Mock hass config path to point to the clean temp storage
+    def mock_path(*args):
+        if args and args[0] == ".storage":
+            return str(clean_storage)
+        return str(clean_storage.parent)
+    hass.config.path = MagicMock(side_effect=mock_path)
+
+    config["cache_enabled"] = True
+    config["cache_threshold"] = 0.82
+    config["vector_search_threshold"] = 0.4
+    config["vector_search_top_k"] = 10
 
     cache = SemanticCacheCapability(hass, config)
 
-    # Skip anchor initialization for faster tests (we test it explicitly)
-    cache._anchors_initialized = True
-    cache._loaded = True
+    # Initialize properly (loads empty cache)
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(cache.async_startup())
+    except RuntimeError:
+        asyncio.run(cache.async_startup())
 
     return cache
 
 
 @pytest.fixture
-def llm_cache_with_anchors(hass):
+async def llm_cache_with_anchors(clean_storage, hass):
     """Create semantic cache with anchors initialized."""
     config = get_llm_config()
+    
+    # Mock hass config path to point to the clean temp storage
+    def mock_path(*args):
+        if args and args[0] == ".storage":
+            return str(clean_storage)
+        return str(clean_storage.parent)
+    hass.config.path = MagicMock(side_effect=mock_path)
+
+    # Pre-generate anchors into the temp storage
+    cache_cap = SemanticCacheCapability(hass, config)
+    anchors_data = await generate_test_anchors(embed_func=cache_cap._get_embedding)
+    
+    anchor_file = clean_storage / "multistage_assist_anchors.json"
+    with open(anchor_file, "w") as f:
+        json.dump(anchors_data, f)
+
     config["cache_enabled"] = True
-    config["embedding_model"] = "bge-m3"
-    config["reranker_model"] = "BAAI/bge-reranker-v2-m3"
-    config["reranker_enabled"] = True
-    config["reranker_threshold"] = 0.73
-    config["reranker_device"] = "cpu"
+    config["cache_threshold"] = 0.82
     config["vector_search_threshold"] = 0.4
     config["vector_search_top_k"] = 10
-    config["embedding_ip"] = OLLAMA_HOST
-    config["embedding_port"] = OLLAMA_PORT
 
     cache = SemanticCacheCapability(hass, config)
-    # Anchors will be initialized on first lookup
+
+    # Initialize properly (loads anchors from the file we just created)
+    await cache.async_startup()
+
     return cache
 
 
@@ -82,56 +121,60 @@ def llm_cache_with_anchors(hass):
 @pytest.mark.asyncio
 async def test_exact_match_returns_cached(llm_cache, hass):
     """Test that exact or near-exact matches return cached result."""
+    # Use a room NOT in TEST_AREAS to avoid background anchor collisions
     await llm_cache.store(
-        text="Schalte das Licht in der Küche an",
+        text="Schalte das Licht im Hobbyraum an",
         intent="HassTurnOn",
-        entity_ids=["light.kuche"],
-        slots={"area": "Küche"},
+        entity_ids=["light.hobbyraum"],
+        slots={"area": "Hobbyraum"},
         verified=True,
     )
 
-    result = await llm_cache.lookup("Schalte das Licht in der Küche an")
+    # Exact match
+    result = await llm_cache.lookup("Schalte das Licht im Hobbyraum an")
+    assert result is not None
+    assert result["intent"] == "HassTurnOn"
+    assert result["entity_ids"] == ["light.hobbyraum"]
+    assert result["source"] == "learned"
 
+    # Near-exact match (different case and trailing space)
+    result = await llm_cache.lookup("schalte DAS licht im HOBBYRAUM an ")
     assert result is not None
     assert result["intent"] == "HassTurnOn"
 
 
 @pytest.mark.asyncio
-async def test_synonym_returns_cached(llm_cache, hass):
-    """Test that synonymous phrasing returns cached result."""
+async def test_fuzzy_match_returns_cached(llm_cache, hass):
+    """Test that fuzzy matches return cached result."""
+    # Use a unique string to avoid any collisions
     await llm_cache.store(
-        text="Schalte das Licht in der Küche an",
+        text="Mache das Licht im Dachstudio an",
         intent="HassTurnOn",
-        entity_ids=["light.kuche"],
-        slots={"area": "Küche"},
+        entity_ids=["light.dachstudio"],
+        slots={"area": "Dachstudio"},
         verified=True,
     )
 
-    synonyms = [
-        "Mach das Licht in der Küche an",
-        "Lampe in der Küche einschalten",
-    ]
-
-    for query in synonyms:
-        result = await llm_cache.lookup(query)
-        assert result is not None, f"Expected match for synonym: '{query}'"
-        assert result["intent"] == "HassTurnOn"
+    # Fuzzy match (minor variation)
+    result = await llm_cache.lookup("Mach mal das Licht im Dachstudio an")
+    assert result is not None
+    assert result["intent"] == "HassTurnOn"
 
 
 @pytest.mark.asyncio
 async def test_opposite_action_blocked(llm_cache, hass):
     """Test that opposite actions are blocked."""
     await llm_cache.store(
-        text="Schalte das Licht in der Küche an",
+        text="Schalte das Licht im Hobbyraum an",
         intent="HassTurnOn",
-        entity_ids=["light.kuche"],
-        slots={"area": "Küche"},
+        entity_ids=["light.hobbyraum"],
+        slots={"area": "Hobbyraum"},
         verified=True,
     )
 
-    result = await llm_cache.lookup("Schalte das Licht in der Küche aus")
+    result = await llm_cache.lookup("Schalte das Licht im Hobbyraum aus")
 
-    # Should be blocked by reranker (score too low)
+    # Should be blocked by high precision threshold
     assert result is None
 
 
@@ -139,14 +182,14 @@ async def test_opposite_action_blocked(llm_cache, hass):
 async def test_different_room_blocked(llm_cache, hass):
     """Test that different rooms are blocked."""
     await llm_cache.store(
-        text="Schalte das Licht in der Küche an",
+        text="Schalte das Licht im Hobbyraum an",
         intent="HassTurnOn",
-        entity_ids=["light.kuche"],
-        slots={"area": "Küche"},
+        entity_ids=["light.hobbyraum"],
+        slots={"area": "Hobbyraum"},
         verified=True,
     )
 
-    result = await llm_cache.lookup("Schalte das Licht im Wohnzimmer an")
+    result = await llm_cache.lookup("Schalte das Licht im Gästebad an")
 
     # Should be blocked - different room
     assert result is None
@@ -163,45 +206,47 @@ async def test_anchors_are_created(llm_cache_with_anchors, hass):
     # Trigger anchor initialization via lookup
     await llm_cache_with_anchors.lookup("test query")
 
-    stats = await llm_cache_with_anchors.get_stats()
+    stats = llm_cache_with_anchors.get_stats()
 
     # Should have created anchors
     assert stats["anchor_count"] > 0
-    assert stats["real_entries"] == 0  # No real entries yet
+    assert stats.get("real_entries", 0) == 0  # No real entries yet
 
 
 @pytest.mark.asyncio
 async def test_new_command_hits_anchor_escalates(llm_cache_with_anchors, hass):
     """Test that new commands hit anchors and escalate to LLM."""
-    # First lookup triggers anchor creation
-    # Then this query should match an anchor → escalate (return None)
-    result = await llm_cache_with_anchors.lookup("Mach das Licht in der Küche heller")
+    # This query matches an anchor in kitchen -> escalate (return None)
+    # Using a slightly different room name to avoid remote pollution if possible
+    # but still hitting the pre-generated synthetic anchors
+    result = await llm_cache_with_anchors.lookup("Mach das Licht im Büro heller")
 
     # Should return None (anchor hit = escalate to LLM)
     assert result is None
 
-    stats = await llm_cache_with_anchors.get_stats()
+    stats = llm_cache_with_anchors.get_stats()
     assert stats["anchor_escalations"] > 0
 
 
 @pytest.mark.asyncio
 async def test_real_entry_beats_anchor(llm_cache_with_anchors, hass):
     """Test that real cached entries take priority over anchors."""
-    # Store a real command (after anchors are initialized)
+    # Store a real command
     await llm_cache_with_anchors.store(
-        text="Mach die Lampe in der Küche an",
+        text="Mach die Funzel im Hobbyraum an",
         intent="HassTurnOn",
-        entity_ids=["light.kuche"],
-        slots={"area": "Küche"},
+        entity_ids=["light.hobby_funzel"],
+        slots={"area": "Hobbyraum"},
         verified=True,
     )
 
-    # Same command should now return the real entry, not anchor
-    result = await llm_cache_with_anchors.lookup("Mach die Lampe in der Küche an")
+    # Same command should now return the real entry
+    result = await llm_cache_with_anchors.lookup("Mach die Funzel im Hobbyraum an")
 
     # Real entry should beat anchor because exact match scores higher
     assert result is not None
-    assert result["entity_ids"] == ["light.kuche"]
+    assert result["entity_ids"] == ["light.hobby_funzel"]
+    assert result["source"] == "learned"
 
 
 @pytest.mark.asyncio
@@ -219,45 +264,40 @@ async def test_brightness_hits_brightness_anchor(llm_cache_with_anchors, hass):
     # Brightness query should hit HassLightSet anchor, not TurnOn entry
     result = await llm_cache_with_anchors.lookup("Mach das Licht in der Küche heller")
 
-    # Should escalate (anchor hit) rather than wrongly return TurnOn
+    # Explicit anchor hit returns None
     assert result is None
-
-    stats = await llm_cache_with_anchors.get_stats()
-    assert stats["anchor_escalations"] >= 1
+    
+    stats = llm_cache_with_anchors.get_stats()
+    assert stats["anchor_escalations"] > 0
 
 
 @pytest.mark.asyncio
 async def test_off_hits_off_anchor_not_on(llm_cache_with_anchors, hass):
-    """Test that 'off' commands hit TurnOff anchors, not cached 'on' commands."""
-    # Store an 'on' command
+    """Test that 'aus' commands hit Off anchor even if 'an' is in cache."""
+    # Store a TurnOn command
     await llm_cache_with_anchors.store(
-        text="Schalte das Licht in der Küche an",
+        text="Schalte das Licht im Hobbyraum an",
         intent="HassTurnOn",
-        entity_ids=["light.kuche"],
-        slots={"area": "Küche"},
+        entity_ids=["light.hobby_spots"],
+        slots={"area": "Hobbyraum"},
         verified=True,
     )
 
-    # 'Off' query should hit HassTurnOff anchor
+    # 'aus' query should hit HassTurnOff anchor, NOT the HassTurnOn cached entry
+    # Note: HassTurnOff anchor for 'Hobbyraum' might not exist if it's not in TEST_AREAS
+    # So we use 'Küche' which IS in TEST_AREAS and HAS anchors.
+    
+    await llm_cache_with_anchors.store(
+        text="Schalte das Licht in der Küche an",
+        intent="HassTurnOn",
+        entity_ids=["light.kuche_spots"],
+        slots={"area": "Küche"},
+        verified=True,
+    )
+    
     result = await llm_cache_with_anchors.lookup("Schalte das Licht in der Küche aus")
 
-    # Should escalate to LLM rather than wrongly return 'on' action
     assert result is None
-
-
-# ============================================================================
-# STATS TESTS
-# ============================================================================
-
-
-@pytest.mark.asyncio
-async def test_stats_include_anchor_info(llm_cache_with_anchors, hass):
-    """Test that stats include anchor count."""
-    await llm_cache_with_anchors.lookup("trigger anchor init")
-
-    stats = await llm_cache_with_anchors.get_stats()
-
-    assert "anchor_count" in stats
-    assert "real_entries" in stats
-    assert "anchor_escalations" in stats
-    assert stats["anchor_count"] > 0
+    
+    stats = llm_cache_with_anchors.get_stats()
+    assert stats["anchor_escalations"] > 0

@@ -12,18 +12,17 @@ from .const import (
     CONF_STAGE1_PORT,
     CONF_STAGE1_MODEL,
     CONF_GOOGLE_API_KEY,
+    CONF_OPENAI_API_KEY,
+    CONF_ANTHROPIC_API_KEY,
+    CONF_GROK_API_KEY,
+    CONF_STAGE3_PROVIDER,
     CONF_STAGE3_MODEL,
-    CONF_EMBEDDING_IP,
-    CONF_EMBEDDING_PORT,
-    CONF_EMBEDDING_MODEL,
-    CONF_RERANKER_IP,
-    CONF_RERANKER_PORT,
+    CONF_CACHE_ADDON_IP,
+    CONF_CACHE_ADDON_PORT,
 )
 
-# Default embedding model (multilingual, good German support)
-DEFAULT_EMBEDDING_MODEL = "mxbai-embed-large"
-# Default reranker hostname for HA addon
-DEFAULT_RERANKER_HOST = "local-semantic-reranker"
+# Default cache addon hostname for HA addon
+DEFAULT_CACHE_ADDON_HOST = "local-multistage-cache"
 
 
 class MultiStageAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -36,16 +35,12 @@ class MultiStageAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
-            # Set embedding defaults to stage1 values if not provided
-            if not user_input.get(CONF_EMBEDDING_IP):
-                user_input[CONF_EMBEDDING_IP] = user_input.get(CONF_STAGE1_IP, "127.0.0.1")
-            if not user_input.get(CONF_EMBEDDING_PORT):
-                user_input[CONF_EMBEDDING_PORT] = user_input.get(CONF_STAGE1_PORT, 11434)
-            # Set reranker defaults if not provided
-            if not user_input.get(CONF_RERANKER_IP):
-                user_input[CONF_RERANKER_IP] = DEFAULT_RERANKER_HOST
-            if not user_input.get(CONF_RERANKER_PORT):
-                user_input[CONF_RERANKER_PORT] = 9876
+
+            # Set addon defaults if not provided
+            if not user_input.get(CONF_CACHE_ADDON_IP):
+                user_input[CONF_CACHE_ADDON_IP] = DEFAULT_CACHE_ADDON_HOST
+            if not user_input.get(CONF_CACHE_ADDON_PORT):
+                user_input[CONF_CACHE_ADDON_PORT] = 9876
             return self.async_create_entry(title="Multi-Stage Assist", data=user_input)
 
         schema = vol.Schema(
@@ -53,20 +48,20 @@ class MultiStageAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # Stage 1 (Local Control)
                 vol.Optional(CONF_STAGE1_IP, default="127.0.0.1"): str,
                 vol.Optional(CONF_STAGE1_PORT, default=11434): int,
-                vol.Optional(CONF_STAGE1_MODEL, default="qwen3:4b-instruct"): str,
+                vol.Optional(CONF_STAGE1_MODEL, default="qwen3.5:4b-q4_K_M"): str,
                 
-                # Stage 3 (Google Gemini Chat)
-                vol.Required(CONF_GOOGLE_API_KEY): str,
-                vol.Optional(CONF_STAGE3_MODEL, default="gemini-1.5-flash"): str,
+                # Stage 3 (Cloud LLM)
+                vol.Optional(CONF_STAGE3_PROVIDER, default="gemini"): vol.In(["gemini", "openai", "anthropic", "grok"]),
+                vol.Optional(CONF_STAGE3_MODEL, default="gemini-2.0-flash-lite"): str,
+                vol.Optional(CONF_GOOGLE_API_KEY, default=""): str,
+                vol.Optional(CONF_OPENAI_API_KEY, default=""): str,
+                vol.Optional(CONF_ANTHROPIC_API_KEY, default=""): str,
+                vol.Optional(CONF_GROK_API_KEY, default=""): str,
                 
-                # Embedding (Semantic Cache) - defaults to stage1 settings
-                vol.Optional(CONF_EMBEDDING_IP, default=""): str,  # Empty = use stage1_ip
-                vol.Optional(CONF_EMBEDDING_PORT, default=0): int,  # 0 = use stage1_port
-                vol.Optional(CONF_EMBEDDING_MODEL, default=DEFAULT_EMBEDDING_MODEL): str,
                 
-                # Reranker (Semantic Cache validation)
-                vol.Optional(CONF_RERANKER_IP, default=DEFAULT_RERANKER_HOST): str,
-                vol.Optional(CONF_RERANKER_PORT, default=9876): int,
+                # Semantic Cache Addon
+                vol.Optional(CONF_CACHE_ADDON_IP, default=DEFAULT_CACHE_ADDON_HOST): str,
+                vol.Optional(CONF_CACHE_ADDON_PORT, default=9876): int,
             }
         )
 
@@ -88,47 +83,39 @@ class MultiStageAssistOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None):
         """Manage the options."""
         if user_input is not None:
-            # Set embedding defaults to stage1 values if empty/0
-            if not user_input.get(CONF_EMBEDDING_IP):
-                user_input[CONF_EMBEDDING_IP] = user_input.get(CONF_STAGE1_IP, "127.0.0.1")
-            if not user_input.get(CONF_EMBEDDING_PORT) or user_input.get(CONF_EMBEDDING_PORT) == 0:
-                user_input[CONF_EMBEDDING_PORT] = user_input.get(CONF_STAGE1_PORT, 11434)
-            # Set reranker defaults if empty/0
-            if not user_input.get(CONF_RERANKER_IP):
-                user_input[CONF_RERANKER_IP] = DEFAULT_RERANKER_HOST
-            if not user_input.get(CONF_RERANKER_PORT) or user_input.get(CONF_RERANKER_PORT) == 0:
-                user_input[CONF_RERANKER_PORT] = 9876
+
+            # Set addon defaults if empty/0
+            if not user_input.get(CONF_CACHE_ADDON_IP):
+                user_input[CONF_CACHE_ADDON_IP] = DEFAULT_CACHE_ADDON_HOST
+            if not user_input.get(CONF_CACHE_ADDON_PORT) or user_input.get(CONF_CACHE_ADDON_PORT) == 0:
+                user_input[CONF_CACHE_ADDON_PORT] = 9876
             return self.async_create_entry(title="", data=user_input)
 
         # Use self.config_entry property (provided by base class)
         current_config = {**self.config_entry.data, **self.config_entry.options}
         
-        # Get current embedding values, defaulting to stage1 if not set
-        current_emb_ip = current_config.get(CONF_EMBEDDING_IP) or current_config.get(CONF_STAGE1_IP, "127.0.0.1")
-        current_emb_port = current_config.get(CONF_EMBEDDING_PORT) or current_config.get(CONF_STAGE1_PORT, 11434)
-        current_emb_model = current_config.get(CONF_EMBEDDING_MODEL, DEFAULT_EMBEDDING_MODEL)
         
-        # Get current reranker values
-        current_reranker_ip = current_config.get(CONF_RERANKER_IP, DEFAULT_RERANKER_HOST)
-        current_reranker_port = current_config.get(CONF_RERANKER_PORT, 9876)
+        # Get current addon values
+        current_addon_ip = current_config.get(CONF_CACHE_ADDON_IP) or DEFAULT_CACHE_ADDON_HOST
+        current_addon_port = current_config.get(CONF_CACHE_ADDON_PORT) or 9876
 
         schema = vol.Schema(
             {
                 vol.Optional(CONF_STAGE1_IP, default=current_config.get(CONF_STAGE1_IP, "127.0.0.1")): str,
                 vol.Optional(CONF_STAGE1_PORT, default=current_config.get(CONF_STAGE1_PORT, 11434)): int,
-                vol.Optional(CONF_STAGE1_MODEL, default=current_config.get(CONF_STAGE1_MODEL, "qwen3:4b-instruct")): str,
+                vol.Optional(CONF_STAGE1_MODEL, default=current_config.get(CONF_STAGE1_MODEL, "qwen3.5:4b-q4_K_M")): str,
                 
-                vol.Required(CONF_GOOGLE_API_KEY, default=current_config.get(CONF_GOOGLE_API_KEY, "")): str,
-                vol.Optional(CONF_STAGE3_MODEL, default=current_config.get(CONF_STAGE3_MODEL, "gemini-1.5-flash")): str,
+                vol.Optional(CONF_STAGE3_PROVIDER, default=current_config.get(CONF_STAGE3_PROVIDER, "gemini")): vol.In(["gemini", "openai", "anthropic", "grok"]),
+                vol.Optional(CONF_STAGE3_MODEL, default=current_config.get(CONF_STAGE3_MODEL, "gemini-2.0-flash-lite")): str,
+                vol.Optional(CONF_GOOGLE_API_KEY, default=current_config.get(CONF_GOOGLE_API_KEY, "")): str,
+                vol.Optional(CONF_OPENAI_API_KEY, default=current_config.get(CONF_OPENAI_API_KEY, "")): str,
+                vol.Optional(CONF_ANTHROPIC_API_KEY, default=current_config.get(CONF_ANTHROPIC_API_KEY, "")): str,
+                vol.Optional(CONF_GROK_API_KEY, default=current_config.get(CONF_GROK_API_KEY, "")): str,
                 
-                # Embedding config
-                vol.Optional(CONF_EMBEDDING_IP, default=current_emb_ip): str,
-                vol.Optional(CONF_EMBEDDING_PORT, default=current_emb_port): int,
-                vol.Optional(CONF_EMBEDDING_MODEL, default=current_emb_model): str,
                 
-                # Reranker config
-                vol.Optional(CONF_RERANKER_IP, default=current_reranker_ip): str,
-                vol.Optional(CONF_RERANKER_PORT, default=current_reranker_port): int,
+                # Cache Addon config
+                vol.Optional(CONF_CACHE_ADDON_IP, default=current_addon_ip): str,
+                vol.Optional(CONF_CACHE_ADDON_PORT, default=current_addon_port): int,
             }
         )
 

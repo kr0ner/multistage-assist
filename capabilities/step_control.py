@@ -37,7 +37,7 @@ class StepControlCapability(Capability):
     """
     
     name = "step_control"
-    description = "Calculate step values for relative adjustments (heller/dunkler, wärmer/kälter)."
+    description = "Perform relative hardware adjustments (e.g., 'heller', 'wärmer', 'halb zu') across multiple domains (light, cover, fan, climate). Calculates precise target values based on domain-specific step-percentages or absolute increments, while handling off-to-on transitions and safety bounds."
     
     # Default step configuration (fallback if not in DOMAIN_CONFIG)
     DEFAULT_STEP_PERCENT = 25

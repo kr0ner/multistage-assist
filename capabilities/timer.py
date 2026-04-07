@@ -10,6 +10,7 @@ from custom_components.multistage_assist.conversation_utils import (
     format_seconds_to_string,
 )
 from ..utils.fuzzy_utils import fuzzy_match_candidates
+from ..constants.messages_de import TIMER_MESSAGES
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -19,30 +20,23 @@ class TimerCapability(MultiTurnCapability):
     """Set timers on mobile devices."""
     
     name = "timer"
-    description = "Set timers on mobile devices."
+    description = "Set and manage timers/kitchen timers on mobile devices. Supports extracting labels from natural language (e.g. 'Pasta Timer'). Handles multi-turn for missing duration or device."
     
     # Field definitions
     MANDATORY_FIELDS = ["duration", "device_id"]
     OPTIONAL_FIELDS = ["description"]
     
     FIELD_PROMPTS = {
-        "duration": "Wie lange soll der Timer laufen?",
-        "device_id": "Auf welchem Gerät?",  # Will be customized with device list
+        "duration": TIMER_MESSAGES["ask_duration"],
+        "device_id": TIMER_MESSAGES["ask_device"],
     }
     
     # Prompt to extract timer description from natural language
     PROMPT = {
-        "system": """Extract a short, descriptive timer label from the user's request.
-If the user mentions what the timer is for (e.g., "remind me pasta is done", "Nudeln fertig", "Pizza aus dem Ofen"), 
-extract a 2-3 word label. Otherwise return empty.
+        "system": """Extract a short, descriptive timer label (max 2-3 words) from the user's request. 
+If no clear purpose is mentioned, return an empty string.
 
-Examples:
-"Setze einen Timer für 5 Minuten der mich daran erinnert, dass die Nudeln fertig sind" → {"description": "Nudeln"}
-"Timer für 10 Minuten damit die Pizza nicht verbrennt" → {"description": "Pizza"}
-"5 Minuten Timer für den Tee" → {"description": "Tee"}
-"Timer für 3 Minuten" → {"description": ""}
-"Stelle einen Timer auf 20 Minuten" → {"description": ""}
-""",
+Example: "5 Minuten Timer für den Tee" → {"description": "Tee"}""",
         "schema": {
             "type": "object",
             "properties": {
@@ -146,12 +140,12 @@ Examples:
             if not self._mobile_services:
                 return {
                     "status": "handled",
-                    "result": await make_response("Keine mobilen Geräte gefunden.", user_input),
+                    "result": await make_response(TIMER_MESSAGES["no_devices"], user_input),
                 }
             
             # Show available devices
             names = [d["name"] for d in self._mobile_services]
-            prompt = f"Auf welchem Gerät? ({', '.join(names)})"
+            prompt = TIMER_MESSAGES["ask_device"].format(devices=', '.join(names))
             
             return {
                 "status": "handled",
@@ -196,7 +190,7 @@ Examples:
                 return {
                     "status": "handled",
                     "result": await make_response(
-                        "Ich habe die Zeit nicht verstanden. Bitte sag z.B. '5 Minuten'.",
+                        TIMER_MESSAGES["duration_not_understood"],
                         user_input,
                     ),
                     "pending_data": pending_data,
@@ -209,7 +203,7 @@ Examples:
                 return {
                     "status": "handled",
                     "result": await make_response(
-                        "Das habe ich nicht verstanden. Welches Gerät?", user_input
+                        TIMER_MESSAGES["device_not_understood"], user_input
                     ),
                     "pending_data": pending_data,
                 }
@@ -250,8 +244,12 @@ Examples:
         duration_str = format_seconds_to_string(duration)
         
         if description:
-            return f"Timer '{description}' für {duration_str} auf {device_friendly}?"
-        return f"Timer für {duration_str} auf {device_friendly}?"
+            return TIMER_MESSAGES["confirm_named"].format(
+                description=description, duration=duration_str, device=device_friendly
+            )
+        return TIMER_MESSAGES["confirm_unnamed"].format(
+            duration=duration_str, device=device_friendly
+        )
     
     async def _execute(self, user_input, data: Dict[str, Any]) -> Dict[str, Any]:
         """Execute the timer."""
@@ -267,9 +265,13 @@ Examples:
         duration_str = format_seconds_to_string(duration)
         
         if description:
-            response = f"Timer '{description}' für {duration_str} auf {device_friendly} gestellt."
+            response = TIMER_MESSAGES["set_named"].format(
+                description=description, duration=duration_str, device=device_friendly
+            )
         else:
-            response = f"Timer für {duration_str} auf {device_friendly} gestellt."
+            response = TIMER_MESSAGES["set_unnamed"].format(
+                duration=duration_str, device=device_friendly
+            )
         
         return {
             "status": "handled",

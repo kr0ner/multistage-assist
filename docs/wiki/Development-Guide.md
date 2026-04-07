@@ -16,7 +16,7 @@ multistage_assist/
 ├── base_stage.py          # Base class for stages
 ├── stage_result.py        # StageResult data class
 ├── capabilities/          # Modular capability implementations
-│   ├── semantic_cache.py      # Cache lookup via reranker add-on
+│   ├── semantic_cache.py      # Cache lookup via cache add-on
 │   ├── semantic_cache_builder.py  # Anchor pattern generation
 │   ├── keyword_intent.py      # LLM-based intent detection
 │   ├── entity_resolver.py     # Entity ID resolution
@@ -48,7 +48,7 @@ User Input → conversation.py
     ↓ (escalate if no match)
 ┌─────────────────────────────────────────────┐
 │ Stage 1: Cache (stage1_cache.py)            │
-│ • Semantic cache lookup via reranker add-on │
+│ • Semantic cache lookup via cache add-on │
 │ • Returns cached intent + entities          │
 │ → Returns success if cache hit              │
 └─────────────────────────────────────────────┘
@@ -149,7 +149,7 @@ pytest tests/test_semantic_cache.py -v
 
 Tests require:
 - Running Ollama instance (for LLM tests)
-- Reranker add-on (for cache tests)
+- cache add-on (for cache tests)
 - Configure in `pytest.ini` or environment variables
 
 ## Key Conventions

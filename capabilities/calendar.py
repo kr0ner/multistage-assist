@@ -11,6 +11,7 @@ from homeassistant.components import conversation
 from .multi_turn_base import MultiTurnCapability
 from custom_components.multistage_assist.conversation_utils import make_response
 from ..utils.fuzzy_utils import fuzzy_match_candidates
+from ..constants.messages_de import CALENDAR_MESSAGES, CONFIRMATION_TEMPLATES
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ class CalendarCapability(MultiTurnCapability):
     """Create calendar events on Home Assistant calendars."""
     
     name = "calendar"
-    description = "Create calendar events on connected calendars."
+    description = "Create and schedule events on Home Assistant calendars. Supports natural language time extraction, alias handling for calendar names, and multi-turn interaction for missing fields (summary, datetime, calendar)."
     
     # Field definitions
     # Note: datetime is special - either start_date OR start_date_time is required
@@ -28,9 +29,9 @@ class CalendarCapability(MultiTurnCapability):
     OPTIONAL_FIELDS = ["description", "location", "duration_minutes"]
     
     FIELD_PROMPTS = {
-        "summary": "Wie soll der Termin heißen?",
-        "datetime": "Wann soll der Termin sein?",
-        "calendar_id": "In welchen Kalender?",  # Will be customized with calendar list
+        "summary": CALENDAR_MESSAGES["ask_summary"],
+        "datetime": CALENDAR_MESSAGES["ask_datetime"],
+        "calendar_id": CALENDAR_MESSAGES["ask_calendar"],
     }
     
     # Prompt to extract calendar event details from natural language
@@ -139,7 +140,8 @@ Examples:
     async def _extract_event_details(self, text: str) -> Optional[Dict[str, Any]]:
         """Extract event details using LLM."""
         try:
-            today = datetime.now().strftime("%Y-%m-%d")
+            import homeassistant.util.dt as dt_util
+            today = dt_util.now().strftime("%Y-%m-%d")
             prompt = dict(self.PROMPT)
             prompt["system"] = prompt["system"].format(today=today)
             
@@ -196,7 +198,7 @@ Examples:
         if field == "datetime":
             return {
                 "status": "handled",
-                "result": await make_response("Wann soll der Termin sein?", user_input),
+                "result": await make_response(CALENDAR_MESSAGES["ask_datetime"], user_input),
                 "pending_data": {
                     "type": self.name,
                     "step": "ask_datetime",
@@ -209,7 +211,7 @@ Examples:
                 return {
                     "status": "handled",
                     "result": await make_response(
-                        "Keine Kalender gefunden. Bitte richte zuerst einen Kalender in Home Assistant ein.",
+                        CALENDAR_MESSAGES["no_calendars"],
                         user_input,
                     ),
                 }
@@ -218,7 +220,7 @@ Examples:
             return {
                 "status": "handled",
                 "result": await make_response(
-                    f"In welchen Kalender? ({', '.join(calendar_names)})",
+                    CALENDAR_MESSAGES["ask_calendar"].format(calendars=', '.join(calendar_names)),
                     user_input,
                 ),
                 "pending_data": {
@@ -268,7 +270,7 @@ Examples:
             return {
                 "status": "handled",
                 "result": await make_response(
-                    "Bitte gib ein konkretes Datum an, z.B. 'am 14. Dezember' oder 'am Montag um 15 Uhr'.",
+                    CALENDAR_MESSAGES["concrete_date_requested"],
                     user_input,
                 ),
                 "pending_data": {
@@ -294,7 +296,7 @@ Examples:
         return {
             "status": "handled",
             "result": await make_response(
-                f"Termin erstellen?\n{confirmation_text}\n\nSag 'Ja' zum Bestätigen.",
+                CALENDAR_MESSAGES["confirm_preview"].format(preview=confirmation_text),
                 user_input,
             ),
             "pending_data": {
@@ -328,7 +330,7 @@ Examples:
                 return {
                     "status": "handled",
                     "result": await make_response(
-                        "Ich habe das Datum nicht verstanden. Bitte sag z.B. 'morgen um 10 Uhr' oder '25. Dezember'.",
+                        CALENDAR_MESSAGES["datetime_not_understood"],
                         user_input,
                     ),
                     "pending_data": pending_data,
@@ -340,7 +342,7 @@ Examples:
                 return {
                     "status": "handled",
                     "result": await make_response(
-                        "Das habe ich nicht verstanden. Welcher Kalender?",
+                        CALENDAR_MESSAGES["calendar_not_understood"],
                         user_input,
                     ),
                     "pending_data": pending_data,
@@ -353,13 +355,13 @@ Examples:
             elif self._is_negative(text):
                 return {
                     "status": "handled",
-                    "result": await make_response("Termin wurde nicht erstellt.", user_input),
+                    "result": await make_response(CALENDAR_MESSAGES["not_created"], user_input),
                 }
             else:
                 return {
                     "status": "handled",
                     "result": await make_response(
-                        "Sag 'Ja' zum Bestätigen oder 'Nein' zum Abbrechen.",
+                        CALENDAR_MESSAGES["confirm_or_abort"],
                         user_input,
                     ),
                     "pending_data": pending_data,
@@ -382,7 +384,7 @@ Examples:
         if not calendar_id:
             return {
                 "status": "handled",
-                "result": await make_response("Fehler: Kein Kalender ausgewählt.", user_input),
+                "result": await make_response(CALENDAR_MESSAGES["no_calendar_selected"], user_input),
             }
         
         # Build service data
@@ -415,13 +417,13 @@ Examples:
             summary = data.get("summary", "Termin")
             return {
                 "status": "handled",
-                "result": await make_response(f"✅ Termin '{summary}' wurde erstellt.", user_input),
+                "result": await make_response(CALENDAR_MESSAGES["created_success"].format(summary=summary), user_input),
             }
         except Exception as e:
             _LOGGER.error(f"Failed to create calendar event: {e}")
             return {
                 "status": "handled",
-                "result": await make_response(f"Fehler beim Erstellen des Termins: {str(e)}", user_input),
+                "result": await make_response(CALENDAR_MESSAGES["creation_failed"].format(error=str(e)), user_input),
             }
     
     # --- Helper methods preserved from original ---
@@ -534,27 +536,27 @@ Examples:
     
     def _build_confirmation_text(self, event_data: Dict[str, Any]) -> str:
         """Build a human-readable confirmation text."""
-        summary = event_data.get("summary", "Termin")
-        lines = [f"📅 **{summary}**"]
+        summary = event_data.get("summary", CALENDAR_MESSAGES["default_summary"])
+        lines = [CALENDAR_MESSAGES["line_summary"].format(summary=summary)]
         
         if event_data.get("start_date_time"):
             try:
                 dt = datetime.strptime(event_data["start_date_time"], "%Y-%m-%d %H:%M")
                 date_str = dt.strftime("%d.%m.%Y")
                 time_str = dt.strftime("%H:%M")
-                lines.append(f"🕐 {date_str} um {time_str} Uhr")
+                lines.append(CALENDAR_MESSAGES["line_time"].format(date=date_str, time=time_str))
             except ValueError:
                 lines.append(f"🕐 {event_data['start_date_time']}")
         elif event_data.get("start_date"):
             try:
                 dt = datetime.strptime(event_data["start_date"], "%Y-%m-%d")
                 date_str = dt.strftime("%d.%m.%Y")
-                lines.append(f"📆 {date_str} (ganztägig)")
+                lines.append(CALENDAR_MESSAGES["line_allday"].format(date=date_str))
             except ValueError:
                 lines.append(f"📆 {event_data['start_date']}")
         
         if event_data.get("location"):
-            lines.append(f"📍 {event_data['location']}")
+            lines.append(CALENDAR_MESSAGES["line_location"].format(location=event_data["location"]))
         
         if event_data.get("calendar_id"):
             calendar_name = event_data["calendar_id"].replace("calendar.", "").replace("_", " ").title()
@@ -562,7 +564,7 @@ Examples:
                 if cal["entity_id"] == event_data["calendar_id"]:
                     calendar_name = cal["name"]
                     break
-            lines.append(f"📁 Kalender: {calendar_name}")
+            lines.append(CALENDAR_MESSAGES["line_calendar"].format(calendar=calendar_name))
         
         return "\n".join(lines)
     

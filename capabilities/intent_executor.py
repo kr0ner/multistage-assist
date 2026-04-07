@@ -12,8 +12,19 @@ from ..conversation_utils import (
     format_seconds_to_string,
 )
 from ..utils.response_builder import build_confirmation
-from ..utils.german_utils import FRACTION_MAPPINGS
-from ..constants.messages_de import ERROR_MESSAGES, get_state_response
+from ..constants.entity_keywords import FRACTION_VALUES, DOMAIN_NAMES_PLURAL
+from ..constants.messages_de import (
+    ERROR_MESSAGES, 
+    SYSTEM_MESSAGES,
+    COMMAND_STATE_MAP,
+    OPPOSITE_STATE_MAP,
+    DURATION_TEMPLATES,
+    DEFAULT_DEVICE_WORD,
+    ACTION_VERBS,
+    CONFIRMATION_TEMPLATES,
+    get_state_response,
+    get_opposite_state_word
+)
 from .base import Capability
 
 _LOGGER = logging.getLogger(__name__)
@@ -23,7 +34,7 @@ class IntentExecutorCapability(Capability):
     """Execute a known HA intent for one or more concrete entity_ids."""
 
     name = "intent_executor"
-    description = "Execute a Home Assistant intent for specific targets."
+    description = "Execute concrete Home Assistant intents for specific entities. Features: 1. Automatic Knowledge Graph prerequisite resolution 2. Parameter normalization (German fractions to integers) 3. Relative step adjustments (brightness/cover) 4. Advanced timebox/delay support via specialized scripts 5. State-query filtering and 6. Post-execution verification."
 
     RESOLUTION_KEYS = {"area", "floor", "name", "entity_id"}
     BRIGHTNESS_STEP = 35  # Percentage of current brightness for step_up/step_down
@@ -51,9 +62,22 @@ class IntentExecutorCapability(Capability):
                 val = normalized[key]
                 if isinstance(val, str):
                     val_lower = val.lower().strip()
-                    if val_lower in FRACTION_MAPPINGS:
-                        normalized[key] = FRACTION_MAPPINGS[val_lower]
-                        _LOGGER.debug("[IntentExecutor] Normalized param '%s': '%s' -> %d", key, val, normalized[key])
+                    if val_lower in FRACTION_VALUES:
+                        normalized[key] = FRACTION_VALUES[val_lower]
+                        _LOGGER.debug("[IntentExecutor] Normalized fraction '%s': '%s' -> %d", key, val, normalized[key])
+                    else:
+                        # Handle "25 %", "25 Prozent", "25%"
+                        import re
+                        match = re.search(r"(\d+)\s*(?:%|prozent)", val_lower)
+                        if match:
+                            normalized[key] = int(match.group(1))
+                            _LOGGER.debug("[IntentExecutor] Normalized percentage string '%s': '%s' -> %d", key, val, normalized[key])
+                        else:
+                            # Try simple int conversion if it's just a string number
+                            try:
+                                normalized[key] = int(val_lower.replace("%", "").strip())
+                            except ValueError:
+                                pass
         return normalized
 
     def _check_script_exists(self, script_entity_id: str) -> bool:
@@ -186,7 +210,8 @@ class IntentExecutorCapability(Capability):
             minute = int(time_match.group(2)) if time_match.lastindex >= 2 else 0
         
         # Calculate delay from now to target time
-        now = datetime.now()
+        import homeassistant.util.dt as dt_util
+        now = dt_util.now()
         target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
         
         # If target time is in the past, schedule for tomorrow
@@ -213,35 +238,36 @@ class IntentExecutorCapability(Capability):
         "HassVacuumStart": "turn_on",
         "HassMediaPause": "media_pause",
         "HassMediaResume": "media_play",
+        "HassMediaPlay": "media_play",
+        "HassMediaStop": "media_stop",
         "HassTimerSet": "start",
+        "HassCoverOpen": "open",
+        "HassCoverClose": "close",
     }
     
+    def __init__(self, hass, config):
+        super().__init__(hass, config)
+        self.knowledge_graph = None
+
+    def set_knowledge_graph(self, kg_cap):
+        """Inject knowledge graph capability."""
+        self.knowledge_graph = kg_cap
+
     async def _resolve_prerequisites(
         self, entity_ids: List[str], intent_name: str
     ) -> List[Dict[str, Any]]:
         """Resolve and execute Knowledge Graph prerequisites for entities.
         
         This handles power dependencies and device coupling with AUTO mode.
-        
-        Args:
-            entity_ids: Entities to check
-            intent_name: Intent being executed
-            
-        Returns:
-            List of prerequisites that were executed
         """
-        try:
-            from ..utils.knowledge_graph import get_knowledge_graph
-        except ImportError:
+        if not self.knowledge_graph:
             return []
         
         action = self.INTENT_TO_ACTION.get(intent_name, "turn_on")
-        graph = get_knowledge_graph(self.hass)
-        
         executed_prerequisites = []
         
         for entity_id in entity_ids:
-            resolution = graph.resolve_for_action(entity_id, action)
+            resolution = await self.knowledge_graph.resolve_for_action(entity_id, action)
             
             # Execute AUTO prerequisites
             for prereq in resolution.prerequisites:
@@ -334,10 +360,6 @@ class IntentExecutorCapability(Capability):
         language: str = "de",
         **_: Any,
     ) -> Dict[str, Any]:
-        print(f"DEBUG: IntentExecutor.run called with user_input: {user_input}")
-        print(f"DEBUG: intent_name: {intent_name}")
-        print(f"DEBUG: entity_ids: {entity_ids}")
-        print(f"DEBUG: params: {params}")
         if not intent_name or not entity_ids:
             return {}
 
@@ -382,9 +404,7 @@ class IntentExecutorCapability(Capability):
                     from ..utils.response_builder import STATE_DESCRIPTIONS_DE
                     state_word = STATE_DESCRIPTIONS_DE.get(domain, {}).get(requested_state, requested_state)
                     
-                    from ..constants.entity_keywords import DOMAIN_NAMES_PLURAL
-                    
-                    device_name = DOMAIN_NAMES_PLURAL.get(domain, "Geräte")
+                    device_name = DOMAIN_NAMES_PLURAL.get(domain, DEFAULT_DEVICE_WORD)
                     
                     resp = ha_intent.IntentResponse(language=language)
                     resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
@@ -429,7 +449,7 @@ class IntentExecutorCapability(Capability):
             # Handle TemporaryControl (convert to timebox)
             if intent_name == "TemporaryControl":
                 command = current_params.get("command", "on")
-                action = "on" if command in ("on", "an", "ein", "auf") else "off"
+                action = COMMAND_STATE_MAP.get(command, "off")
                 
                 if minutes > 0 or seconds > 0:
                     success = await self._call_timebox_script(eid, minutes, seconds, action=action)
@@ -446,7 +466,7 @@ class IntentExecutorCapability(Capability):
                     state_obj = hass.states.get(eid)
                     name = state_obj.attributes.get("friendly_name", eid) if state_obj else eid
                     
-                    action_de = "an" if action == "on" else "aus"
+                    action_de = ACTION_VERBS.get(action, action)
                     duration_str = current_params.get("duration")
                     if not duration_str:
                         duration_str = format_seconds_to_string(minutes * 60 + seconds)
@@ -464,7 +484,6 @@ class IntentExecutorCapability(Capability):
                     # No duration - convert to regular on/off
                     effective_intent = "HassTurnOn" if action == "on" else "HassTurnOff"
             
-            # Handle HassTurnOn/Off with duration (legacy path)
             elif (intent_name == "HassTurnOn" or intent_name == "HassTurnOff") and (
                 minutes > 0 or seconds > 0
             ):
@@ -479,7 +498,7 @@ class IntentExecutorCapability(Capability):
                 
                 state_obj = hass.states.get(eid)
                 name = state_obj.attributes.get("friendly_name", eid) if state_obj else eid
-                action_de = "an" if action == "on" else "aus"
+                action_de = ACTION_VERBS.get(action, action)
                 
                 duration_str = current_params.get("duration")
                 if not duration_str:
@@ -500,7 +519,7 @@ class IntentExecutorCapability(Capability):
             if intent_name == "DelayedControl":
                 delay_str = current_params.get("delay", "")
                 command = current_params.get("command", "on")
-                action = "on" if command in ("on", "an", "ein", "auf") else "off"
+                action = COMMAND_STATE_MAP.get(command, "off")
                 
                 # Parse delay (duration like "10 Minuten" or time like "15:30")
                 delay_minutes, delay_seconds = self._parse_delay_or_time(delay_str)
@@ -524,7 +543,7 @@ class IntentExecutorCapability(Capability):
                     state_obj = hass.states.get(eid)
                     name = state_obj.attributes.get("friendly_name", eid) if state_obj else eid
                     
-                    action_de = "an" if action == "on" else "aus"
+                    action_de = ACTION_VERBS.get(action, action)
                     delay_display = delay_str if delay_str else format_seconds_to_string(
                         delay_minutes * 60 + delay_seconds
                     )
@@ -693,7 +712,7 @@ class IntentExecutorCapability(Capability):
                         speech = build_confirmation(
                             "HassTimerSet",
                             [name],
-                            params={"duration": f"{minutes} Minuten" if minutes > 0 else f"{seconds} Sekunden"}
+                            params={"duration": DURATION_TEMPLATES["minutes"].format(minutes=minutes) if minutes > 0 else DURATION_TEMPLATES["seconds"].format(seconds=seconds)}
                         )
                         resp.async_set_speech(speech)
                         results.append((eid, resp))
@@ -786,7 +805,7 @@ class IntentExecutorCapability(Capability):
                 else ""
             )
 
-            if not current_speech or current_speech.strip() == "Okay":
+            if not current_speech or current_speech.strip() == SYSTEM_MESSAGES["ok"]:
                 # Collect entity data
                 names = []
                 states = []
@@ -830,9 +849,8 @@ class IntentExecutorCapability(Capability):
                 domain_states = STATE_DESCRIPTIONS_DE.get(domain, {})
                 positive_word = domain_states.get(expected_states[0], query_state) if expected_states else ""
                 
-                # Note: OPPOSITE state mapping has been hardcoded here but in the future could be moved to constants.
-                opposite_map = {"an": "aus", "aus": "an", "offen": "geschlossen", "geschlossen": "offen"}
-                opposite_word = opposite_map.get(positive_word, "anders")
+                # Use centralized opposite word helper instead of hardcoded map
+                opposite_word = get_opposite_state_word(positive_word)
                 
                 from ..constants.messages_de import get_state_response
                 from ..constants.entity_keywords import DOMAIN_NAMES_PLURAL
@@ -869,18 +887,22 @@ class IntentExecutorCapability(Capability):
                     
                     if not not_matching:
                         # All match - simple "Ja"
-                        speech_text = f"Ja, alle sind {positive_word}."
+                        speech_text = CONFIRMATION_TEMPLATES["state_all_yes"].format(state=positive_word)
                     else:
                         # Some don't match - report the ones that DON'T match the query
-                        # "Sind alle aus?" + 1 light is ON → "Nein, Flur ist noch an"
-                        # not_matching = lights that are NOT in the expected state (i.e., the opposite)
                         if len(not_matching) == 1:
-                            speech_text = f"Nein, {not_matching[0]} ist noch {opposite_word}."
+                            speech_text = CONFIRMATION_TEMPLATES["state_some_no_singular"].format(
+                                name=not_matching[0], opposite=opposite_word
+                            )
                         elif len(not_matching) <= 3:
                             exceptions = join_names(not_matching)
-                            speech_text = f"Nein, {exceptions} sind noch {opposite_word}."
+                            speech_text = CONFIRMATION_TEMPLATES["state_some_no_plural"].format(
+                                names=exceptions, opposite=opposite_word
+                            )
                         else:
-                            speech_text = f"Nein, {len(not_matching)} sind noch {opposite_word}."
+                            speech_text = CONFIRMATION_TEMPLATES["state_some_no_count"].format(
+                                count=len(not_matching), opposite=opposite_word
+                            )
                 
                 elif query_state and len(all_entity_ids) == 1:
                     # SINGLE ENTITY YES/NO: "Ist das Licht in der Dusche an?"
@@ -889,9 +911,13 @@ class IntentExecutorCapability(Capability):
                     entity_name = names[0] if names else all_entity_ids[0].split(".")[-1]
                     
                     if entity_state in expected_states:
-                        speech_text = f"Ja, {entity_name} ist {positive_word}."
+                        speech_text = CONFIRMATION_TEMPLATES["state_yes_prefix"].format(
+                            name=entity_name, state=positive_word
+                        )
                     else:
-                        speech_text = f"Nein, {entity_name} ist {opposite_word}."
+                        speech_text = CONFIRMATION_TEMPLATES["state_no_prefix"].format(
+                            name=entity_name, opposite=opposite_word
+                        )
                 
                 else:
                     # Normal state query - use template
@@ -904,7 +930,7 @@ class IntentExecutorCapability(Capability):
             return isinstance(s, dict) and bool(s.get("plain", {}).get("speech"))
 
         if not _has_speech(final_resp):
-            final_resp.async_set_speech("Okay.")
+            final_resp.async_set_speech(SYSTEM_MESSAGES["ok"])
 
         return {
             "result": ConversationResult(
@@ -993,11 +1019,12 @@ class IntentExecutorCapability(Capability):
                 # Verify the timestamp is recent (within last 10 seconds)
                 elif domain == "scene" and expected == "on":
                     try:
-                        from datetime import datetime, timezone
-                        # Parse ISO format timestamp
-                        scene_time = datetime.fromisoformat(current.replace("Z", "+00:00"))
-                        now = datetime.now(timezone.utc)
+                        import homeassistant.util.dt as dt_util
+                        # Parse ISO format timestamp - use raw state to preserve T separator
+                        scene_time = dt_util.parse_datetime(state.state.replace("Z", "+00:00"))
+                        now = dt_util.utcnow()
                         age_seconds = (now - scene_time).total_seconds()
+                        _LOGGER.debug("[IntentExecutor] Scene verification: current='%s', now='%s', age=%.1fs", state.state, now, age_seconds)
                         if age_seconds < 10:  # Activated within last 10 seconds
                             _LOGGER.debug("[IntentExecutor] Verification passed for %s (scene activated %.1fs ago)", entity_id, age_seconds)
                             return True

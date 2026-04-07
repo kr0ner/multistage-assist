@@ -10,9 +10,9 @@ from multistage_assist.capabilities.keyword_intent import KeywordIntentCapabilit
 
 pytestmark = pytest.mark.integration
 
-# Reranker configuration
-RERANKER_HOST = os.getenv("RERANKER_HOST", "192.168.178.2")
-RERANKER_PORT = int(os.getenv("RERANKER_PORT", "9876"))
+# Cache Addon configuration
+CACHE_HOST = os.getenv("CACHE_HOST", "192.168.178.2")
+CACHE_PORT = int(os.getenv("CACHE_PORT", "9876"))
 
 
 @pytest.fixture
@@ -23,11 +23,10 @@ def hass():
 
 @pytest.fixture
 def keyword_intent_capability(hass):
-    """Create keyword intent capability with reranker enabled."""
+    """Create keyword intent capability with cache addon."""
     config = {
-        "reranker_enabled": True,
-        "reranker_ip": RERANKER_HOST,
-        "reranker_port": RERANKER_PORT,
+        "cache_addon_ip": CACHE_HOST,
+        "cache_addon_port": CACHE_PORT,
     }
     return KeywordIntentCapability(hass, config)
 
@@ -49,50 +48,43 @@ class TestSemanticFallback:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("text,expected_domain", [
         # Queries WITHOUT typical German keywords (Licht/Lampe/Rollo)
-        # Using English or abstract descriptions that reranker understands
+        # Using abstract descriptions that require semantic matching
         
         # Light
-        ("Make it bright here", "light"),
-        ("Illuminate the room", "light"),
-        ("Es ist zu dunkel hier", "light"),  # implicit
+        ("Mache es heller hier", "light"),
+        ("Es ist so finster", "light"),
         
         # Cover
-        ("Open the window shades", "cover"),
-        ("I need some privacy", "cover"),  # might map to closing blinds?
+        ("Zieh die Vorhänge zu", "cover"),
+        ("Sichtschutz schließen", "cover"),
         
         # Climate
-        ("It is freezing in here", "climate"),
-        ("I need heat", "climate"),  # "warm" is a sensor keyword!
-        ("I am cold", "climate"),
+        ("Mir ist eiskalt", "climate"),
+        ("Ich friere", "climate"),
         
         # Vacuum
-        ("Clean the floor", "vacuum"),
-        ("Start cleaning", "vacuum"),
+        ("Boden ist dreckig", "vacuum"),
+        ("Krümel entfernen", "vacuum"),
         
         # Media
-        ("Let us hear something", "media_player"),  # "audio"/"tracks" matched keywords
-        ("Stop the noise", "media_player"),
+        ("Beschalle das Zimmer", "media_player"),
+        ("Mach mal Krach", "media_player"),
+        
+        # Fan
+        ("Mache Wind", "fan"),
     ])
     async def test_semantic_domain_detection(
         self, keyword_intent_capability, text, expected_domain
     ):
         """Test fallback to semantic matching."""
         # Ensure _detect_domain (fuzzy/exact) returns None for these
-        # This confirms we are actually testing the fallback
+        # This confirms we are actually testing the fallback.
+        # Note: If this fails, the test case is too easy and matched via keywords.
         assert keyword_intent_capability._detect_domain(text) is None, \
             f"Text '{text}' surprisingly matched via keywords! Use a harder test case."
 
-        # Run full pipeline which includes fallback
-        user_input = make_input(text)
-        
-        # We only care that it finds the domain and starts LLM prompt
-        # The LLM prompt might fail since we mock nothing, but run() calls _detect_domain then _semantic_match
-        
-        # To test _semantic_match specifically without invoking LLM (which needs separate mocking)
-        # we can call _semantic_match directly or just check if run() gets past domain detection.
-        
+        # Run _semantic_match directly to verify cache addon logic
         domain = await keyword_intent_capability._semantic_match(text)
         
         assert domain == expected_domain, \
             f"Expected domain '{expected_domain}' for '{text}', got '{domain}'"
-

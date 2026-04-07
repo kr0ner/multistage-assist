@@ -11,7 +11,8 @@ from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     DOMAIN,
-    CONF_RERANKER_THRESHOLD,
+    CONF_CACHE_ADDON_IP,
+    CONF_CACHE_ADDON_PORT,
     CONF_HYBRID_ENABLED,
     CONF_HYBRID_ALPHA,
     CONF_HYBRID_NGRAM_SIZE,
@@ -32,7 +33,8 @@ _LOGGER = logging.getLogger(__name__)
 # YAML Schema for expert settings (configuration.yaml)
 # These are optional - users who want to fine-tune can add them
 EXPERT_SCHEMA = vol.Schema({
-    vol.Optional(CONF_RERANKER_THRESHOLD): vol.All(vol.Coerce(float), vol.Range(min=0.0, max=1.0)),
+    vol.Optional(CONF_CACHE_ADDON_IP): str,
+    vol.Optional(CONF_CACHE_ADDON_PORT): vol.Coerce(int),
     vol.Optional(CONF_HYBRID_ENABLED): vol.Boolean(),
     vol.Optional(CONF_HYBRID_ALPHA): vol.All(vol.Coerce(float), vol.Range(min=0.0, max=1.0)),
     vol.Optional(CONF_HYBRID_NGRAM_SIZE): vol.All(vol.Coerce(int), vol.Range(min=1, max=5)),
@@ -61,12 +63,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     additional tuning options in configuration.yaml:
     
     multistage_assist:
-      reranker_threshold: 0.70
+      cache_addon_ip: 192.168.178.2
+      cache_addon_port: 9876
+      vector_threshold: 0.85
       hybrid_enabled: true
       hybrid_alpha: 0.7
-      hybrid_ngram_size: 2
-      vector_search_threshold: 0.5
-      vector_search_top_k: 10
     """
     # Store YAML expert config for later use by config entries
     yaml_config = config.get(DOMAIN, {})

@@ -19,7 +19,7 @@ def stage2_llm(mock_hass):
     config = {
         "stage1_ip": "127.0.0.1",
         "stage1_port": 11434,
-        "stage1_model": "qwen3:4b-q8_0"
+        "stage1_model": "qwen3.5:4b-q4_K_M"
     }
     processor = Stage2LLMProcessor(mock_hass, config)
     
@@ -106,7 +106,7 @@ async def test_mcp_params_passed_correctly(stage2_llm):
     llm_config = args[4]
     assert llm_config["ip"] == "127.0.0.1"
     assert llm_config["port"] == 11434
-    assert llm_config["model"] == "qwen3:4b-q8_0"
+    assert llm_config["model"] == "qwen3.5:4b-q4_K_M"
     
     # Verify result uses recovered ID
     assert result.entity_ids == ["light.recovered_via_mcp"]

@@ -20,6 +20,9 @@ from hassil.recognize import recognize_best
 
 from .base_stage import BaseStage
 from .capabilities.entity_resolver import EntityResolverCapability
+from .capabilities.area_resolver import AreaResolverCapability
+from .capabilities.knowledge_graph import KnowledgeGraphCapability
+from .capabilities.atomic_command import AtomicCommandCapability
 from .capabilities.intent_executor import IntentExecutorCapability
 from .conversation_utils import error_response
 from .stage_result import StageResult
@@ -32,6 +35,11 @@ class Stage0Processor(BaseStage):
     """Stage 0: Dry-run NLU and early entity resolution (no LLM)."""
 
     name = "stage0"
+    capabilities = [
+        EntityResolverCapability,
+        AreaResolverCapability,
+        KnowledgeGraphCapability,
+    ]
 
     # Mapping specific HA intents to implied domains/device_classes
     INTENT_IMPLICATIONS = {
@@ -133,7 +141,7 @@ class Stage0Processor(BaseStage):
             _LOGGER.debug("[Stage0] NLU entities keys=%s", list(norm_entities.keys()))
 
         # 3. Entity resolution
-        resolver = EntityResolverCapability(self.hass, self.config)
+        resolver = self.get("entity_resolver")
         # Pass intent for capability filtering (e.g., HassLightSet filters non-dimmable)
         entities_for_resolver = {**norm_entities, "intent": intent_name}
         resolved = await resolver.run(user_input, entities=entities_for_resolver)

@@ -25,6 +25,7 @@ class PluralDetectionCapability(Capability):
     """Detect plural references in German smart-home commands."""
 
     name = "plural_detection"
+    description = "Detect if a command refers to multiple entities (plural) or a single specific device. Employs: 1. Keyword check ('alle', 'beide') 2. Plural noun dictionary lookup 3. Singular noun dictionary lookup 4. LLM reasoning as final fallback. Prevents unnecessary disambiguation when the user intend to target a group."
 
     PROMPT = {
         "system": """You act as a detector specialized in recognizing plural references in German commands.

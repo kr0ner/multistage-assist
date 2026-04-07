@@ -105,11 +105,11 @@ class TestDomainFiltering:
         cap = IntentResolutionCapability(hass, integration_llm_config)
         
         # Mock memory
-        memory = MagicMock()
+        memory = AsyncMock()
         memory.get_area_alias = AsyncMock(return_value=None)
         memory.get_floor_alias = AsyncMock(return_value=None)
         memory.get_entity_alias = AsyncMock(return_value=None)
-        cap.set_memory(memory)
+        cap.set_knowledge_graph(memory)
         
         # Mock keyword_intent to return domain at top level but empty in slots
         mock_ki_result = {
@@ -169,12 +169,12 @@ class TestDomainFiltering:
         # Verify brightness is step_up
         assert slots.get("brightness") == "step_up" or slots.get("command") == "step_up"
     
-    @pytest.mark.asyncio 
-    async def test_clarification_transforms_zu_dunkel(self, hass, integration_llm_config):
+    @pytest.mark.asyncio
+    async def test_implicit_intent_transforms_zu_dunkel(self, hass, integration_llm_config):
         """Test that 'zu dunkel' is transformed to 'heller' command."""
-        from multistage_assist.capabilities.clarification import ClarificationCapability
+        from multistage_assist.capabilities.implicit_intent import ImplicitIntentCapability
         
-        cap = ClarificationCapability(hass, integration_llm_config)
+        cap = ImplicitIntentCapability(hass, integration_llm_config)
         user_input = make_input("im Wohnzimmer ist es zu dunkel")
         
         result = await cap.run(user_input)
@@ -199,14 +199,14 @@ class TestDomainFiltering:
         3. entity_resolver: Only return light.* entities
         4. No disambiguation needed if there's only 1 light, or same-domain lights
         """
-        from multistage_assist.capabilities.clarification import ClarificationCapability
+        from multistage_assist.capabilities.implicit_intent import ImplicitIntentCapability
         from multistage_assist.capabilities.keyword_intent import KeywordIntentCapability
         
-        # Step 1: Clarification
-        clarification_cap = ClarificationCapability(hass, integration_llm_config)
+        # Step 1: Implicit Intent
+        implicit_cap = ImplicitIntentCapability(hass, integration_llm_config)
         user_input = make_input("im Wohnzimmer ist es zu dunkel")
         
-        clarified = await clarification_cap.run(user_input)
+        clarified = await implicit_cap.run(user_input)
         assert isinstance(clarified, list) and len(clarified) > 0
         
         # Step 2: Keyword Intent (on clarified text)
@@ -240,9 +240,9 @@ class TestImplicitCommands:
     ])
     async def test_implicit_brightness_transformation(self, hass, input_text, expected_direction, integration_llm_config):
         """Test that implicit brightness commands are transformed correctly."""
-        from multistage_assist.capabilities.clarification import ClarificationCapability
+        from multistage_assist.capabilities.implicit_intent import ImplicitIntentCapability
         
-        cap = ClarificationCapability(hass, integration_llm_config)
+        cap = ImplicitIntentCapability(hass, integration_llm_config)
         user_input = make_input(input_text)
         
         result = await cap.run(user_input)

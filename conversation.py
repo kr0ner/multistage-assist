@@ -24,7 +24,7 @@ from homeassistant.components import conversation
 from .stage0 import Stage0Processor
 from .stage1_cache import Stage1CacheProcessor
 from .stage2_llm import Stage2LLMProcessor
-from .stage3_gemini import Stage3GeminiProcessor
+from .stage3_cloud import Stage3CloudProcessor
 from .stage_result import StageResult
 from .execution_pipeline import ExecutionPipeline
 from .conversation_utils import with_new_text, make_response
@@ -48,7 +48,7 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
             Stage0Processor(hass, config),
             Stage1CacheProcessor(hass, config),
             Stage2LLMProcessor(hass, config),
-            Stage3GeminiProcessor(hass, config),
+            Stage3CloudProcessor(hass, config),
         ]
         
         # Give every stage a back-reference to the orchestrator
@@ -62,12 +62,35 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
         # When ExecutionPipeline owns the conversation (disambiguation, slot-filling, etc.)
         # conversation.py just checks ownership, not the reason
         self._execution_pending: Dict[str, Dict[str, Any]] = {}
+        self._conversation_history: Dict[str, Dict[str, Any]] = {}
         
         # Inject semantic cache into execution pipeline if available
         stage1 = self.stages[1]
-        if hasattr(stage1, 'has') and stage1.has("semantic_cache"):
-            cache = stage1.get("semantic_cache")
+        stage2 = self.stages[2]
+        stage3 = self.stages[3]
+        
+        cache = stage1.get("semantic_cache") if hasattr(stage1, 'get') and stage1.has("semantic_cache") else None
+        memory = stage2.get("knowledge_graph") if hasattr(stage2, 'get') and stage2.has("knowledge_graph") else None
+        area_res = stage2.get("area_resolver") if hasattr(stage2, 'get') and stage2.has("area_resolver") else None
+        
+        # 1. Pipeline wiring
+        if cache:
             self._execution_pipeline.set_cache(cache)
+            
+        # 2. Stage Inter-wiring (MCP Tools)
+        # Stage 3 uses MCP tools for cloud reasoning
+        if hasattr(stage3, "has") and stage3.has("mcp_tool"):
+            mcp = stage3.get("mcp_tool")
+            if memory: mcp.set_memory(memory)
+            if area_res: mcp.set_area_resolver(area_res)
+            if cache: mcp.set_cache(cache)
+        
+        # Stage 2 might also use them (if enabled)
+        if hasattr(stage2, "has") and stage2.has("mcp_tool"):
+            mcp_local = stage2.get("mcp_tool")
+            if memory: mcp_local.set_memory(memory)
+            if area_res: mcp_local.set_area_resolver(area_res)
+            if cache: mcp_local.set_cache(cache)
 
     @property
     def supported_languages(self) -> set[str]:
@@ -127,6 +150,14 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
 
         # FIRST: Check if ExecutionPipeline owns this conversation
         # (could be disambiguation, slot-filling, follow-up - we don't care why)
+        # 🔎 Check for pending execution for this conversation
+        # BUG 3 Fix: Also cleanup old zombies before checking
+        now = time.time()
+        zombies = [cid for cid, data in self._execution_pending.items() if (now - data.get("_created_at", 0)) > 3600]
+        for z in zombies:
+            _LOGGER.debug("[Pipeline] Evicting zombie pending transaction for %s", z)
+            del self._execution_pending[z]
+
         if conv_id in self._execution_pending:
             pending_data = self._execution_pending.pop(conv_id)
             remaining_commands = pending_data.pop("remaining_multi_commands", None)
@@ -211,6 +242,11 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
             exec_result = await self._execution_pipeline.continue_pending(
                 user_input, pending_data
             )
+
+            if exec_result.escalate:
+                _LOGGER.debug("Execution pipeline escalated pending turn - re-running pipeline")
+                # Resume pipeline with original context from pending_data
+                return await self._run_pipeline(user_input, exec_result.response)
 
             
             # If still pending, re-store (with remaining commands preserved and fresh timestamp)
@@ -342,6 +378,18 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
                         _LOGGER.debug("[Pipeline] ExecutionPipeline taking ownership of %s", conv_id)
                     
                     if exec_result.success:
+                        conv_id = user_input.conversation_id or "default"
+                        self._conversation_history[conv_id] = {
+                            "last_intent": result.intent,
+                            "last_entities": result.entity_ids,
+                            "last_params": result.params,
+                            "timestamp": time.time()
+                        }
+                        
+                        # Evict oldest entry to prevent infinite leak
+                        if len(self._conversation_history) > 100:
+                            oldest_key = next(iter(self._conversation_history))
+                            del self._conversation_history[oldest_key]
                         return exec_result.response
                     else:
                         _LOGGER.warning("[Pipeline] Execution failed")

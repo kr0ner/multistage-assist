@@ -40,7 +40,7 @@ class EntityResolverCapability(Capability):
     """Resolve entities from NLU slots with area/floor and fuzzy matching."""
     
     name = "entity_resolver"
-    description = "Resolve entities from NLU slots; enrich with area/floor + fuzzy matching."
+    description = "Resolve and filter Home Assistant entities based on NLU slots. Features: 1. Area/Floor-bound entity discovery 2. Multi-tier name matching (Exact -> Fuzzy -> Alias) 3. Device class and unit-of-measurement filtering 4. Knowledge Graph dependency pruning 5. Exposure-status verification 6. Context-aware historical disambiguation."
 
     _FUZZ_STRONG = 92
     _FUZZ_FALLBACK = 84
@@ -48,12 +48,18 @@ class EntityResolverCapability(Capability):
 
     def __init__(self, hass, config):
         super().__init__(hass, config)
-        self.memory = None  # Injected by caller
+        self.knowledge_graph = None  # Injected by caller
         self._area_resolver = AreaResolverCapability(hass, config)
 
-    def set_memory(self, memory_cap):
-        """Inject memory capability for alias resolution."""
-        self.memory = memory_cap
+    def set_knowledge_graph(self, kg_cap):
+        """Inject knowledge graph capability for alias resolution."""
+        self.knowledge_graph = kg_cap
+        if self._area_resolver:
+            self._area_resolver.set_knowledge_graph(kg_cap)
+
+    def set_area_resolver(self, area_resolver):
+        """Inject area resolver capability for location resolution."""
+        self._area_resolver = area_resolver
 
     def _all_entities(self) -> Dict[str, Any]:
         """Get all non-disabled entities."""
@@ -67,7 +73,7 @@ class EntityResolverCapability(Capability):
         return all_entities
 
     async def run(
-        self, user_input, *, entities: Dict[str, Any] | None = None, intent: str | None = None, **_: Any
+        self, user_input, *, entities: Dict[str, Any] | None = None, history: Dict[str, Any] | None = None, intent: str | None = None, **_: Any
     ) -> Dict[str, Any]:
         """Resolve entities from NLU slot data.
         
@@ -88,18 +94,23 @@ class EntityResolverCapability(Capability):
         area_hint = self._first_str(slots, "area", "room")
         floor_hint = self._first_str(slots, "floor", "level")
 
-        # === Memory-based alias resolution ===
-        if area_hint and self.memory:
-            memory_area = await self.memory.get_area_alias(area_hint)
-            if memory_area:
-                _LOGGER.debug("[EntityResolver] Memory hit: '%s' → '%s'", area_hint, memory_area)
-                area_hint = memory_area
+        # === Area/Floor Resolution (delegated to AreaResolver) ===
+        area_obj = None
+        if area_hint:
+            # We use the area_resolver to get the canonical match (checks memory, fuzzy, etc.)
+            res = await self._area_resolver.run(user_input, area_name=area_hint, mode="area")
+            match_name = res.get("match")
+            if match_name:
+                area_obj = self._area_resolver.find_area(match_name)
+                _LOGGER.debug("[EntityResolver] Resolved area: '%s' → '%s'", area_hint, match_name)
 
-        if floor_hint and self.memory:
-            memory_floor = await self.memory.get_floor_alias(floor_hint)
-            if memory_floor:
-                _LOGGER.debug("[EntityResolver] Memory hit (floor): '%s' → '%s'", floor_hint, memory_floor)
-                floor_hint = memory_floor
+        floor_obj = None
+        if floor_hint:
+            res = await self._area_resolver.run(user_input, area_name=floor_hint, mode="floor")
+            match_name = res.get("match")
+            if match_name:
+                floor_obj = self._area_resolver.find_floor(match_name)
+                _LOGGER.debug("[EntityResolver] Resolved floor: '%s' → '%s'", floor_hint, match_name)
 
         # Ignore generic names
         if thing_name and thing_name.lower().strip() in GENERIC_NAMES:
@@ -114,9 +125,24 @@ class EntityResolverCapability(Capability):
             resolved.append(raw_entity_id)
             seen.add(raw_entity_id)
 
-        # Use area_resolver for area/floor lookup
-        area_obj = self._area_resolver.find_area(area_hint) if area_hint else None
-        floor_obj = self._area_resolver.find_floor(floor_hint) if floor_hint else None
+        # === Conversation History Context ===
+        if not raw_entity_id and not thing_name and not area_hint:
+            from ..constants.entity_keywords import ALL_KEYWORDS
+            has_all_keyword = any(k in user_input.text.lower() for k in ALL_KEYWORDS)
+            if not has_all_keyword and history and history.get("last_entities"):
+                # BUG 2 Fix: Enforce TTL (e.g. 20 minutes)
+                import time
+                ts = history.get("timestamp", 0)
+                if (time.time() - ts) > 1200:
+                    _LOGGER.info("[EntityResolver] History context expired (%.1fs ago)", time.time() - ts)
+                else:
+                    _LOGGER.info("[EntityResolver] Using history context: %s", history["last_entities"])
+                    for eid in history["last_entities"]:
+                        if domain and not eid.startswith(f"{domain}."):
+                            continue
+                        if eid not in seen:
+                            resolved.append(eid)
+                            seen.add(eid)
 
         # Area-based lookup
         area_entities: List[str] = []
@@ -214,18 +240,17 @@ class EntityResolverCapability(Capability):
 
         # Filter by knowledge graph dependencies
         filtered_by_deps = []
-        try:
-            from ..utils.knowledge_graph import get_knowledge_graph
-            graph = get_knowledge_graph(hass)
-            resolved, filtered_by_deps = graph.filter_candidates_by_usability(resolved)
-            
-            if filtered_by_deps:
-                _LOGGER.debug(
-                    "[EntityResolver] Filtered %d entities with unmet dependencies: %s",
-                    len(filtered_by_deps), filtered_by_deps
-                )
-        except Exception as e:
-            _LOGGER.debug("[EntityResolver] Knowledge graph filtering failed: %s", e)
+        if self.knowledge_graph:
+            try:
+                resolved, filtered_by_deps = self.knowledge_graph.filter_candidates_by_usability(resolved)
+                
+                if filtered_by_deps:
+                    _LOGGER.debug(
+                        "[EntityResolver] Filtered %d entities with unmet dependencies: %s",
+                        len(filtered_by_deps), filtered_by_deps
+                    )
+            except Exception as e:
+                _LOGGER.debug("[EntityResolver] Knowledge graph filtering failed: %s", e)
 
         # Filter by capability (e.g., dimmability for HassLightSet)
         intent = self._first_str(slots, "intent")
@@ -237,6 +262,27 @@ class EntityResolverCapability(Capability):
                     "[EntityResolver] Filtered %d non-dimmable lights for HassLightSet",
                     before_cap - len(resolved)
                 )
+
+        # --- SECONDARY FILTERING (Ambiguity Resolution from Full Text) ---
+        if len(resolved) > 1:
+            text_lower = user_input.text.lower()
+            name_evidence: Dict[str, Set[str]] = {}
+            for eid in resolved:
+                st = hass.states.get(eid)
+                name = st.attributes.get("friendly_name", "").lower() if st else ""
+                if name:
+                    words = {w for w in name.split() if len(w) > 2 and w not in GENERIC_NAMES}
+                    if words: name_evidence[eid] = words
+            
+            if name_evidence:
+                matches = []
+                for eid, words in name_evidence.items():
+                    other_words = set().union(*(ws for e, ws in name_evidence.items() if e != eid))
+                    exclusive = [w for w in words if w not in other_words]
+                    if any(w in text_lower for w in exclusive): matches.append(eid)
+                if len(matches) == 1:
+                    _LOGGER.debug("[EntityResolver] Disambiguated '%s' via unique keyword match.", matches[0])
+                    resolved = matches
 
         _LOGGER.debug(
             "[EntityResolver] Final: %d entities (pre-filter: %d, filtered by deps: %d, not exposed: %d)",

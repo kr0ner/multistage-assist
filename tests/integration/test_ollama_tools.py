@@ -32,7 +32,7 @@ async def test_ollama_tool_calling_live():
     # 1. Config
     ip = "127.0.0.1"
     port = 11434
-    model = "qwen3:4b-q8_0"
+    model = "qwen3.5:4b-q4_K_M"
     
     client = OllamaClient(ip, port)
     

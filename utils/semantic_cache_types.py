@@ -8,29 +8,15 @@ from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
 
 
-# Default models (4-bit quantized for low RAM)
-DEFAULT_EMBEDDING_MODEL = "bge-m3"
-# bge-reranker-v2-m3: Better discrimination, ~2.3GB, can run on CPU if GPU OOM
-# bge-reranker-base: Smaller (~500MB) but less precise discrimination
-DEFAULT_RERANKER_MODEL = "BAAI/bge-reranker-base"
+# Default embedding model (local, 384-dim)
+DEFAULT_EMBEDDING_MODEL = "multilingual-minilm"
+# Semantic Cache configuration
 
 # Configuration defaults
-# base model score ranges: synonyms ~0.65-0.80, opposites ~0.40, different rooms ~0.35
-DEFAULT_RERANKER_THRESHOLD = 0.70  # Fallback for unknown domains
-DEFAULT_VECTOR_THRESHOLD = 0.5  # Loose filter for candidate selection
-DEFAULT_VECTOR_TOP_K = 10  # Number of candidates to rerank
+DEFAULT_VECTOR_THRESHOLD = 0.82  # Validated threshold for multilingual-minilm
+DEFAULT_VECTOR_TOP_K = 10  # Number of candidates for lookup
 DEFAULT_MAX_ENTRIES = 2000  # Must be large enough for all generated anchors + user entries
 MIN_CACHE_WORDS = 3
-
-# Per-domain thresholds - optimized through systematic testing
-# Testing revealed hit scores cluster around 0.73 for most domains
-DOMAIN_THRESHOLDS = {
-    "light": 0.73,   # Tested: 9/10 pass at 0.73
-    "switch": 0.73,  # Similar to light
-    "fan": 0.73,     # Similar to light
-    "cover": 0.73,   # Tested: 10/10 pass at 0.73
-    "climate": 0.69, # Tested: 7/10 pass at 0.69 (overlapping score ranges)
-}
 
 
 @dataclass

@@ -14,12 +14,12 @@
 |-------|---------|------------|
 | **Stage 0** | Fast path - instant NLU | Home Assistant built-in |
 | **Stage 1** | Semantic cache lookup | Cached command replay |
-| **Stage 2** | Local LLM intent | Ollama (qwen3:4b) |
+| **Stage 2** | Local LLM intent | Ollama (qwen3.5:4b-q4_K_M) |
 | **Stage 3** | Cloud fallback + chat | Google Gemini |
 
 ## Key Features
 
-- **Semantic Command Cache** - Instant replay of learned commands with reranker validation
+- **Semantic Command Cache** - Instant replay of learned commands with optimized vector lookup
 - **Adaptive Learning** - Remembers your custom room/device names
 - **Temporary Controls** - "Turn on light for 10 minutes"
 - **Natural German Responses** - Optimized for German language
@@ -30,9 +30,9 @@
 ### Prerequisites
 
 - Home Assistant 2024.1.0+
-- [Ollama](https://ollama.ai) with `qwen3:4b-instruct` and `mxbai-embed-large`
+- [Ollama](https://ollama.ai) with `qwen3.5:4b-q4_K_M` and `models/multilingual-minilm`
 - Google Gemini API Key
-- Optional: [Reranker Addon](https://github.com/kr0ner/reranker-addon)
+- Optional: [Semantic Cache Addon](https://github.com/kr0ner/semantic-cache-addon)
 
 ### Installation
 
@@ -41,7 +41,7 @@
 1. Add via HACS: `https://github.com/kr0ner/multistage-assist`
 2. Restart Home Assistant
 3. Add integration: **Settings → Devices & Services → Add Integration**
-4. Pull embedding model: `ollama pull mxbai-embed-large`
+4. Pull embedding model: `ollama pull models/multilingual-minilm`
 
 ## Expert Configuration
 
@@ -50,7 +50,7 @@ Power users can add YAML settings to `configuration.yaml`:
 ```yaml
 multistage_assist:
   # Semantic Cache tuning
-  reranker_threshold: 0.73
+  vector_threshold: 0.85
   hybrid_enabled: true
   hybrid_alpha: 0.7
   

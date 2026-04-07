@@ -5,739 +5,336 @@ and yes/no response detection.
 """
 
 import re
+import unicodedata
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Set, Tuple
 
 
-# --- Articles and Prepositions ---
+try:
+    from ..constants.messages_de import (
+        IMPLICIT_PHRASES,
+        EXIT_COMMANDS,
+        AFFIRMATIVE_WORDS,
+        NEGATIVE_WORDS,
+        DOMAIN_DESCRIPTIONS,
+        LEARNING_OFFER_PROMPTS as LEARNING_CONFIRMATION_PROMPTS,
+    )
+except (ImportError, ValueError):
+    from constants.messages_de import (
+        IMPLICIT_PHRASES,
+        EXIT_COMMANDS,
+        AFFIRMATIVE_WORDS,
+        NEGATIVE_WORDS,
+        DOMAIN_DESCRIPTIONS,
+        LEARNING_OFFER_PROMPTS as LEARNING_CONFIRMATION_PROMPTS,
+    )
+try:
+    from ..constants.entity_keywords import (
+        FRACTION_VALUES as FRACTION_INT_MAPPINGS,
+        STATE_TRANSLATIONS as HA_STATE_TRANSLATIONS,
+    )
+except (ImportError, ValueError):
+    from constants.entity_keywords import (
+        FRACTION_VALUES as FRACTION_INT_MAPPINGS,
+        STATE_TRANSLATIONS as HA_STATE_TRANSLATIONS,
+    )
+try:
+    from ..constants.area_keywords import (
+        AREA_ALIASES,
+        AREA_PREPOSITIONS,
+        AREA_INDICATORS,
+        FLOOR_KEYWORDS,
+        LOCATION_INDICATORS,
+    )
+except (ImportError, ValueError):
+    from constants.area_keywords import (
+        AREA_ALIASES,
+        AREA_PREPOSITIONS,
+        AREA_INDICATORS,
+        FLOOR_KEYWORDS,
+        LOCATION_INDICATORS,
+    )
 
+# Internal language base constants
 GERMAN_ARTICLES: Set[str] = {
     "der", "die", "das", "den", "dem", "des",
     "ein", "eine", "einen", "einem", "einer", "eines",
 }
 
 GERMAN_PREPOSITIONS: Set[str] = {
-    "im", "in", "auf", "unter", "über", "an", "am", "bei",
+    "im", "in", "auf", "unter", "über", "am", "bei", # Removed "an" as preposition to protect it as verbal particle
     "zum", "zur", "vom", "von", "für", "mit", "nach",
 }
 
-# Area indicators for multi-area detection (used in clarification bypass)
-AREA_INDICATORS: List[str] = [
-    "in der", "im", "in", "auf dem", "auf der",
-]
-
-FLOOR_KEYWORDS: List[str] = [
-    "geschoss", "stock", "etage", "eg", "og", "ug", "dg",
-]
-
-# Compound separator (used to detect multi-part commands)
-COMPOUND_SEPARATOR: str = " und "
-
-# Location indicators for detecting area references in compound commands
-LOCATION_INDICATORS: List[str] = [" in ", " im "]
-
-# Implicit phrases that need LLM transformation (e.g., "zu dunkel" → "Licht heller")
-IMPLICIT_PHRASES: List[str] = [
-    "zu dunkel", "zu hell", "zu kalt", "zu warm", "zu laut", "zu leise",
-]
-
-# Exit commands to abort operation immediately
-EXIT_COMMANDS: Set[str] = {
-    "abbruch", "stop", "vergiss es", "cancel", "halt", "beenden", "abbrechen",
-}
-
-# Fraction mappings for position/brightness normalization
-FRACTION_MAPPINGS: Dict[str, int] = {
-    "hälfte": 50,
-    "halb": 50,
-    "viertel": 25,
-    "dreiviertel": 75,
-    "ganz": 100,  # Context dependent, handled in executor
-    "voll": 100,
-}
-
-# State translations for user-facing responses
+# Mapping for response-facing state translations
 STATE_TRANSLATIONS: Dict[str, str] = {
-    "closing": "schließt",
-    "opening": "öffnet",
-    "buffering": "lädt",
-    "playing": "spielt",
-    "paused": "pausiert",
-    "idle": "inaktiv",
-    "off": "aus",
-    "on": "an",
-    "open": "offen",
-    "closed": "geschlossen",
+    "closing": "schließt", "opening": "öffnet", "buffering": "lädt",
+    "playing": "spielt", "paused": "pausiert", "idle": "inaktiv",
+    "off": "aus", "on": "an", "open": "offen", "closed": "geschlossen",
     "unavailable": "nicht verfügbar",
 }
 
-# Prompts used for alias learning confirmation
-LEARNING_CONFIRMATION_PROMPTS: List[str] = [
-    "Soll ich mir das für die Zukunft merken?",
-    "Soll ich das als neuen Namen speichern?",
-    "Möchtest du, dass ich mir diese Bezeichnung merke?",
-]
+COMPOUND_SEPARATOR: str = " und "
 
 
 def nominative_to_accusative(phrase: str) -> str:
-    """Convert nominative article to accusative case.
-    
-    German accusative rule: only masculine articles change (der → den).
-    Neutral (das) and feminine/plural (die) stay the same.
-    
-    Args:
-        phrase: Phrase starting with article, e.g. "der Rollladen"
-        
-    Returns:
-        Phrase with accusative article, e.g. "den Rollladen"
-        
-    Examples:
-        nominative_to_accusative("der Rollladen") -> "den Rollladen"
-        nominative_to_accusative("das Licht") -> "das Licht"
-        nominative_to_accusative("die Lampe") -> "die Lampe"
-    """
-    if not phrase:
-        return phrase
-    
+    if not phrase: return phrase
     words = phrase.split()
-    if not words:
-        return phrase
-    
-    article = words[0].lower()
-    if article == "der":
-        # Masculine nominative → accusative
+    if not words: return phrase
+    if words[0].lower() == "der":
         words[0] = "den" if words[0].islower() else "Den"
-    
     return " ".join(words)
 
 
 def nominative_to_dative(phrase: str) -> str:
-    """Convert nominative article to dative case.
-    
-    German dative: der → dem, das → dem, die → der (singular fem) / den (plural).
-    Used after prepositions like 'von', 'mit', 'bei', etc.
-    
-    Args:
-        phrase: Phrase starting with article, e.g. "das Licht"
-        
-    Returns:
-        Phrase with dative article, e.g. "dem Licht"
-        
-    Examples:
-        nominative_to_dative("das Licht") -> "dem Licht"  (neutral)
-        nominative_to_dative("der Rollladen") -> "dem Rollladen"  (masculine)
-        nominative_to_dative("die Lampe") -> "der Lampe"  (feminine singular)
-    """
-    if not phrase:
-        return phrase
-    
+    if not phrase: return phrase
     words = phrase.split()
-    if not words:
-        return phrase
-    
+    if not words: return phrase
+    dative_map = {"der": "dem", "das": "dem", "die": "der"}
     article = words[0].lower()
-    # Note: Can't distinguish feminine singular "die" from plural "die"
-    # Assume singular for entity patterns
-    dative_map = {
-        "der": "dem",  # Masculine
-        "das": "dem",  # Neutral
-        "die": "der",  # Feminine singular (plural would be "den")
-    }
-    
     if article in dative_map:
         new_article = dative_map[article]
         words[0] = new_article if words[0].islower() else new_article.capitalize()
-    
     return " ".join(words)
 
 
 def capitalize_article_phrase(phrase: str) -> str:
-    """Capitalize an article+noun phrase properly for German.
-    
-    Keeps article lowercase but capitalizes the noun.
-    
-    Args:
-        phrase: e.g. "der rollladen" or "die rollläden"
-        
-    Returns:
-        Properly capitalized phrase: "der Rollladen", "die Rollläden"
-    """
-    if not phrase:
-        return phrase
-    
+    if not phrase: return phrase
     words = phrase.split()
-    if len(words) < 2:
-        return phrase
-    
-    # Article stays as-is, capitalize rest
-    result = [words[0]]  # Keep article case
-    for word in words[1:]:
-        result.append(word.capitalize())
-    
+    if len(words) < 2: return phrase
+    result = [words[0]]
+    for word in words[1:]: result.append(word.capitalize())
     return " ".join(result)
 
 
 def remove_articles(text: str) -> str:
-    """Remove German articles from text.
-    
-    Args:
-        text: Input text
-        
-    Returns:
-        Text with articles removed
-        
-    Examples:
-        remove_articles("den Keller") -> "Keller"
-        remove_articles("die Küche") -> "Küche"
-        remove_articles("das Bad") -> "Bad"
-    """
-    if not text:
-        return ""
-    
-    words = text.split()
-    filtered = [w for w in words if w.lower() not in GERMAN_ARTICLES]
-    return " ".join(filtered)
+    if not text: return ""
+    return " ".join([w for w in text.split() if w.lower() not in GERMAN_ARTICLES])
 
 
 def remove_prepositions(text: str) -> str:
-    """Remove German prepositions from text.
-    
-    Args:
-        text: Input text
-        
-    Returns:
-        Text with prepositions removed
-        
-    Examples:
-        remove_prepositions("im Wohnzimmer") -> "Wohnzimmer"
-        remove_prepositions("auf dem Tisch") -> "dem Tisch"
-    """
-    if not text:
-        return ""
-    
-    words = text.split()
-    filtered = [w for w in words if w.lower() not in GERMAN_PREPOSITIONS]
-    return " ".join(filtered)
+    if not text: return ""
+    return " ".join([w for w in text.split() if w.lower() not in GERMAN_PREPOSITIONS])
 
 
-def remove_articles_and_prepositions(text: str) -> str:
-    """Remove both articles and prepositions from text.
-    
-    Args:
-        text: Input text
-        
-    Returns:
-        Text with articles and prepositions removed
-        
-    Example:
-        remove_articles_and_prepositions("im den Keller") -> "Keller"
-    """
-    if not text:
-        return ""
-    
+def map_area_alias(text: str) -> str:
+    """Robust room alias mapping."""
+    if not text: return text
+    ALIASES = dict(AREA_ALIASES)
+    if "buero" in ALIASES and "büro" not in ALIASES: ALIASES["büro"] = ALIASES["buero"]
+    if "kue" in ALIASES and "küche" not in ALIASES: ALIASES["küche"] = ALIASES["kue"]
+
     words = text.split()
-    stop_words = GERMAN_ARTICLES | GERMAN_PREPOSITIONS
-    filtered = [w for w in words if w.lower() not in stop_words]
-    return " ".join(filtered)
+    mapped = []
+    for word in words:
+        clean = word.lower().strip(",.!?:")
+        if clean in ALIASES:
+            target = ALIASES[clean]
+            mapped.append(target if word[0].isupper() else target.lower())
+        else:
+            canon = clean.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+            if canon in ALIASES:
+                target = ALIASES[canon]
+                mapped.append(target if word[0].isupper() else target.lower())
+            else:
+                mapped.append(word)
+    return " ".join(mapped)
+
+
+def get_prepositional_area(area_name: str) -> str:
+    if not area_name: return area_name
+    area_lower = area_name.lower()
+    if area_lower in AREA_PREPOSITIONS:
+        return f"{AREA_PREPOSITIONS[area_lower]} {area_name}"
+    if area_lower.endswith(("zimmer", "bad", "flur", "garten", "garage", "dachboden", "büro", "keller")):
+        return f"im {area_name}"
+    if area_lower.endswith(("etage", "ebene")):
+        return f"auf der {area_name}"
+    return f"in {area_name}"
 
 
 def canonicalize(text: str) -> str:
-    """Canonicalize text for fuzzy matching.
-    
-    Performs:
-    - Lowercase conversion
-    - German umlaut normalization (ä→ae, ö→oe, ü→ue, ß→ss)
-    - Punctuation removal
-    - Whitespace normalization
-    
-    Args:
-        text: Input text
-        
-    Returns:
-        Canonicalized text for comparison
-        
-    Examples:
-        canonicalize("Küche") -> "kueche"
-        canonicalize("Gäste-Bad") -> "gaeste bad"
-        canonicalize("  Büro  ") -> "buero"
-    """
-    if not text:
-        return ""
-    
-    t = text.lower()
+    if not text: return ""
+    t = unicodedata.normalize('NFC', text.lower())
     t = t.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
-    t = re.sub(r"[^\w\s]+", " ", t)
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
+    t = re.sub(r"[^\w\s%°]+", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
 
 
-# --- Affirmative/Negative Detection ---
+WEEKDAYS_DE = {"montag": 0, "dienstag": 1, "mittwoch": 2, "donnerstag": 3, "freitag": 4, "samstag": 5, "sonntag": 6}
+WEEKDAY_NAMES = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 
-AFFIRMATIVE_WORDS: Set[str] = {
-    "ja", "ok", "okay", "genau", "richtig", "passt", "korrekt",
-    "stimmt", "gut", "jawohl", "jep", "jup", "sicher", "natürlich",
-    "gerne", "bitte", "mach", "tu", "los",
-}
+def parse_weekday(text: str) -> Optional[int]:
+    if not text: return None
+    t = text.lower()
+    for day, num in WEEKDAYS_DE.items():
+        if day in t: return num
+    return None
 
-NEGATIVE_WORDS: Set[str] = {
-    "nein", "nicht", "abbrechen", "stop", "stopp", "falsch",
-    "cancel", "weg", "vergiss", "lass", "ende", "beenden",
-}
+def get_next_weekday(weekday: int, from_date: Optional[date] = None) -> date:
+    if from_date is None: from_date = date.today()
+    days = weekday - from_date.weekday()
+    if days <= 0: days += 7
+    return from_date + timedelta(days=days)
+
+def get_weekday_name(weekday: int) -> str: return WEEKDAY_NAMES[weekday % 7]
+
+RELATIVE_DATES = [("übermorgen", 2), ("morgen", 1), ("heute", 0)]
+
+def parse_relative_date(text: str, from_date: Optional[date] = None) -> Optional[date]:
+    if not text: return None
+    if from_date is None: from_date = date.today()
+    t = text.lower().strip()
+    for term, offset in RELATIVE_DATES:
+        if term in t: return from_date + timedelta(days=offset)
+    m = re.search(r'in\s+(\d+)\s+tag', t)
+    if m: return from_date + timedelta(days=int(m.group(1)))
+    m = re.match(r'(\d+)\s+tag', t)
+    if m: return from_date + timedelta(days=int(m.group(1)))
+    wd = parse_weekday(text)
+    return get_next_weekday(wd, from_date) if wd is not None else None
+
+def resolve_relative_date_str(value: str, from_date: Optional[date] = None) -> str:
+    if not value or re.match(r'^\d{4}-\d{2}-\d{2}$', value): return value
+    resolved = parse_relative_date(value, from_date)
+    return resolved.strftime("%Y-%m-%d") if resolved else value
+
+def format_date_german(d: date) -> str: return d.strftime("%d.%m.%Y")
+def format_datetime_german(dt: datetime) -> str: return dt.strftime("%d.%m.%Y um %H:%M Uhr")
 
 
 def is_affirmative(text: str) -> bool:
-    """Check if text is an affirmative response.
-    
-    Args:
-        text: User's response text
-        
-    Returns:
-        True if response is affirmative
-        
-    Examples:
-        is_affirmative("ja") -> True
-        is_affirmative("ok, machen wir") -> True
-        is_affirmative("nein danke") -> False
-    """
-    if not text:
-        return False
-    
-    words = set(text.lower().split())
-    return bool(words & AFFIRMATIVE_WORDS)
+    """Check if text is a German affirmative response."""
+    if not text: return False
+    t = canonicalize(text)
+    return any(w in t.split() for w in AFFIRMATIVE_WORDS)
 
 
 def is_negative(text: str) -> bool:
-    """Check if text is a negative response.
-    
-    Args:
-        text: User's response text
-        
-    Returns:
-        True if response is negative
-        
-    Examples:
-        is_negative("nein") -> True
-        is_negative("abbrechen bitte") -> True
-        is_negative("ja") -> False
+    """Check if text is a German negative response."""
+    if not text: return False
+    t = canonicalize(text)
+    return any(w in t.split() for w in NEGATIVE_WORDS)
+
+
+# FILLER_WORDS: Only truly meaningless words that add no semantic value.
+# Articles and prepositions are INTENTIONALLY EXCLUDED — they carry
+# grammatical and spatial meaning ("im Keller" vs "auf dem Balkon").
+FILLER_WORDS: Set[str] = {"bitte", "mal", "gerne", "doch", "kannst", "könntest", "würdest"}
+
+
+def strip_filler_words(text: str) -> str:
+    """Strip only meaningless filler words from text.
+
+    Preserves articles, prepositions, and all intent-critical particles.
+    The embedding model is trained on proper German and handles grammar natively.
     """
-    if not text:
-        return False
-    
-    words = set(text.lower().split())
-    return bool(words & NEGATIVE_WORDS)
+    tokens = text.split()
+    return " ".join([w for w in tokens if w.lower() not in FILLER_WORDS]).strip()
 
 
-# --- Weekday Handling ---
 
-WEEKDAYS_DE = {
-    "montag": 0,
-    "dienstag": 1,
-    "mittwoch": 2,
-    "donnerstag": 3,
-    "freitag": 4,
-    "samstag": 5,
-    "sonntag": 6,
-}
-
-WEEKDAY_NAMES = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
-
-
-def parse_weekday(text: str) -> Optional[int]:
-    """Parse German weekday name to weekday number.
-    
-    Args:
-        text: Text containing weekday name
-        
-    Returns:
-        Weekday number (0=Monday, 6=Sunday) or None if not found
-        
-    Examples:
-        parse_weekday("montag") -> 0
-        parse_weekday("am Sonntag") -> 6
-    """
-    if not text:
-        return None
-    
-    text_lower = text.lower()
-    for day_name, day_num in WEEKDAYS_DE.items():
-        if day_name in text_lower:
-            return day_num
-    return None
-
-
-def get_next_weekday(weekday: int, from_date: Optional[date] = None) -> date:
-    """Get next occurrence of a weekday.
-    
-    Args:
-        weekday: Weekday number (0=Monday, 6=Sunday)
-        from_date: Start date (default: today)
-        
-    Returns:
-        Date of next occurrence (at least 1 day in future)
-        
-    Example:
-        # If today is Wednesday (2)
-        get_next_weekday(0)  # Next Monday
-        get_next_weekday(2)  # Next Wednesday (7 days from now)
-    """
-    if from_date is None:
-        from_date = date.today()
-    
-    days_ahead = weekday - from_date.weekday()
-    if days_ahead <= 0:  # Target weekday is today or in the past
-        days_ahead += 7
-    
-    return from_date + timedelta(days=days_ahead)
-
-
-def get_weekday_name(weekday: int) -> str:
-    """Get German weekday name from number.
-    
-    Args:
-        weekday: Weekday number (0=Monday, 6=Sunday)
-        
-    Returns:
-        German weekday name
-    """
-    return WEEKDAY_NAMES[weekday % 7]
-
-
-# --- Relative Date Handling ---
-
-# Relative date terms: (term, days_offset)
-# Ordered by length (longest first) to avoid partial matches
-RELATIVE_DATES = [
-    ("übermorgen", 2),
-    ("morgen", 1),
-    ("heute", 0),
-]
-
-
-def parse_relative_date(text: str, from_date: Optional[date] = None) -> Optional[date]:
-    """Parse German relative date expressions.
-    
-    Args:
-        text: Text containing date expression
-        from_date: Reference date (default: today)
-        
-    Returns:
-        Resolved date or None if not parseable
-        
-    Supported patterns:
-        - heute, morgen, übermorgen
-        - in X Tagen
-        - X Tage
-        - nächsten Montag, am Dienstag
-        
-    Examples:
-        parse_relative_date("morgen") -> tomorrow's date
-        parse_relative_date("in 5 Tagen") -> 5 days from now
-        parse_relative_date("nächsten Montag") -> next Monday
-    """
-    if not text:
-        return None
-    
-    if from_date is None:
-        from_date = date.today()
-    
-    text_lower = text.lower().strip()
-    
-    # Check relative day terms (heute, morgen, übermorgen)
-    for term, days_offset in RELATIVE_DATES:
-        if term in text_lower:
-            return from_date + timedelta(days=days_offset)
-    
-    # Check "in X Tagen" pattern
-    match = re.search(r'in\s+(\d+)\s+tag', text_lower)
-    if match:
-        days = int(match.group(1))
-        return from_date + timedelta(days=days)
-    
-    # Check "X Tage" pattern (without "in")
-    match = re.match(r'(\d+)\s+tag', text_lower)
-    if match:
-        days = int(match.group(1))
-        return from_date + timedelta(days=days)
-    
-    # Check weekday patterns ("nächsten Montag", "am Dienstag")
-    weekday = parse_weekday(text)
-    if weekday is not None:
-        return get_next_weekday(weekday, from_date)
-    
-    return None
-
-
-def resolve_relative_date_str(value: str, from_date: Optional[date] = None) -> str:
-    """Resolve relative date string to YYYY-MM-DD format.
-    
-    Args:
-        value: Date string (may be relative or already formatted)
-        from_date: Reference date (default: today)
-        
-    Returns:
-        Date in YYYY-MM-DD format, or original value if not parseable
-        
-    Examples:
-        resolve_relative_date_str("morgen") -> "2024-12-15"
-        resolve_relative_date_str("2024-12-15") -> "2024-12-15" (unchanged)
-    """
-    if not value:
-        return value
-    
-    # Already in correct format
-    if re.match(r'^\d{4}-\d{2}-\d{2}$', value):
-        return value
-    
-    resolved = parse_relative_date(value, from_date)
-    if resolved:
-        return resolved.strftime("%Y-%m-%d")
-    
-    return value
-
-
-# --- Date/Time Formatting ---
-
-def format_date_german(d: date) -> str:
-    """Format date in German style.
-    
-    Args:
-        d: Date to format
-        
-    Returns:
-        German format: "DD.MM.YYYY"
-    """
-    return d.strftime("%d.%m.%Y")
-
-
-def format_datetime_german(dt: datetime) -> str:
-    """Format datetime in German style.
-    
-    Args:
-        dt: Datetime to format
-        
-    Returns:
-        German format: "DD.MM.YYYY um HH:MM Uhr"
-    """
-    return dt.strftime("%d.%m.%Y um %H:%M Uhr")
 
 
 def normalize_for_cache(text: str) -> Tuple[str, List]:
-    """Normalize numeric values for semantic cache matching.
-    
-    Replaces variable numbers with canonical values for consistent cache lookup:
-    - Percentages: "30%" → "50 Prozent"
-    - Temperatures: "22 Grad" → "20 Grad"
-    - ALL temporal expressions: normalized to "10 Minuten"
-      - "in 37 Sekunden" → "in 10 Minuten"
-      - "in 5 Minuten" → "in 10 Minuten"
-      - "für 2 Stunden" → "für 10 Minuten"
-      - "um 15:30 Uhr" → "um 10 Uhr"
-    
-    This ensures all time-based commands match the same cache entries,
-    regardless of actual duration. The original input is passed to
-    execution pipeline for actual timing.
-    
-    Uses duration_utils.py for consistent German duration parsing.
-    
-    Args:
-        text: User input text to normalize
-        
-    Returns:
-        Tuple of (normalized_text, extracted_values)
-        
-    Examples:
-        normalize_for_cache("Licht auf 30%") → ("Licht auf 50 Prozent", [30])
-        normalize_for_cache("in 37 Sekunden aus") → ("in 10 Minuten aus", [37])
-        normalize_for_cache("für 5 Minuten an") → ("für 10 Minuten an", [5])
+    """Normalize text for semantic cache lookup.
+
+    Only normalizes numbers/times to centroids (Principle 7) and strips filler words.
+    Preserves German grammar (articles, prepositions) because:
+    - "im Keller" vs "auf dem Balkon" carries spatial meaning (Principle 2)
+    - "der Rollladen" vs "die Rollläden" carries plurality (Principle 1)
+    - "an" vs "aus" carries intent (Principle 3)
+    The embedding model is trained on proper German sentences.
     """
+    if not text: return "", []
+    if " und " in text or "," in text: return "[MULTIPLE_COMMANDS_ESCALATION]", []
+
+
+
+    text = map_area_alias(text)
+    text_norm = canonicalize(text)
     from .duration_utils import parse_german_duration
-    
     extracted: List = []
-    
-    # Standard normalized time value
-    STANDARD_TIME = "10 Minuten"
-    STANDARD_CLOCK = "10 Uhr"
 
-    def replace_percent(match):
-        val = int(match.group(1))
-        extracted.append(val)
-        return "50 Prozent"
+    # 1. Number Centroids (Principle 7) — normalize values that can't
+    #    be meaningfully represented in vector space
+    def repl_pct(m):
+        extracted.append(int(m.group(1)))
+        return "50 prozent"
+    def repl_temp(m):
+        extracted.append(int(m.group(1)))
+        return "21 grad"
 
-    def replace_temp(match):
-        val = int(match.group(1))
-        extracted.append(val)
-        return "20 Grad"
+    # \b doesn't work after % because % is not a word character.
+    # Use (?:\s|$) as boundary instead.
+    text_norm = re.sub(r"(\d+)\s*(?:%|prozent)(?:\b|\s|$)", repl_pct, text_norm, flags=re.IGNORECASE)
+    text_norm = re.sub(r"(\d+)\s*(?:\u00b0|grad)\b", repl_temp, text_norm, flags=re.IGNORECASE)
 
-    def replace_delay(match):
-        # Extract original value for logging
-        full_match = match.group(0)  # e.g., "in 3 Minuten" or "in 37 Sekunden"
-        duration_part = match.group(1) + " " + match.group(2)  # "3 Minuten"
-        seconds = parse_german_duration(duration_part)
-        extracted.append(seconds // 60 if seconds >= 60 else seconds)
-        # Return STANDARD time - always "10 Minuten" regardless of original unit
-        return f"in {STANDARD_TIME}"
+    # 2. Time Centroids — normalize all temporal expressions to standard form
+    #    so "in 5 Minuten" and "in 2 Stunden" match the same cache entry
+    def repl_delay_in(m):
+        sec = parse_german_duration(m.group(1) + " " + m.group(2))
+        extracted.append(sec // 60 if sec >= 60 else sec)
+        return "in 10 minuten"
 
-    def replace_time(match):
-        # Extract time: "um 15:30 Uhr" or "um 8 Uhr"
-        time_str = match.group(1)
-        extracted.append(time_str)
-        # Return STANDARD clock time
-        return f"um {STANDARD_CLOCK}"
+    def repl_delay_fuer(m):
+        sec = parse_german_duration(m.group(1) + " " + m.group(2))
+        extracted.append(sec // 60 if sec >= 60 else sec)
+        return "fuer 10 minuten"
 
-    def replace_duration(match):
-        # "für X Minuten/Sekunden/Stunden" → all normalized to "für 10 Minuten"
-        duration_part = match.group(1) + " " + match.group(2)
-        seconds = parse_german_duration(duration_part)
-        extracted.append(seconds // 60 if seconds >= 60 else seconds)
-        # Return STANDARD time - always "10 Minuten"
-        return f"für {STANDARD_TIME}"
-    
-    def replace_timer_duration(match):
-        # "auf X Minuten/Sekunden/Stunden" → all normalized to "auf 10 Minuten"
-        duration_part = match.group(1) + " " + match.group(2)
-        seconds = parse_german_duration(duration_part)
-        extracted.append(seconds // 60 if seconds >= 60 else seconds)
-        # Return STANDARD time - always "10 Minuten"
-        return f"auf {STANDARD_TIME}"
+    def repl_delay_auf(m):
+        sec = parse_german_duration(m.group(1) + " " + m.group(2))
+        extracted.append(sec // 60 if sec >= 60 else sec)
+        return "auf 10 minuten"
 
-    # Percentage patterns
-    text_norm = re.sub(r"(\d+)\s*%", replace_percent, text)
-    text_norm = re.sub(r"(\d+)\s*(prozent|Prozent)", replace_percent, text_norm)
-    
-    # Temperature patterns
-    text_norm = re.sub(r"(\d+)\s*(grad|Grad)", replace_temp, text_norm)
-    
-    # Temporal delay patterns: "in 3 Minuten", "in einer Stunde", "in 10 Sekunden"
-    # For DelayedControl - action AFTER delay
-    # ALL normalized to "in 10 Minuten"
-    text_norm = re.sub(
-        r"\bin\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
-        replace_delay, text_norm, flags=re.IGNORECASE
-    )
-    
-    # Temporal time patterns: "um 15:30 Uhr", "um 8 Uhr"
-    # For DelayedControl - action at specific time
-    # Normalized to "um 10 Uhr"
-    text_norm = re.sub(
-        r"\bum\s+(\d{1,2}(?::\d{2})?)\s*Uhr\b",
-        replace_time, text_norm, flags=re.IGNORECASE
-    )
-    
-    # Duration patterns: "für 3 Minuten", "für eine Stunde", "für 30 Sekunden"
-    # For TemporaryControl - action NOW, revert after duration
-    # ALL normalized to "für 10 Minuten"
-    text_norm = re.sub(
-        r"\bfür\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
-        replace_duration, text_norm, flags=re.IGNORECASE
-    )
-    
-    # Timer duration patterns: "auf 5 Minuten", "Timer auf 10 Minuten"
-    # For HassTimerSet
-    # ALL normalized to "auf 10 Minuten"
-    text_norm = re.sub(
-        r"\bauf\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
-        replace_timer_duration, text_norm, flags=re.IGNORECASE
-    )
+    def repl_clock(m):
+        extracted.append(m.group(1))
+        return "um 10 uhr"
 
-    return text_norm, extracted
+    # "in 5 Minuten", "in 2 Stunden", "in 30 Sekunden"
+    text_norm = re.sub(r"\bin\s+(\d+|eine[rn]?)\s+(minuten?|stunden?|sekunden?)\b", repl_delay_in, text_norm, flags=re.IGNORECASE)
+    # "für 5 Minuten", "für 2 Stunden"
+    text_norm = re.sub(r"\bfuer\s+(\d+|eine[rn]?)\s+(minuten?|stunden?|sekunden?)\b", repl_delay_fuer, text_norm, flags=re.IGNORECASE)
+    # "auf 5 Minuten" (timer duration)
+    text_norm = re.sub(r"\bauf\s+(\d+|eine[rn]?)\s+(minuten?|stunden?|sekunden?)\b", repl_delay_auf, text_norm, flags=re.IGNORECASE)
+    # "um 15:30 Uhr" → after canonicalize, ":" is stripped → "um 15 30 uhr"
+    # Also handle "um 8 uhr" (no minutes)
+    text_norm = re.sub(r"\bum\s+(\d{1,2})(?:\s+\d{2})?\s*uhr\b", repl_clock, text_norm, flags=re.IGNORECASE)
+
+    # 3. Fraction normalization ("zur Hälfte" → "50 Prozent")
+    # FRACTION_VALUES keys may contain umlauts ("hälfte") but canonicalize()
+    # has already converted them ("haelfte"), so we canonicalize the keys too.
+    try:
+        from ..constants.entity_keywords import FRACTION_VALUES
+    except (ImportError, ValueError):
+        from constants.entity_keywords import FRACTION_VALUES
+    for fraction_word, fraction_val in FRACTION_VALUES.items():
+        canon_word = canonicalize(fraction_word)
+        pattern = r"\b" + re.escape(canon_word) + r"\b"
+        if re.search(pattern, text_norm, flags=re.IGNORECASE):
+            extracted.append(fraction_val)
+            text_norm = re.sub(pattern, "50 prozent", text_norm, flags=re.IGNORECASE)
+
+    # 4. Strip only filler words — keep articles and prepositions
+    text_norm = strip_filler_words(text_norm)
+
+    return re.sub(r"\s+", " ", text_norm).strip(), extracted
 
 
 def extract_delay(text: str) -> Optional[str]:
-    """Extract delay string from user input for DelayedControl.
-    
-    Args:
-        text: User command text
-        
-    Returns:
-        Delay string or None
-        
-    Examples:
-        extract_delay("in 3 Minuten") → "3 Minuten"
-        extract_delay("in einer Stunde") → "einer Stunde" 
-        extract_delay("um 15 Uhr") → "15 Uhr"
-        extract_delay("um 15:30 Uhr") → "15:30 Uhr"
-    """
-    # Pattern for "in X Minuten/Stunde/Sekunden"
-    delay_match = re.search(
-        r"\bin\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
-        text, re.IGNORECASE
-    )
-    if delay_match:
-        return f"{delay_match.group(1)} {delay_match.group(2)}"
-    
-    # Pattern for "um X Uhr"
-    time_match = re.search(
-        r"\bum\s+(\d{1,2}(?::\d{2})?)\s*Uhr\b",
-        text, re.IGNORECASE
-    )
-    if time_match:
-        return f"{time_match.group(1)} Uhr"
-    
-    return None
-
+    m = re.search(r"\bin\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b", text, re.IGNORECASE)
+    if m: return f"{m.group(1)} {m.group(2)}"
+    m = re.search(r"\bum\s+(\d{1,2}(?::\d{2})?)\s*Uhr\b", text, re.IGNORECASE)
+    return f"{m.group(1)} Uhr" if m else None
 
 def extract_duration(text: str) -> Optional[str]:
-    """Extract duration string from user input for TemporaryControl.
-    
-    Args:
-        text: User command text
-        
-    Returns:
-        Duration string or None
-        
-    Examples:
-        extract_duration("für 3 Minuten") → "3 Minuten"
-        extract_duration("für eine Stunde") → "eine Stunde"
-        extract_duration("für 10 Sekunden") → "10 Sekunden"
-    """
-    # Pattern for "für X Minuten/Stunde/Sekunden"
-    duration_match = re.search(
-        r"\bfür\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
-        text, re.IGNORECASE
-    )
-    if duration_match:
-        return f"{duration_match.group(1)} {duration_match.group(2)}"
-    
-    return None
-
+    m = re.search(r"\bfür\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b", text, re.IGNORECASE)
+    return f"{m.group(1)} {m.group(2)}" if m else None
 
 def extract_timer_duration(text: str) -> Optional[str]:
-    """Extract duration string from user input for HassTimerSet.
-    
-    Args:
-        text: User command text
-        
-    Returns:
-        Duration string or None
-        
-    Examples:
-        extract_timer_duration("Timer für 5 Minuten") → "5 Minuten"
-        extract_timer_duration("Timer auf 10 Minuten") → "10 Minuten"
-        extract_timer_duration("5 Minuten Timer") → "5 Minuten"
-        extract_timer_duration("Stell einen Timer auf 3 Minuten") → "3 Minuten"
-    """
-    # Pattern for "für X Minuten/Stunde/Sekunden" (same as TemporaryControl)
-    duration_match = re.search(
-        r"\bfür\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
-        text, re.IGNORECASE
-    )
-    if duration_match:
-        return f"{duration_match.group(1)} {duration_match.group(2)}"
-    
-    # Pattern for "auf X Minuten/Stunde/Sekunden"
-    auf_match = re.search(
-        r"\bauf\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
-        text, re.IGNORECASE
-    )
-    if auf_match:
-        return f"{auf_match.group(1)} {auf_match.group(2)}"
-    
-    # Pattern for "X Minuten Timer" (number at start)
-    prefix_match = re.search(
-        r"(\d+)\s*(Minuten?|Stunden?|Sekunden?)\s+(?:timer|wecker)\b",
-        text, re.IGNORECASE
-    )
-    if prefix_match:
-        return f"{prefix_match.group(1)} {prefix_match.group(2)}"
-    
+    for p in [r"\bfür\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b", 
+              r"\bauf\s+(\d+|eine[rn]?)\s+(Minuten?|Stunden?|Sekunden?)\b",
+              r"(\d+)\s*(Minuten?|Stunden?|Sekunden?)\s+(?:timer|wecker)\b"]:
+        m = re.search(p, text, re.IGNORECASE)
+        if m: return f"{m.group(1)} {m.group(2)}"
     return None

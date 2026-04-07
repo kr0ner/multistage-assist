@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from multistage_assist.capabilities.entity_resolver import EntityResolverCapability
-from multistage_assist.capabilities.memory import MemoryCapability
+from multistage_assist.capabilities.knowledge_graph import KnowledgeGraphCapability
 from multistage_assist.stage1_cache import Stage1CacheProcessor
 
 
@@ -63,7 +63,7 @@ async def test_fuzzy_match_entity_name(hass, config_entry):
 
 async def test_memory_entity_alias_lookup(hass, config_entry):
     """Test that memory-based entity alias lookup works."""
-    memory = MemoryCapability(hass, config_entry.data)
+    memory = KnowledgeGraphCapability(hass, config_entry.data)
     
     # Learn an alias
     await memory.learn_entity_alias("spiegellicht", "light.badezimmer_spiegel")

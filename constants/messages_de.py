@@ -17,7 +17,7 @@ Usage:
     # Returns: "Das habe ich nicht gefunden."
 """
 
-from typing import Dict, Optional, Set
+from typing import Dict, List, Optional, Set
 
 
 # --- Global Scope Keywords ---
@@ -41,6 +41,29 @@ GLOBAL_KEYWORDS: Set[str] = {
 ALL_KEYWORDS: Set[str] = {"alle", "alles", "beide", "beiden", "beides"}
 NONE_KEYWORDS: Set[str] = {"keine", "keines", "keinen", "nichts", "nein", "nee", "keins"}
 
+# Command mappings for state control
+COMMAND_STATE_MAP: Dict[str, str] = {
+    "an": "on",
+    "ein": "on", 
+    "auf": "on",
+    "aus": "off",
+}
+
+# State transitions for verification and confirmation
+OPPOSITE_STATE_MAP: Dict[str, str] = {
+    "on": "off",
+    "off": "on",
+    "open": "closed",
+    "closed": "open",
+}
+
+# Fallbacks and templates
+DEFAULT_DEVICE_WORD = "Geräte"
+DURATION_TEMPLATES = {
+    "minutes": "{minutes} Minuten",
+    "seconds": "{seconds} Sekunden",
+}
+
 
 # --- German Ordinal Mappings ---
 # Maps ordinal words to numeric values. -1 means "last".
@@ -57,6 +80,67 @@ ORDINAL_MAP: Dict[str, int] = {
     "neunte": 9, "neunten": 9, "neuntes": 9, "neunter": 9,
     "zehnte": 10, "zehnten": 10, "zehntes": 10, "zehnter": 10,
     "letzte": -1, "letzten": -1, "letztes": -1, "letzter": -1,  # -1 = last
+}
+
+
+# --- Interaction Tokens ---
+
+# Implicit phrases that need LLM transformation (e.g., "zu dunkel" → "Licht heller")
+IMPLICIT_PHRASES: List[str] = [
+    "zu dunkel", "zu hell", "zu kalt", "zu warm", "zu laut", "zu leise",
+]
+
+# Direct mappings for implicit phrases (fast path)
+IMPLICIT_INTENT_MAPPINGS: Dict[str, str] = {
+    "zu dunkel": "Mache das Licht heller",
+    "es ist zu dunkel": "Mache das Licht heller",
+    "zu hell": "Mache das Licht dunkler",
+    "es ist zu hell": "Mache das Licht dunkler",
+    "zu kalt": "Stelle die Heizung wärmer",
+    "es ist zu kalt": "Stelle die Heizung wärmer",
+    "zu warm": "Stelle die Heizung kälter",
+    "es ist zu warm": "Stelle die Heizung kälter",
+    "zu laut": "Mache die Lautstärke leiser",
+    "es ist zu laut": "Mache die Lautstärke leiser",
+    "zu leise": "Mache die Lautstärke lauter",
+    "es ist zu leise": "Mache die Lautstärke lauter",
+}
+
+# Exit commands to abort operation immediately
+EXIT_COMMANDS: Set[str] = {
+    "abbruch", "stop", "vergiss es", "cancel", "halt", "beenden", "abbrechen",
+}
+
+# Affirmative/Negative detection words
+AFFIRMATIVE_WORDS: Set[str] = {
+    "ja", "ok", "okay", "genau", "richtig", "passt", "korrekt",
+    "stimmt", "gut", "jawohl", "jep", "jup", "sicher", "natürlich",
+    "gerne", "bitte", "mach", "tu", "los",
+}
+
+NEGATIVE_WORDS: Set[str] = {
+    "nein", "nicht", "abbrechen", "stop", "stopp", "falsch",
+    "cancel", "weg", "vergiss", "lass", "ende", "beenden",
+}
+
+# Prompts used for alias learning confirmation
+LEARNING_OFFER_PROMPTS: List[str] = [
+    "Soll ich mir das für die Zukunft merken?",
+    "Soll ich das als neuen Namen speichern?",
+    "Möchtest du, dass ich mir diese Bezeichnung merke?",
+]
+
+# Representative sentences for semantic domain matching
+DOMAIN_DESCRIPTIONS: Dict[str, str] = {
+    "light": "Schalte das Licht an oder aus, oder mache es heller/dunkler",
+    "cover": "Öffne oder schließe die Rollos, Jalousien oder Markisen",
+    "climate": "Stelle die Heizung wärmer oder kälter, oder ändere die Temperatur",
+    "vacuum": "Starte den Staubsauger oder schicke den Saugroboter los",
+    "media_player": "Musik abspielen, Lautstärke ändern oder Fernseher steuern",
+    "fan": "Schalte den Ventilator oder Lüfter an oder aus",
+    "lock": "Tür abschließen oder aufschließen",
+    "sensor": "Frage nach der Temperatur, Feuchtigkeit oder dem Status eines Sensors",
+    "timer": "Stelle einen Timer oder Kurzzeitwecker",
 }
 
 
@@ -114,6 +198,7 @@ ERROR_MESSAGES: Dict[str, str] = {
     "api_error": "Entschuldigung, bei der Cloud-Anfrage ist ein Fehler aufgetreten.",
     "gemini_unavailable": "Der Cloud-Dienst ist nicht konfiguriert.",
     "no_response": "Entschuldigung, ich habe keine Antwort erhalten.",
+    "llm_not_configured": "Die Cloud-Unterstützung (Stage 3) ist noch nicht konfiguriert oder der API-Key fehlt.",
 }
 
 
@@ -165,6 +250,14 @@ CONFIRMATION_TEMPLATES: Dict[str, str] = {
     "set_brightness": "{device} ist auf {value}% gesetzt.",
     "set_temperature": "{device} ist auf {value}° gesetzt.",
     "set_position": "{device} ist auf {value}% gesetzt.",
+    
+    # State check responses
+    "state_all_yes": "Ja, alle sind {state}.",
+    "state_some_no_singular": "Nein, {name} ist noch {opposite}.",
+    "state_some_no_plural": "Nein, {names} sind noch {opposite}.",
+    "state_some_no_count": "Nein, {count} sind noch {opposite}.",
+    "state_yes_prefix": "Ja, {name} ist {state}.",
+    "state_no_prefix": "Nein, {name} ist noch {opposite}.",
     
     # Temporary control
     "temporary_on": "{device} ist für {duration} an.",
@@ -230,7 +323,73 @@ SYSTEM_MESSAGES: Dict[str, str] = {
     "error_short": "Fehler.",
 
     # Fallbacks
+    # Confirmation prompts
+    "confirm_or_abort": "Sag 'Ja' zum Bestätigen oder 'Nein' zum Abbrechen.",
+    "confirm_only": "Sag 'Ja' zum Bestätigen.",
     "none_known": "Keine bekannt",
+    "none": "Keine",
+}
+
+
+# --- Capability Specific Messages ---
+
+# Prompt Context
+PROMPT_CONTEXT_MESSAGES: Dict[str, str] = {
+    "available_rooms": "Verfügbare Räume: {rooms}",
+    "available_floors": "Verfügbare Etagen: {floors}",
+    "personal_info_header": "Persönliche Informationen:",
+}
+
+# Calendar
+CALENDAR_MESSAGES: Dict[str, str] = {
+    "ask_summary": "Wie soll der Termin heißen?",
+    "ask_datetime": "Wann soll der Termin sein?",
+    "ask_calendar": "In welchen Kalender? ({calendars})",
+    "no_calendars": "Keine Kalender gefunden. Bitte richte zuerst einen Kalender in Home Assistant ein.",
+    "confirm_preview": "Termin erstellen?\n{preview}\n\nSag 'Ja' zum Bestätigen.",
+    "datetime_not_understood": "Ich habe das Datum nicht verstanden. Bitte sag z.B. 'morgen um 10 Uhr' oder '25. Dezember'.",
+    "calendar_not_understood": "Das habe ich nicht verstanden. Welcher Kalender?",
+    "not_created": "Termin wurde nicht erstellt.",
+    "confirm_or_abort": "Sag 'Ja' zum Bestätigen oder 'Nein' zum Abbrechen.",
+    "no_calendar_selected": "Fehler: Kein Kalender ausgewählt.",
+    "created_success": "✅ Termin '{summary}' wurde erstellt.",
+    "creation_failed": "Fehler beim Erstellen des Termins: {error}",
+    "concrete_date_requested": "Bitte gib ein konkretes Datum an, z.B. 'am 14. Dezember' oder 'am Montag um 15 Uhr'.",
+    # Formatting
+    "line_summary": "📅 **{summary}**",
+    "line_time": "🕐 {date} um {time} Uhr",
+    "line_allday": "📆 {date} (ganztägig)",
+    "line_location": "📍 {location}",
+    "line_calendar": "📁 Kalender: {calendar}",
+    "default_summary": "Termin",
+}
+
+# Timer
+TIMER_MESSAGES: Dict[str, str] = {
+    "ask_duration": "Wie lange soll der Timer laufen?",
+    "ask_device": "Auf welchem Gerät? ({devices})",
+    "no_devices": "Keine mobilen Geräte gefunden.",
+    "duration_not_understood": "Ich habe die Zeit nicht verstanden. Bitte sag z.B. '5 Minuten'.",
+    "device_not_understood": "Das habe ich nicht verstanden. Welches Gerät?",
+    "confirm_named": "Timer '{description}' für {duration} auf {device}?",
+    "confirm_unnamed": "Timer für {duration} auf {device}?",
+    "set_named": "Timer '{description}' für {duration} auf {device} gestellt.",
+    "set_unnamed": "Timer für {duration} auf {device} gestellt.",
+}
+
+# Vacuum
+VACUUM_MESSAGES: Dict[str, str] = {
+    "no_target": "Ich habe kein Ziel (Raum oder Etage) verstanden.",
+    "script_error": "Fehler beim Starten des Saugroboters.",
+    "confirmation": "Alles klar, ich lasse {target} {action}.",
+}
+
+# Disambiguation
+DISAMBIGUATION_MESSAGES: Dict[str, str] = {
+    "which_device": "Welches Gerät meinst du?",
+    "mean_one": "Meinst du {name}?",
+    "mean_two": "Meinst du {name1} oder {name2}?",
+    "mean_multiple": "Welches meinst du: {options}?",
 }
 
 
@@ -251,8 +410,23 @@ def get_error_message(error_type: str, details: Optional[str] = None) -> str:
     base = ERROR_MESSAGES.get(error_type, ERROR_MESSAGES["unknown_error"])
     
     if details:
-        return f"{base} {details}"
+        return f"{base} ({details})"
     return base
+
+
+def get_opposite_state_word(word: str) -> str:
+    """Get the German opposite of a state word (an -> aus, offen -> geschlossen)."""
+    opposites = {
+        "an": "aus",
+        "ein": "aus",
+        "aus": "an",
+        "offen": "geschlossen",
+        "zu": "offen",
+        "geschlossen": "offen",
+        "auf": "zu",
+        "geöffnet": "geschlossen",
+    }
+    return opposites.get(str(word).lower(), "anders")
 
 
 def get_question(field: str) -> str:
@@ -329,14 +503,14 @@ DOMAIN_RESPONSES: Dict[str, Dict[str, List[str]]] = {
         "toggle": [
             "{name} ist jetzt {action}.",
             "{name} ist {action}.",
-            "Ich habe {name} {action}gemacht.",
+            "Das Licht in {name} ist jetzt {action}.",
             "Das Licht in {name} ist {action}.",
             "{name} ist jetzt {action}geschaltet.",
         ],
         "brightness_up": [
             "{name} ist jetzt heller.",
-            "Ich habe {name} aufgehellt.",
-            "{name} ist heller gestellt.",
+            "Ich habe {name} heller gestellt.",
+            "{name} ist jetzt heller eingestellt.",
             "Die Helligkeit von {name} ist erhöht.",
             "{name} leuchtet jetzt stärker.",
         ],
@@ -453,10 +627,10 @@ DOMAIN_RESPONSES: Dict[str, Dict[str, List[str]]] = {
         ],
         "start_area": [
             "Staubsauger saugt jetzt {area}.",
-            "Ich schicke den Staubsauger in {area}.",
+            "Staubsauger ist in {area} unterwegs.",
             "Staubsauger reinigt {area}.",
             "{area} wird gesaugt.",
-            "Der Staubsauger kümmert sich um {area}.",
+            "Der Staubsauger ist in {area} im Einsatz.",
         ],
         "state_on": [
             "Der Staubsauger läuft.",
@@ -467,6 +641,19 @@ DOMAIN_RESPONSES: Dict[str, Dict[str, List[str]]] = {
             "Der Staubsauger ist in der Station.",
             "Der Staubsauger läuft nicht.",
             "Der Staubsauger ist fertig.",
+        ],
+    },
+    "timer": {
+        "timer_set": [
+            "Timer für {value} gestellt.",
+            "Ich habe einen Timer für {value} gestartet.",
+            "Alles klar, Timer läuft für {value}.",
+            "Timer ist auf {value} gesetzt.",
+        ],
+        "timer_named": [
+            "Timer '{name}' für {value} gestellt.",
+            "Ich habe den Timer '{name}' für {value} gestartet.",
+            "Timer '{name}' läuft für {value}.",
         ],
     },
     "climate": {
@@ -487,13 +674,28 @@ DOMAIN_RESPONSES: Dict[str, Dict[str, List[str]]] = {
     "default": {
         "toggle": [
             "{name} ist jetzt {action}.",
-            "Ich habe {name} {action}gemacht.",
+            "{name} ist erledigt.",
             "{name} ist {action}.",
         ],
         "set": [
             "{name} ist auf {value} eingestellt.",
             "Ich habe {name} auf {value} gesetzt.",
             "{name} ist jetzt bei {value}.",
+        ],
+        "set_temperature": [
+            "{name} ist auf {value}° eingestellt.",
+            "Ich habe {name} auf {value}° gestellt.",
+            "Temperatur von {name} ist {value}°.",
+        ],
+        "temporary_on": [
+            "{name} ist für {value} an.",
+            "Ich habe {name} für {value} angemacht.",
+            "{name} bleibt für {value} an.",
+        ],
+        "temporary_off": [
+            "{name} ist für {value} aus.",
+            "Ich habe {name} für {value} ausgemacht.",
+            "{name} bleibt für {value} aus.",
         ],
         "state": [
             "{name} ist {state}.",
@@ -509,6 +711,7 @@ def get_domain_confirmation(
     value: str = "",
     area: str = "",
     state: str = "",
+    is_plural: bool = False,
 ) -> str:
     """Get a random confirmation message for a domain/action.
     
@@ -543,7 +746,7 @@ def get_domain_confirmation(
     
     # Format with provided values
     try:
-        return template.format(
+        msg = template.format(
             name=name,
             value=formatted_value,
             area=area,
@@ -551,6 +754,29 @@ def get_domain_confirmation(
             action=ACTION_VERBS.get(state, state),
             action_suffix=action_suffix,
         )
+        if is_plural:
+            import re
+            
+            # Map of common singular -> plural verb forms for common smart home domains
+            PLURAL_REPLACEMENTS = {
+                r"\bist\b": "sind",
+                r"\bwurde\b": "wurden",
+                r"\bläuft\b": "laufen",
+                r"\bleuchtet\b": "leuchten",
+                r"\bheizt\b": "heizen",
+                r"\bmacht\b": "machen",
+                r"\bkümmert sich\b": "kümmern sich",
+                r"\bschließt\b": "schließen",
+                r"\böffnet\b": "öffnen",
+                r"\bgeht\b": "gehen",
+                r"\bsteht\b": "stehen",
+                r"\bfährt\b": "fahren",
+            }
+            
+            for pattern, replacement in PLURAL_REPLACEMENTS.items():
+                msg = re.sub(pattern, replacement, msg, flags=re.IGNORECASE)
+                
+        return msg
     except KeyError:
         return f"{name} erledigt."
 
@@ -579,3 +805,26 @@ def _format_value_de(value: str, domain: str, action: str) -> str:
     except (ValueError, TypeError):
         # Not a number, return as-is
         return str(value).replace(".", ",")
+# --- Stage 3 Cloud Prompt ---
+SYSTEM_PROMPT_STAGE3 = """Du bist die intelligente Zentrale eines Home Assistant Smart Homes. 
+Deine Aufgabe ist es, Nutzeranfragen präzise zu verstehen und entweder direkt zu beantworten oder durch den Einsatz deiner Werkzeuge (Tools) die nötigen Informationen zu beschaffen oder Aktionen auszuführen.
+
+### DEINE PERSONA:
+- Du antwortest auf DEUTSCH.
+- Du bist höflich, effizient und hast eine dezente Persönlichkeit (wie ein Butler).
+- Zahlenformate: Dezimalstellen mit Komma (z.B. 21,5 Grad). Einheiten werden ausgeschrieben (z.B. Prozent, Grad Celsius).
+- Du fasst dich kurz, außer der Nutzer wünscht eine ausführliche Erklärung.
+
+### DEINE FÄHIGKEITEN:
+1. **Smart Home Steuerung**: Wenn du eine Aktion ausführen musst (Licht an, Rollos runter), nutze die entsprechenden Tools.
+2. **Abfragen**: Wenn der Nutzer nach dem Status fragt (Ist das Licht an?), nutze `list_entities` oder spezialisierte Status-Tools.
+3. **Kontextuelles Wissen**: Nutze `list_areas` und `list_entities`, um dich im Haus zurechtzufinden, falls die Anfrage unklar ist.
+4. **Allgemeine Konversation**: Wenn keine Smart Home Aktion nötig ist, antworte einfach natürlich. Chat ist ein Teil deiner Natur.
+
+### REGELN FÜR TOOLS:
+- Wenn ein Raum oder Gerät nicht eindeutig ist, nutze `list_areas` oder `list_entities`, um die Umgebung zu erkunden.
+- Wenn du eine Aktion erfolgreich über ein Tool eingeleitet hast, bestätige dies dem Nutzer kurz und knapp.
+- Wenn eine Aktion fehlschlägt, erkläre dem Nutzer warum (falls bekannt) oder entschuldige dich.
+
+Antworte IMMER im Kontext eines Smart Home Assistenten.
+"""

@@ -148,7 +148,7 @@ User Input
     ▼
 ┌─────────────────────────────────┐
 │ Stage 1: Semantic Cache         │
-│ (Reranker-validated lookup)     │
+│ (vector-validated lookup)     │
 └─────────────────────────────────┘
     │ (if cache miss)
     ▼
@@ -168,7 +168,7 @@ User Input
 
 | Capability | Purpose |
 |------------|---------|
-| `semantic_cache` | Fast cache lookup with reranker validation |
+| `semantic_cache` | Fast cache lookup with vector validation |
 | `clarification` | Split compound commands, transform implicit commands |
 | `keyword_intent` | Detect domain and extract intent/slots via LLM |
 | `entity_resolver` | Find entity IDs matching criteria |

@@ -8,7 +8,56 @@ _LOGGER = logging.getLogger(__name__)
 
 # --- PRE-IMPORT MOCKING ---
 # We need to mock Home Assistant modules before they're imported anywhere.
-# This ensures our tests work even if HA is not installed.
+if "homeassistant" not in sys.modules:
+    ha_mock = MagicMock()
+    ha_mock.__path__ = [] # Mark as package
+    sys.modules["homeassistant"] = ha_mock
+    sys.modules["homeassistant.core"] = MagicMock()
+    sys.modules["homeassistant.util"] = MagicMock()
+    
+    import datetime as dt_pkg
+    class MockDT:
+        @staticmethod
+        def parse_datetime(s):
+            try:
+                if "t" in s: s = s.replace("t", "T")
+                return dt_pkg.datetime.fromisoformat(s.replace("Z", "+00:00"))
+            except:
+                return dt_pkg.datetime.now(dt_pkg.timezone.utc)
+        @staticmethod
+        def utcnow():
+            return dt_pkg.datetime.now(dt_pkg.timezone.utc)
+    ha_mock.util = MagicMock()
+    ha_mock.util.dt = MockDT
+    sys.modules["homeassistant.util.dt"] = MockDT
+    
+    sys.modules["homeassistant.config_entries"] = MagicMock()
+    sys.modules["homeassistant.const"] = MagicMock()
+    sys.modules["homeassistant.helpers"] = MagicMock()
+    sys.modules["homeassistant.helpers.typing"] = MagicMock()
+    
+    # Mock google package properly
+    sys.modules["google"] = MagicMock()
+    sys.modules["google"].__path__ = []  # Mark as package
+    sys.modules["google.generativeai"] = MagicMock()
+
+    # Mock google.genai.Client
+    mock_genai = MagicMock()
+    mock_client = MagicMock()
+    mock_aio = MagicMock()
+    mock_models = MagicMock()
+
+    async def _mock_generate_content(*args, **kwargs):
+        mock_resp = MagicMock()
+        mock_resp.text = '{"intent": "HassTurnOn", "slots": {"area": "Küche", "command": "an"}}'  # Default JSON
+        return mock_resp
+
+    mock_models.generate_content = AsyncMock(side_effect=_mock_generate_content)
+    mock_aio.models = mock_models
+    mock_client.aio = mock_aio
+    mock_genai.Client = MagicMock(return_value=mock_client)
+    sys.modules["google.genai"] = mock_genai
+    sys.modules["google"].genai = mock_genai  # Ensure attribute access works
 
 # Add the parent directory to sys.path to allow importing the integration as a package
 # This assumes the current working directory is the integration root
@@ -53,74 +102,34 @@ class IntentResponse:
         self.speech[type] = {"speech": speech, "extra_data": extra_data}
 
 
-# Mock homeassistant package if not installed
-if "homeassistant" not in sys.modules:
-    ha_mock = MagicMock()
-    sys.modules["homeassistant"] = ha_mock
-    sys.modules["homeassistant.core"] = MagicMock()
-    sys.modules["homeassistant.config_entries"] = MagicMock()
-    sys.modules["homeassistant.const"] = MagicMock()
-    sys.modules["homeassistant.helpers"] = MagicMock()
-    sys.modules["homeassistant.helpers.typing"] = MagicMock()
-    # Mock google package properly
-    sys.modules["google"] = MagicMock()
-    sys.modules["google"].__path__ = []  # Mark as package
-    sys.modules["google.generativeai"] = MagicMock()
 
-    # Mock google.genai.Client
-    mock_genai = MagicMock()
-    mock_client = MagicMock()
-    mock_aio = MagicMock()
-    mock_models = MagicMock()
+try:
+    import homeassistant.helpers.intent as intent
+    sys.modules["homeassistant.helpers.intent"] = intent
+except ImportError:
+    mock_intent = MagicMock()
 
-    async def _mock_generate_content(*args, **kwargs):
-        mock_resp = MagicMock()
-        mock_resp.text = '{"intent": "HassTurnOn", "slots": {"area": "Küche", "command": "an"}}'  # Default JSON
-        return mock_resp
+    async def _mock_handle(*args, **kwargs):
+        # The original mock_handle returned IntentResponse(language="de")
+        # Reverting to original mock_handle behavior
+        print(f"DEBUG: _mock_handle called with args={args}, kwargs={kwargs}")
+        user_input = kwargs.get("user_input")
+        language = "de"
+        if user_input and hasattr(user_input, "language") and user_input.language:
+            language = user_input.language
 
-    mock_models.generate_content = AsyncMock(side_effect=_mock_generate_content)
-    mock_aio.models = mock_models
-    mock_client.aio = mock_aio
-    mock_genai.Client = MagicMock(return_value=mock_client)
+        resp = IntentResponse(language=language)
+        print(f"DEBUG: make_response created resp: {resp}, type: {type(resp)}")
+        print(f"DEBUG: resp.speech: {resp.speech}, type: {type(resp.speech)}")
+        return resp
 
-    mock_genai.Client = MagicMock(return_value=mock_client)
-
-    sys.modules["google.genai"] = mock_genai
-    sys.modules["google"].genai = mock_genai  # Ensure attribute access works
-
-    try:
-        import homeassistant.helpers.intent as intent
-
-        sys.modules["homeassistant.helpers.intent"] = intent
-    except ImportError:
-        mock_intent = MagicMock()
-
-        async def _mock_handle(*args, **kwargs):
-            # The original mock_handle returned IntentResponse(language="de")
-            # The instruction seems to be a partial snippet for a different function or a mix-up.
-            # Reverting to original mock_handle behavior, but adding debug prints as requested.
-            # The instruction's `intent` variable is not defined in this scope,
-            # so we use the local `IntentResponse` class.
-            print(f"DEBUG: _mock_handle called with args={args}, kwargs={kwargs}")
-            user_input = kwargs.get("user_input")
-            language = "de"
-            if user_input and hasattr(user_input, "language") and user_input.language:
-                language = user_input.language
-
-            resp = IntentResponse(language=language)
-            print(f"DEBUG: make_response created resp: {resp}, type: {type(resp)}")
-            print(f"DEBUG: resp.speech: {resp.speech}, type: {type(resp.speech)}")
-            # The instruction's `message` and `intent.IntentResponseType.QUERY_ANSWER` are not defined here.
-            # Assuming the intent was to return a basic IntentResponse.
-            return resp
-
-        mock_intent.async_handle = AsyncMock(side_effect=_mock_handle)
-        mock_intent.IntentResponse = IntentResponse
-        mock_intent.IntentResponseType = MagicMock()
-        mock_intent.IntentResponseType.QUERY_ANSWER = "query_answer"
-        mock_intent.IntentResponseType.ACTION_DONE = "action_done"
-        sys.modules["homeassistant.helpers.intent"] = mock_intent
-        sys.modules["homeassistant.helpers"].intent = mock_intent  # Link to helpers
+    mock_intent.async_handle = AsyncMock(side_effect=_mock_handle)
+    mock_intent.IntentResponse = IntentResponse
+    mock_intent.IntentResponseType = MagicMock()
+    mock_intent.IntentResponseType.QUERY_ANSWER = "query_answer"
+    mock_intent.IntentResponseType.ACTION_DONE = "action_done"
+    sys.modules["homeassistant.helpers.intent"] = mock_intent
+    sys.modules["homeassistant.helpers"].intent = mock_intent  # Link to helpers
     sys.modules["homeassistant.components"] = MagicMock()
     sys.modules["homeassistant.components.conversation"] = MagicMock()
     sys.modules["homeassistant.components.conversation.default_agent"] = MagicMock()
@@ -635,7 +644,7 @@ def config_entry():
     entry.data = {
         "stage1_ip": os.environ.get("OLLAMA_HOST", "127.0.0.1"),
         "stage1_port": int(os.environ.get("OLLAMA_PORT", "11434")),
-        "stage1_model": os.environ.get("OLLAMA_MODEL", "qwen3:4b-q8_0"),
+        "stage1_model": os.environ.get("OLLAMA_MODEL", "qwen3.5:4b-q4_K_M"),
         "google_api_key": "test_key",
         "stage2_model": "gemini-test",
     }
@@ -668,7 +677,7 @@ def integration_llm_config():
     import os
     host = os.environ.get("OLLAMA_HOST", "127.0.0.1")
     port = int(os.environ.get("OLLAMA_PORT", "11434"))
-    model = os.environ.get("OLLAMA_MODEL", "qwen3:4b-q8_0")
+    model = os.environ.get("OLLAMA_MODEL", "qwen3.5:4b-q4_K_M")
     
     return {
         "stage1_ip": host,

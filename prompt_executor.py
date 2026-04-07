@@ -10,6 +10,7 @@ try:
         CONF_STAGE1_PORT,
         CONF_STAGE1_MODEL,
     )
+    from .utils.json_utils import extract_json_from_llm_string
 except (ImportError, ValueError):
     from ollama_client import OllamaClient
     from const import (
@@ -17,6 +18,10 @@ except (ImportError, ValueError):
         CONF_STAGE1_PORT,
         CONF_STAGE1_MODEL,
     )
+    try:
+        from utils.json_utils import extract_json_from_llm_string
+    except ImportError:
+        from multistage_assist.utils.json_utils import extract_json_from_llm_string
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -117,18 +122,21 @@ class PromptExecutor:
                 return False
 
             props = schema.get("properties", {}) or {}
+            required = schema.get("required", [])
             for key, spec in props.items():
                 if key not in result:
-                    return False
+                    if key in required:
+                        return False
+                    continue
 
                 expected = spec.get("type")
                 val = result[key]
 
                 # Union types like ["string", "null"] or ["array", "null"]
                 if isinstance(expected, list):
-                    return any(_is_type(val, t) for t in expected)
-
-                if expected == "array":
+                    if not any(_is_type(val, t) for t in expected):
+                        return False
+                elif expected == "array":
                     if not isinstance(val, list):
                         return False
                     item_t = spec.get("items", {}).get("type")
@@ -169,14 +177,8 @@ class PromptExecutor:
             
             # Since we're using Native Structured Outputs, Ollama guarantees valid JSON.
             # However, some models still wrap the output in markdown code blocks like ```json ... ```
-            cleaned = resp_text.strip()
-            if cleaned.startswith("```"):
-                lines = cleaned.splitlines()
-                if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].startswith("```"):
-                    cleaned = "\n".join(lines[1:-1]).strip()
-            
-            return json.loads(cleaned)
+            return extract_json_from_llm_string(resp_text)
 
         except Exception as err:
-            _LOGGER.warning("Stage %s execution failed: %s", stage.name, err)
+            _LOGGER.warning("Stage %s execution failed (%s): %s", stage.name, type(err).__name__, err)
             return None

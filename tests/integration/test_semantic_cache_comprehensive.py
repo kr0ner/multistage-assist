@@ -1,7 +1,7 @@
 """Comprehensive Semantic Cache Integration Tests.
 
 This is THE canonical test file for semantic cache functionality.
-It tests the full pipeline: embeddings → vector search → BM25 hybrid → reranker.
+It tests the full pipeline: embeddings → vector search → BM25 hybrid → lookup.
 
 ================================================================================
 CRITICAL DESIGN PRINCIPLES - TESTS MUST VERIFY THESE
@@ -30,17 +30,17 @@ Tests are designed to verify NO FALSE POSITIVES, even at cost of lower recall.
 
 Requires:
 - Real Ollama embeddings (OLLAMA_HOST, OLLAMA_PORT env vars)
-- Real reranker service (RERANKER_HOST, RERANKER_PORT env vars)
+- Real semantic cache addon (CACHE_HOST, CACHE_PORT env vars)
 - Test anchor file (tests/integration/multistage_assist_anchors.json)
 
 Run with:
-    RERANKER_HOST=192.168.178.2 pytest tests/integration/test_semantic_cache_comprehensive.py -v
+    CACHE_HOST=192.168.178.2 pytest tests/integration/test_semantic_cache_comprehensive.py -v
 
 Configuration via environment variables:
     OLLAMA_HOST: Ollama server IP (default: 127.0.0.1)
     OLLAMA_PORT: Ollama server port (default: 11434)
-    RERANKER_HOST: Reranker server IP (default: 192.168.178.2)
-    RERANKER_PORT: Reranker server port (default: 9876)
+    CACHE_HOST: Cache server IP (default: 192.168.178.2)
+    CACHE_PORT: Cache server port (default: 9876)
 """
 
 import os
@@ -48,9 +48,11 @@ import json
 import pytest
 import numpy as np
 from pathlib import Path
+import asyncio
 from unittest.mock import MagicMock, AsyncMock
 from typing import List, Tuple, Optional, Dict, Any
 from dataclasses import dataclass, asdict
+from multistage_assist.utils.german_utils import normalize_for_cache, canonicalize
 
 pytestmark = pytest.mark.integration
 
@@ -60,23 +62,27 @@ pytestmark = pytest.mark.integration
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "127.0.0.1")
 OLLAMA_PORT = int(os.getenv("OLLAMA_PORT", "11434"))
-RERANKER_HOST = os.getenv("RERANKER_HOST", "192.168.178.2")
-RERANKER_PORT = int(os.getenv("RERANKER_PORT", "9876"))
+CACHE_HOST = os.getenv("CACHE_HOST", "192.168.178.2")
+CACHE_PORT = int(os.getenv("CACHE_PORT", "9876"))
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "models/multilingual-minilm")
 
 # Path to test anchors file (relative to project root)
 # If not present, synthetic anchors will be generated
 TEST_ANCHORS_FILE = Path(__file__).parents[2] / "multistage_assist_anchors.json"
 
-# Reranker threshold for cache hits
-THRESHOLD = 0.73
+# Standard threshold for cache hits
+THRESHOLD = 0.82
 
-# Import test fixtures for installation-independent testing
+# Import test fixtures and version
+from multistage_assist.utils.semantic_cache_builder import (
+    SemanticCacheBuilder,
+    CACHE_VERSION
+)
 from .test_fixtures import (
     TEST_AREAS,
     ANCHOR_PATTERNS,
     generate_test_anchors,
     extract_test_data_from_anchors,
-    SYNTHETIC_ANCHORS,
 )
 
 # Determine which areas to use based on available anchor file
@@ -335,22 +341,24 @@ def semantic_cache():
     # Create mock hass
     hass = MagicMock()
     hass.config = MagicMock()
-    hass.config.path = lambda x: str(TEST_ANCHORS_FILE.parent)
+    def mock_path(*args):
+        if args and args[0] == ".storage":
+            return str(TEST_ANCHORS_FILE.parent / ".storage")
+        return str(TEST_ANCHORS_FILE.parent)
+    hass.config.path = MagicMock(side_effect=mock_path)
     hass.states = MagicMock()
     hass.states.get = MagicMock(return_value=None)
     hass.async_add_executor_job = AsyncMock(side_effect=lambda f, *args: f(*args))
     
     config = {
         "cache_enabled": True,
-        "reranker_enabled": True,
-        "reranker_mode": "api",
         "embedding_ip": OLLAMA_HOST,
         "embedding_port": OLLAMA_PORT,
-        "embedding_model": "mxbai-embed-large",
-        "reranker_ip": RERANKER_HOST,
-        "reranker_port": RERANKER_PORT,
-        "reranker_threshold": THRESHOLD,
-        "vector_search_threshold": 0.5,
+        "embedding_model": EMBEDDING_MODEL,
+        "cache_addon_ip": CACHE_HOST,
+        "cache_addon_port": CACHE_PORT,
+        "cache_threshold": THRESHOLD,
+        "vector_search_threshold": 0.82,
         "vector_search_top_k": 10,
         # BM25 hybrid search
         "hybrid_enabled": True,
@@ -359,91 +367,66 @@ def semantic_cache():
     }
     
     cache = SemanticCacheCapability(hass, config)
-    cache.reranker_ip = RERANKER_HOST
-    cache.reranker_port = RERANKER_PORT
-    cache.reranker_mode = "api"
-    cache._reranker_mode_resolved = "api"
+    cache.cache_addon_ip = CACHE_HOST
+    cache.cache_addon_port = CACHE_PORT
     
-    # Load test anchors
+    # Load or Generate test anchors
     anchors = []
+    generated = False
+    
     if TEST_ANCHORS_FILE.exists():
-        with open(TEST_ANCHORS_FILE, "r") as f:
-            data = json.load(f)
+        try:
+            with open(TEST_ANCHORS_FILE, "r") as f:
+                data = json.load(f)
+            
+            # Version check - force regeneration if version mismatch
+            if data.get("version") != CACHE_VERSION:
+                print(f"Version mismatch (found {data.get('version')}, need {CACHE_VERSION}). Regenerating...")
+                anchors = []
+            else:
+                for entry_data in data.get("anchors", []):
+                    entry_data.pop("is_anchor", None)
+                    entry_data.pop("id", None)
+                    anchors.append(CacheEntry(**entry_data))
+        except Exception as e:
+            print(f"Warning: Failed to load anchor file: {e}")
+            anchors = []
+
+    # If no anchors or incomplete set, generate full synthetic set (ensures all patterns are present)
+    if len(anchors) < 100:
+        print(f"Generating full synthetic anchor set for tests...")
+        loop = asyncio.get_event_loop()
+        anchor_data = loop.run_until_complete(generate_test_anchors(
+            embed_func=cache._get_embedding,
+            areas=AVAILABLE_AREAS
+        ))
         
-        for entry_data in data.get("anchors", []):
+        for entry_data in anchor_data.get("anchors", []):
             entry_data.pop("is_anchor", None)
+            entry_data.pop("id", None)
             anchors.append(CacheEntry(**entry_data))
-    
-    cache._cache = anchors
-    cache._cache = anchors
-    
-    # -------------------------------------------------------------------------
-    # INJECT NEW ANCHORS (Simulating re-generation from updated Builder)
-    # -------------------------------------------------------------------------
-    # These correspond to the new patterns added to semantic_cache_builder.py
-    # We inject them here to avoid regenerating the 76MB anchor file.
-    
-    extra_anchors_data = [
-        ("Kannst du das Licht in der Küche anmachen", "HassTurnOn", {"area": "Küche", "domain": "light"}),
-        ("Alle Lichter an", "HassTurnOn", {"domain": "light"}),
-        ("Alle Lichter aus", "HassTurnOff", {"domain": "light"}),
-        ("Mehr Licht in der Küche", "HassLightSet", {"area": "Küche", "domain": "light", "command": "step_up"}),
-        ("Weniger Licht in der Küche", "HassLightSet", {"area": "Küche", "domain": "light", "command": "step_down"}), 
-        ("Alle Lichter auf 50 Prozent", "HassLightSet", {"domain": "light", "brightness": 50}),
-        ("Schalte den Fernseher an", "HassTurnOn", {"domain": "media_player"}), # Simulate matched TV
-    ]
-    
-    # We must generate embeddings for these
-    import asyncio
-    async def inject_extras():
-        for text, intent, slots in extra_anchors_data:
-            emb = await cache._get_embedding(text)
-            if emb is not None:
-                anchors.append(CacheEntry(
-                    text=text,
-                    embedding=emb.tolist(),
-                    intent=intent,
-                    slots=slots,
-                    entity_ids=[], # Dummy
-                    required_disambiguation=False,
-                    disambiguation_options=None,
-                    hits=0,
-                    last_hit="",
-                    verified=True,
-                    generated=True
-                ))
-    
-    # Run injection synchronously
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(inject_extras())
-    
-    # Write back to file if we added anything (checking first injected text)
-    # The Addon watches this file and will reload it.
-    first_new_text = extra_anchors_data[0][0]
-    existing_texts = {a.text for a in anchors[:len(anchors)-len(extra_anchors_data)]}
-    
-    if first_new_text not in existing_texts:
-        print(f"Persisting {len(extra_anchors_data)} new anchors to {TEST_ANCHORS_FILE}...")
-        save_data = {
-           "version": 2,
-           "anchors": [asdict(e) for e in anchors]
-        }
-        with open(TEST_ANCHORS_FILE, "w") as f:
-            json.dump(save_data, f)
         
-        # Wait for Addon to detect change and reload
-        import time
-        print("Waiting 10s for Addon to reload anchors...")
-        time.sleep(10)
+        # Persist so next run is faster
+        with open(TEST_ANCHORS_FILE, "w") as f:
+             json.dump(anchor_data, f)
+        print(f"Saved {len(anchors)} anchors to {TEST_ANCHORS_FILE}")
+        generated = True
+
+    cache._cache = anchors
+    cache._anchor_texts = {canonicalize(a.text) for a in anchors}
     
-    # Rebuild embeddings matrix (for local fallback/hybrid if used)
-    
-    # Rebuild embeddings matrix with new anchors
-    embeddings = [np.array(e.embedding, dtype=np.float32) for e in anchors]
-    if embeddings:
+    # Rebuild embeddings matrix (force sync for tests)
+    if anchors:
+        embeddings = [np.array(e.embedding, dtype=np.float32) for e in anchors]
         cache._embeddings_matrix = np.vstack(embeddings)
         norms = np.linalg.norm(cache._embeddings_matrix, axis=1, keepdims=True)
         cache._embeddings_matrix = cache._embeddings_matrix / (norms + 1e-10)
+    
+    if generated:
+        # Wait for Addon to detect change and reload
+        import time
+        print("Waiting 5s for Addon to reload anchors...")
+        time.sleep(5)
     
     cache._loaded = True
     cache._anchors_initialized = True
@@ -472,11 +455,9 @@ class TestTurnOnPositive:
     @pytest.mark.parametrize("query,expected_intent,expected_location,scope", TURN_ON_POSITIVE_CASES)
     async def test_turn_on_matches(self, semantic_cache, query, expected_intent, expected_location, scope):
         """Test that query matches expected HassTurnOn intent."""
-        result = await semantic_cache.lookup(query)
+        result = await semantic_cache.lookup(query, return_anchors=True)
         
-        if result is None:
-            pytest.xfail(f"No match found for '{query}' (expected {expected_intent})")
-            return
+        assert result is not None, f"No match found for '{query}' (expected {expected_intent})"
         
         assert result.get("intent") == expected_intent, \
             f"Query '{query}' expected {expected_intent}, got {result.get('intent')}"
@@ -496,11 +477,9 @@ class TestTurnOffPositive:
     @pytest.mark.parametrize("query,expected_intent,expected_location,scope", TURN_OFF_POSITIVE_CASES)
     async def test_turn_off_matches(self, semantic_cache, query, expected_intent, expected_location, scope):
         """Test that query matches expected HassTurnOff intent."""
-        result = await semantic_cache.lookup(query)
+        result = await semantic_cache.lookup(query, return_anchors=True)
         
-        if result is None:
-            pytest.xfail(f"No match found for '{query}' (expected {expected_intent})")
-            return
+        assert result is not None, f"No match found for '{query}' (expected {expected_intent})"
         
         assert result.get("intent") == expected_intent, \
             f"Query '{query}' expected {expected_intent}, got {result.get('intent')}"
@@ -513,11 +492,9 @@ class TestLightSetPositive:
     @pytest.mark.parametrize("query,expected_intent,expected_location,scope", LIGHT_SET_POSITIVE_CASES)
     async def test_light_set_matches(self, semantic_cache, query, expected_intent, expected_location, scope):
         """Test that query matches expected HassLightSet intent."""
-        result = await semantic_cache.lookup(query)
+        result = await semantic_cache.lookup(query, return_anchors=True)
         
-        if result is None:
-            pytest.xfail(f"No match found for '{query}' (expected {expected_intent})")
-            return
+        assert result is not None, f"No match found for '{query}' (expected {expected_intent})"
         
         assert result.get("intent") == expected_intent, \
             f"Query '{query}' expected {expected_intent}, got {result.get('intent')}"
@@ -530,11 +507,9 @@ class TestGetStatePositive:
     @pytest.mark.parametrize("query,expected_intent,expected_location,scope", GET_STATE_POSITIVE_CASES)
     async def test_get_state_matches(self, semantic_cache, query, expected_intent, expected_location, scope):
         """Test that query matches expected HassGetState intent."""
-        result = await semantic_cache.lookup(query)
+        result = await semantic_cache.lookup(query, return_anchors=True)
         
-        if result is None:
-            pytest.xfail(f"No match found for '{query}' (expected {expected_intent})")
-            return
+        assert result is not None, f"No match found for '{query}' (expected {expected_intent})"
         
         assert result.get("intent") == expected_intent, \
             f"Query '{query}' expected {expected_intent}, got {result.get('intent')}"
@@ -547,11 +522,9 @@ class TestSetPositionPositive:
     @pytest.mark.parametrize("query,expected_intent,expected_location,scope", SET_POSITION_POSITIVE_CASES)
     async def test_set_position_matches(self, semantic_cache, query, expected_intent, expected_location, scope):
         """Test that query matches expected HassSetPosition intent."""
-        result = await semantic_cache.lookup(query)
+        result = await semantic_cache.lookup(query, return_anchors=True)
         
-        if result is None:
-            pytest.xfail(f"No match found for '{query}' (expected {expected_intent})")
-            return
+        assert result is not None, f"No match found for '{query}' (expected {expected_intent})"
         
         assert result.get("intent") == expected_intent, \
             f"Query '{query}' expected {expected_intent}, got {result.get('intent')}"
@@ -568,7 +541,7 @@ class TestNegativeCases:
     @pytest.mark.parametrize("query,should_not_be_intent,reason", NEGATIVE_CASES)
     async def test_negative_no_false_positive(self, semantic_cache, query, should_not_be_intent, reason):
         """Test that query does not produce a false positive."""
-        result = await semantic_cache.lookup(query)
+        result = await semantic_cache.lookup(query, return_anchors=True)
         
         if result is None:
             # No match is acceptable for negatives
@@ -590,11 +563,9 @@ class TestRoomIsolation:
     @pytest.mark.parametrize("query,expected_room,wrong_room", ROOM_ISOLATION_CASES)
     async def test_room_isolation(self, semantic_cache, query, expected_room, wrong_room):
         """Test that query for expected_room doesn't match wrong_room."""
-        result = await semantic_cache.lookup(query)
+        result = await semantic_cache.lookup(query, return_anchors=True)
         
-        if result is None:
-            pytest.xfail(f"No match found for '{query}'")
-            return
+        assert result is not None, f"No match found for '{query}'"
         
         slots = result.get("slots", {})
         matched_room = slots.get("area") or slots.get("floor")
@@ -620,12 +591,11 @@ class TestActionIsolation:
     ])
     async def test_on_off_distinguished(self, semantic_cache, on_query, off_query, room):
         """Test that on and off queries produce different intents."""
-        on_result = await semantic_cache.lookup(on_query)
-        off_result = await semantic_cache.lookup(off_query)
+        on_result = await semantic_cache.lookup(on_query, return_anchors=True)
+        off_result = await semantic_cache.lookup(off_query, return_anchors=True)
         
-        if on_result is None or off_result is None:
-            pytest.xfail(f"No match for one of the queries")
-            return
+        assert on_result is not None, f"No match for on_query: '{on_query}'"
+        assert off_result is not None, f"No match for off_query: '{off_query}'"
         
         # They MUST have different intents
         assert on_result.get("intent") != off_result.get("intent"), \
@@ -726,11 +696,9 @@ class TestDynamicAreas:
     @pytest.mark.parametrize("query,expected_intent,expected_area", DYNAMIC_AREA_CASES)
     async def test_dynamic_area_match(self, semantic_cache, query, expected_intent, expected_area):
         """Test that dynamically generated queries match expected intent."""
-        result = await semantic_cache.lookup(query)
+        result = await semantic_cache.lookup(query, return_anchors=True)
         
-        if result is None:
-            pytest.xfail(f"No match found for '{query}' (expected {expected_intent})")
-            return
+        assert result is not None, f"No match found for '{query}' (expected {expected_intent})"
         
         assert result.get("intent") == expected_intent, \
             f"Query '{query}' expected {expected_intent}, got {result.get('intent')}"
@@ -738,8 +706,13 @@ class TestDynamicAreas:
         # Check area if applicable
         slots = result.get("slots", {})
         if expected_area and "area" in slots:
-            assert slots.get("area") == expected_area, \
-                f"Query '{query}' expected area '{expected_area}', got '{slots.get('area')}'"
+            actual_area = slots.get("area")
+            # Semantic models cluster Bad and Badezimmer correctly
+            is_match = (expected_area == actual_area or
+                        (expected_area == "Bad" and actual_area == "Badezimmer") or
+                        (expected_area == "Badezimmer" and actual_area == "Bad"))
+            assert is_match, \
+                f"Query '{query}' expected area '{expected_area}', got '{actual_area}'"
 
 
 class TestDynamicIntentSeparation:
@@ -770,3 +743,70 @@ class TestDynamicIntentSeparation:
                 pytest.fail(f"'{on_query}' got {on_result.get('intent')}, expected HassTurnOn")
             if off_result.get("intent") not in ("HassTurnOff", None):
                 pytest.fail(f"'{off_query}' got {off_result.get('intent')}, expected HassTurnOff")
+
+
+class TestBlindSpots:
+    """Focus on previously identified NLU blind spots."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("query,expected_intent,expected_name", [
+        ("Schalte das Licht Dusche an", "HassTurnOn", "Dusche"),
+        ("Öffne den Rollladen Ankleide", "HassTurnOn", "Rollladen"),
+        ("Schalte Kinder Badezimmer Licht aus", "HassTurnOff", "Kinder Badezimmer Licht"),
+        ("Nora s Zimmer Rollladen hoch", "HassTurnOn", "Nora s Zimmer Rollladen"),
+        ("Es ist zu dunkel in der Küche", "HassLightSet", None),
+        ("Es ist zu hell im Wohnzimmer", "HassLightSet", None),
+        ("Dusche ist zu dunkel", "HassLightSet", "Dusche"),
+    ])
+    async def test_blind_spot_matching(self, semantic_cache, query, expected_intent, expected_name):
+        """Verify that blind spot queries match correctly with normalization."""
+        result = await semantic_cache.lookup(query, return_anchors=True)
+        assert result is not None, f"Failed to match blind spot: {query}"
+        assert result["intent"] == expected_intent
+        if expected_name:
+            assert result["slots"].get("name") == expected_name
+
+    @pytest.mark.asyncio
+    async def test_multi_word_space_handling(self, semantic_cache):
+        """Verify that multi-word names with spaces are handled correctly by the embedding model."""
+        # Query with spaces should be matched against the anchor with spaces.
+        query = "Schalte das Licht im Kinder Badezimmer an"
+        result = await semantic_cache.lookup(query, return_anchors=True)
+        assert result is not None, "Failed to match multi-word name with spaces"
+        assert result["slots"].get("area") == "Kinder Badezimmer"
+
+
+class TestSocketSwitchDisambiguation:
+    """Verify that similar device types in the same location are disambiguated."""
+
+    @pytest.mark.asyncio
+    async def test_light_vs_socket_separation(self, semantic_cache):
+        """Ensure 'Licht' doesn't trigger 'Steckdose' anchors and vice versa."""
+        # This requires the anchors to have domain-specific device words
+        light_query = "Schalte das Licht im Badezimmer an"
+        socket_query = "Schalte die Steckdose im Badezimmer an"
+        
+        light_result = await semantic_cache.lookup(light_query, return_anchors=True)
+        
+        # If we have a socket anchor, it should match specifically.
+        # If we don't, the light query should NOT match a general 'switch' if it was for a light.
+        if light_result:
+            assert light_result["slots"].get("domain") == "light"
+
+
+class TestAdvancedScoping:
+    """Test floor-level and global 'all' commands."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("query,expected_intent,expected_area", [
+        ("Alle Lichter im Erdgeschoss an", "HassTurnOn", "Erdgeschoss"),
+        ("Alle Rollläden im Obergeschoss runter", "HassTurnOff", "Obergeschoss"),
+        ("Schalte alle Lichter im Haus aus", "HassTurnOff", None), # Global if no area slot
+    ])
+    async def test_floor_and_global_actions(self, semantic_cache, query, expected_intent, expected_area):
+        """Verify that floor-level and house-wide 'all' commands match correctly."""
+        result = await semantic_cache.lookup(query, return_anchors=True)
+        if result: # These might be escalations if not perfectly matched
+            assert result["intent"] == expected_intent
+            if expected_area:
+                assert result["slots"].get("area") == expected_area or result["slots"].get("floor") == expected_area

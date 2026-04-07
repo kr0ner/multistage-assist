@@ -26,7 +26,7 @@ class DisambiguationSelectCapability(Capability):
     """
 
     name = "disambiguation_select"
-    description = "Select entity_ids from candidates based on user_input."
+    description = "Process the user's response to a disambiguation question. Employs a tiered lookup: 1. German ordinals ('erste', 'zweite') 2. Universal keywords ('alle', 'beide') 3. Precise fuzzy name matching 4. LLM reasoning as final resort. Returns the list of selected entity IDs."
 
     PROMPT = {
         "system": """\

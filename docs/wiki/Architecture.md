@@ -15,7 +15,7 @@ User Input
     ▼
 ┌─────────────────────────────────┐
 │ Stage 1: Semantic Cache         │
-│ • Reranker-validated lookup     │
+│ • vector-validated lookup     │
 │ • Pre-generated anchor patterns │
 │ • User-learned command cache    │
 └─────────────────────────────────┘
@@ -51,7 +51,7 @@ Fast path using pre-computed and learned command patterns.
 **Features:**
 - **Anchor patterns** - Pre-generated from entity/area combinations
 - **User learning** - Successful commands are cached for replay
-- **Reranker validation** - External add-on validates cache matches
+- **vector validation** - External add-on validates cache matches
 - **Hybrid search** - Combines vector similarity + BM25 keyword matching
 
 **Escalates when:**
@@ -115,7 +115,7 @@ Google Gemini API for edge cases and general conversation.
 
 ```yaml
 llm:
-  model: "qwen3:4b-instruct"
+  model: "qwen3.5:4b-q4_K_M"
   host: "192.168.178.108"
   port: 11434
 ```

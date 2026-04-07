@@ -21,7 +21,7 @@ class IntentConfirmationCapability(Capability):
     """
 
     name = "intent_confirmation"
-    description = "Generates a natural language confirmation for an action."
+    description = "Generate natural, context-aware German confirmation messages for successful actions. Uses randomized templates to ensure variety. Handles state queries, multi-entity summaries, and specific parameter confirmations (e.g., temperatures, brightness levels) without LLM dependency for performance."
 
     async def run(
         self,
@@ -62,13 +62,21 @@ class IntentConfirmationCapability(Capability):
             _LOGGER.debug("[IntentConfirmation] State query: '%s'", message)
             return {"message": message}
         
+        # Determine the "result state" for the confirmation
+        # For actions, we want the INTENDED state. For queries, we want the ACTUAL state.
+        if action == "toggle" and value in ("on", "off"):
+            result_state = value
+        else:
+            result_state = states[0] if states else ""
+
         message = get_domain_confirmation(
             domain=primary_domain,
             action=action,
             name=name_str,
             value=str(value) if value else "",
             area=params.get("area", ""),
-            state=states[0] if states else "",
+            state=result_state,
+            is_plural=len(names) > 1,
         )
 
         _LOGGER.debug("[IntentConfirmation] Template: domain=%s, action=%s -> '%s'", 
@@ -100,9 +108,9 @@ class IntentConfirmationCapability(Capability):
             direction = params.get("direction")
             brightness = params.get("brightness")
             
-            if direction == "increased":
+            if direction == "increased" or brightness == "step_up":
                 return ("brightness_up", None)
-            elif direction == "decreased":
+            elif direction == "decreased" or brightness == "step_down":
                 return ("brightness_down", None)
             elif brightness is not None:
                 return ("brightness_set", brightness)
@@ -113,9 +121,9 @@ class IntentConfirmationCapability(Capability):
             direction = params.get("direction")
             position = params.get("position")
             
-            if direction == "increased":
+            if direction == "increased" or position == "step_up":
                 return ("open", None)
-            elif direction == "decreased":
+            elif direction == "decreased" or position == "step_down":
                 return ("close", None)
             elif position is not None:
                 return ("position", position)
@@ -126,6 +134,13 @@ class IntentConfirmationCapability(Capability):
             temp = params.get("temperature")
             return ("set_temperature", temp)
         
+        # Timers
+        if intent_name == "HassTimerSet":
+            duration = params.get("duration")
+            return ("timer_set", duration)
+        if intent_name == "HassTimerCancel":
+            return ("timer_cancelled", None)
+            
         # Vacuum
         if intent_name == "HassVacuumStart":
             area = params.get("area")
@@ -134,7 +149,12 @@ class IntentConfirmationCapability(Capability):
             return ("start", None)
         
         # Temporary/Delayed control - use toggle with duration info
-        if intent_name in ("TemporaryControl", "DelayedControl"):
+        if intent_name == "TemporaryControl":
+            command = params.get("command", "on")
+            action = "temporary_on" if command == "on" else "temporary_off"
+            return (action, params.get("duration"))
+            
+        if intent_name == "DelayedControl":
             return ("toggle", "on")
         
         # Default fallback

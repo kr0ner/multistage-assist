@@ -132,4 +132,4 @@ class TestTimeNormalizationWithAmbiguity:
         
         # All should produce the exact same normalized string
         assert len(set(normalized)) == 1
-        assert "in 10 Minuten" in normalized[0]
+        assert "in 10 minuten" in normalized[0]

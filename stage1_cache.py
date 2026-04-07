@@ -22,7 +22,7 @@ from .capabilities.implicit_intent import ImplicitIntentCapability
 from .capabilities.atomic_command import AtomicCommandCapability
 
 from .capabilities.semantic_cache import SemanticCacheCapability
-from .capabilities.memory import MemoryCapability
+from .capabilities.knowledge_graph import KnowledgeGraphCapability
 from .capabilities.entity_resolver import EntityResolverCapability
 from .stage_result import StageResult
 from .conversation_utils import with_new_text
@@ -66,7 +66,7 @@ class Stage1CacheProcessor(BaseStage):
         ImplicitIntentCapability,
         AtomicCommandCapability,
         SemanticCacheCapability,
-        MemoryCapability,
+        KnowledgeGraphCapability,
         EntityResolverCapability,
     ]
 
@@ -86,7 +86,7 @@ class Stage1CacheProcessor(BaseStage):
         text = user_input.text
         words = text.lower().split()
 
-        memory_cap = self.get("memory")
+        memory_cap = self.get("knowledge_graph")
         
         for word in words:
             clean_word = word.strip(".,!?")
@@ -175,7 +175,14 @@ class Stage1CacheProcessor(BaseStage):
             return StageResult.escalate(context=context, raw_text=user_input.text)
 
         cache = self.get("semantic_cache")
-        cached = await cache.lookup(user_input.text)
+        try:
+            cached = await cache.lookup(user_input.text)
+        except Exception as e:
+            _LOGGER.warning("[Stage1Cache] Cache lookup failed, gracefully escalating: %s", e)
+            return StageResult.escalate(
+                context={**context, "cache_error": str(e), "commands": commands},
+                raw_text=user_input.text,
+            )
 
         if not cached:
             _LOGGER.debug("[Stage1Cache] Cache MISS → escalate")

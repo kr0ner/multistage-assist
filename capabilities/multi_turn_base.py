@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from .base import Capability
 from custom_components.multistage_assist.conversation_utils import make_response
+from ..constants.messages_de import CONFIRMATION_TEMPLATES, SYSTEM_MESSAGES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,6 +28,9 @@ class MultiTurnCapability(Capability):
     - _extract_fields(): Extract all fields from natural language
     - _execute(): Execute the action after all fields are collected
     """
+
+    name = "multi_turn_base"
+    description = "Abstract base capability for multi-turn conversational flows. Orchestrates field collection, automated prompting for missing mandatory parameters, and final action confirmation/execution logic."
     
     # Subclass defines these
     MANDATORY_FIELDS: List[str] = []
@@ -81,7 +85,7 @@ class MultiTurnCapability(Capability):
             elif self._is_negative(text):
                 return {
                     "status": "handled",
-                    "result": await make_response("Abgebrochen.", user_input),
+                    "result": await make_response(CONFIRMATION_TEMPLATES["cancelled"], user_input),
                 }
             else:
                 # Unclear response, ask again
@@ -89,7 +93,7 @@ class MultiTurnCapability(Capability):
                 return {
                     "status": "handled",
                     "result": await make_response(
-                        f"{confirmation_text}\n\nSag 'Ja' zum Bestätigen oder 'Nein' zum Abbrechen.",
+                        f"{confirmation_text}\n\n{SYSTEM_MESSAGES['confirm_or_abort']}",
                         user_input
                     ),
                     "pending_data": {"type": self.name, "step": "confirm", "data": data},
@@ -166,7 +170,7 @@ class MultiTurnCapability(Capability):
         return {
             "status": "handled",
             "result": await make_response(
-                f"{confirmation_text}\n\nSag 'Ja' zum Bestätigen.",
+                f"{confirmation_text}\n\n{SYSTEM_MESSAGES['confirm_only']}",
                 user_input
             ),
             "pending_data": {

@@ -31,8 +31,6 @@ async def test_cache_lookup_uses_normalized_text(hass):
     # Mock config
     config = {
         "cache_enabled": True,
-        "reranker_enabled": True,
-        "reranker_ip": "localhost",
     }
     
     capability = SemanticCacheCapability(hass, config)

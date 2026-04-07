@@ -11,7 +11,7 @@ import numpy as np
 @pytest.mark.asyncio
 async def test_unexposed_entities_are_excluded(hass):
     """Test that entities NOT exposed to conversation are excluded from anchors."""
-    from multistage_assist.capabilities.semantic_cache_builder import SemanticCacheBuilder
+    from multistage_assist.utils.semantic_cache_builder import SemanticCacheBuilder
     
     # 1. Setup Mock Registries
     # Mock Area Registry
@@ -75,7 +75,7 @@ async def test_unexposed_entities_are_excluded(hass):
     with patch("homeassistant.helpers.area_registry.async_get", return_value=areg), \
          patch("homeassistant.helpers.floor_registry.async_get", return_value=freg), \
          patch("homeassistant.helpers.entity_registry.async_get", return_value=ereg), \
-         patch("multistage_assist.capabilities.semantic_cache_builder.async_should_expose", mock_should_expose), \
+         patch("multistage_assist.utils.semantic_cache_builder.async_should_expose", mock_should_expose), \
          patch("multistage_assist.capabilities.keyword_intent.KeywordIntentCapability") as mock_ki:
         
         # Mock INTENT_DATA required for domain filtering
@@ -117,7 +117,7 @@ async def test_unexposed_entities_are_excluded(hass):
 @pytest.mark.asyncio
 async def test_exposure_check_failure_falls_back_open(hass):
     """Test that if async_should_expose fails, we still include entities (fail open for compatibility)."""
-    from multistage_assist.capabilities.semantic_cache_builder import SemanticCacheBuilder
+    from multistage_assist.utils.semantic_cache_builder import SemanticCacheBuilder
     
     # 1. Setup Mock Registries
     areg = MagicMock()
@@ -149,7 +149,7 @@ async def test_exposure_check_failure_falls_back_open(hass):
     with patch("homeassistant.helpers.area_registry.async_get", return_value=areg), \
          patch("homeassistant.helpers.floor_registry.async_get", return_value=freg), \
          patch("homeassistant.helpers.entity_registry.async_get", return_value=ereg), \
-         patch("multistage_assist.capabilities.semantic_cache_builder.async_should_expose", mock_should_expose_fails), \
+         patch("multistage_assist.utils.semantic_cache_builder.async_should_expose", mock_should_expose_fails), \
          patch("multistage_assist.capabilities.keyword_intent.KeywordIntentCapability") as mock_ki:
         
         mock_ki.INTENT_DATA = {

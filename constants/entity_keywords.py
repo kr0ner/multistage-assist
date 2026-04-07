@@ -200,3 +200,39 @@ _ENTITY_PLURALS: Dict[str, str] = {
 
 # Export for backward compatibility
 ENTITY_PLURALS = _ENTITY_PLURALS
+
+# --- LINGUISTIC MAPPINGS ---
+
+# Mapping fractional text to explicit percentages (for normalization)
+FRACTION_MAPPINGS: Dict[str, str] = {
+    "zur hälfte": "50 Prozent",
+    "ein viertel": "25 Prozent",
+    "dreiviertel": "75 Prozent",
+    "ganz": "100 Prozent",
+    "voll": "100 Prozent",
+    "ein bisschen": "10 Prozent",
+    "etwas": "20 Prozent",
+}
+
+# Mapping fractional text to numeric values (for execution)
+FRACTION_VALUES: Dict[str, int] = {
+    "hälfte": 50,
+    "halb": 50,
+    "viertel": 25,
+    "dreiviertel": 75,
+    "ganz": 100,
+    "voll": 100,
+}
+
+# Mapping German state/action nouns to Home Assistant equivalents
+STATE_TRANSLATIONS: Dict[str, str] = {
+    "an": "on",
+    "ein": "on",
+    "aus": "off",
+    "offen": "open",
+    "geschlossen": "closed",
+    "zu": "closed",
+    "heiß": "heat",
+    "kalt": "cool",
+    "warm": "heat",
+}

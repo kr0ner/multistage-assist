@@ -21,7 +21,8 @@ from .const import CONF_STAGE1_IP, CONF_STAGE1_PORT, CONF_STAGE1_MODEL
 from .capabilities.keyword_intent import KeywordIntentCapability
 from .capabilities.entity_resolver import EntityResolverCapability
 from .capabilities.area_resolver import AreaResolverCapability
-from .capabilities.memory import MemoryCapability
+from .capabilities.knowledge_graph import KnowledgeGraphCapability
+from .capabilities.prompt_context import PromptContextBuilderCapability
 
 from .capabilities.multi_turn_base import MultiTurnCapability
 from .capabilities.timer import TimerCapability
@@ -34,18 +35,6 @@ from .constants.messages_de import SYSTEM_MESSAGES
 _LOGGER = logging.getLogger(__name__)
 
 
-# Chat detection patterns (user wants to chat, not control devices)
-CHAT_PATTERNS = [
-    r"\berzähl\b",
-    r"\bwitz\b",
-    r"\bjoke\b",
-    r"\bstory\b",
-    r"\bgeschichte\b",
-    r"\bwer bist du\b",
-    r"\bwas kannst du\b",
-    r"\bhilfe\b",
-    r"\bhelp\b",
-]
 
 
 class Stage2LLMProcessor(BaseStage):
@@ -56,58 +45,21 @@ class Stage2LLMProcessor(BaseStage):
         KeywordIntentCapability,
         EntityResolverCapability,
         AreaResolverCapability,
-        MemoryCapability,
+        KnowledgeGraphCapability,
 
         MultiTurnCapability,
         TimerCapability,
         CalendarCapability,
         McpToolCapability,
+        PromptContextBuilderCapability,
     ]
 
     def __init__(self, hass, config):
         super().__init__(hass, config)
         self._pending: Dict[str, Dict[str, Any]] = {}
-        
-        # Inject shared memory into capabilities that need it
-        memory = self.get("memory")
-        if self.has("entity_resolver"):
-            self.get("entity_resolver").set_memory(memory)
 
-    def _is_chat_request(self, text: str) -> bool:
-        """Detect if user wants to chat rather than control devices."""
-        import re
-        text_lower = text.lower()
-        for pattern in CHAT_PATTERNS:
-            if re.search(pattern, text_lower):
-                return True
-        return False
 
-    async def _resolve_area_alias(self, area_name: str) -> Dict[str, Any]:
-        """Resolve area alias using memory or LLM.
-        
-        Returns:
-            Dict with:
-            - match: resolved area name or None
-            - unknown_area: original text if unresolved (optional)
-            - candidates: list of available areas (optional)
-        """
-        if not area_name:
-            return {"match": None}
-            
-        # Check memory first
-        memory = self.get("memory")
-        resolved = await memory.get_area_alias(area_name.lower())
-        if resolved:
-            return {"match": resolved}
-            
-        # Use area_resolver capability for fuzzy + LLM-based resolution
-        if self.has("area_resolver"):
-            resolver = self.get("area_resolver")
-            result = await resolver.run(None, area_name=area_name)
-            # Returns: {match, unknown_area, candidates}
-            return result
-                
-        return {"match": area_name}
+
 
     async def process(
         self,
@@ -127,14 +79,13 @@ class Stage2LLMProcessor(BaseStage):
         
         _LOGGER.debug("[Stage2LLM] Input='%s'", user_input.text)
 
-        # 0. Check for chat intent
-        if self._is_chat_request(user_input.text):
-            _LOGGER.debug("[Stage2LLM] Chat request detected → escalate_chat")
-            return StageResult.escalate_chat(
-                context={**context, "chat_detected": True},
-                raw_text=user_input.text,
-            )
 
+        # 1. Build environment context for the LLM
+        # Use keywords from the utterance as hints for context pruning
+        hints = [word for word in user_input.text.split() if len(word) > 2]
+        env_context = await self.get("prompt_context").get_context(hints=hints)
+
+        # 2. Get prompt components
         # 1. Get clarified commands from Stage1 or run clarification ourselves
         clarified_commands = context.get("commands", [])
         
@@ -204,7 +155,8 @@ class Stage2LLMProcessor(BaseStage):
 
         # 3. Resolve area aliases if present
         if slots.get("area"):
-            area_result = await self._resolve_area_alias(slots["area"])
+            resolver = self.get("area_resolver")
+            area_result = await resolver.run(user_input, area_name=slots["area"], mode="area")
             resolved_area = area_result.get("match")
             
             if resolved_area:
@@ -245,7 +197,7 @@ class Stage2LLMProcessor(BaseStage):
         if domain:
             entities_for_resolver["domain"] = domain
             
-        resolved = await resolver.run(user_input, entities=entities_for_resolver)
+        resolved = await resolver.run(user_input, entities=entities_for_resolver, history=context.get("history"))
         resolved_ids = (resolved or {}).get("resolved_ids", [])
         filtered_not_exposed = (resolved or {}).get("filtered_not_exposed", [])
 
@@ -360,7 +312,7 @@ class Stage2LLMProcessor(BaseStage):
             if domain:
                 entities_for_resolver["domain"] = domain
                 
-            resolved = await resolver.run(cmd_input, entities=entities_for_resolver)
+            resolved = await resolver.run(cmd_input, entities=entities_for_resolver, history=context.get("history"))
             resolved_ids = (resolved or {}).get("resolved_ids", [])
             
             if resolved_ids:
@@ -512,6 +464,10 @@ class Stage2LLMProcessor(BaseStage):
             entity_ids=resolved_ids,
             params={
                 **original_slots,
+                "rerun_command": True,
+                "learned_alias": unknown_alias,
+                "learned_area": matched_area,
+                "original_text": original_text,
             },
             context={
                 "area_learned": True, # Flag that we bridged an unknown area

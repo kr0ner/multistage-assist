@@ -109,22 +109,22 @@ class TestNonCacheableIntents:
 class TestVectorThreshold:
     """Tests for vector search threshold configuration."""
 
-    def test_default_threshold_is_0_5(self):
-        """Default vector threshold should be 0.5."""
+    def test_default_threshold_is_0_82(self):
+        """Default vector threshold should be 0.82 (validated for multilingual-minilm)."""
         from utils.semantic_cache_types import DEFAULT_VECTOR_THRESHOLD
         
-        assert DEFAULT_VECTOR_THRESHOLD == 0.5
+        assert DEFAULT_VECTOR_THRESHOLD == 0.82
 
     def test_threshold_filters_candidates(self):
         """Threshold should filter out low-scoring candidates."""
-        threshold = 0.5
+        threshold = 0.82
         
-        # Simulated similarity scores
-        scores = [0.9, 0.7, 0.55, 0.45, 0.3, 0.2]
+        # Simulated similarity scores (multilingual-minilm produces tighter clusters)
+        scores = [0.95, 0.88, 0.83, 0.78, 0.65, 0.45]
         
         # Filter by threshold
         passing = [s for s in scores if s >= threshold]
         
-        assert len(passing) == 3  # 0.9, 0.7, 0.55 pass
-        assert 0.45 not in passing
-        assert 0.3 not in passing
+        assert len(passing) == 3  # 0.95, 0.88, 0.83 pass
+        assert 0.78 not in passing
+        assert 0.65 not in passing

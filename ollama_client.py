@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import aiohttp
+import asyncio
 import json
 
 _LOGGER = logging.getLogger(__name__)
@@ -10,25 +11,35 @@ _LOGGER = logging.getLogger(__name__)
 class OllamaClient:
     """Thin client for Ollama REST API."""
 
+    _sessions: dict[asyncio.AbstractEventLoop, aiohttp.ClientSession] = {}
+
     def __init__(self, ip: str, port: int):
         self.ip = ip
         self.port = port
         self.base_url = f"http://{ip}:{port}"
 
+    @classmethod
+    async def get_session(cls) -> aiohttp.ClientSession:
+        import asyncio
+        loop = asyncio.get_running_loop()
+        if loop not in cls._sessions or cls._sessions[loop].closed:
+            cls._sessions[loop] = aiohttp.ClientSession()
+        return cls._sessions[loop]
+
     async def test_connection(self) -> bool:
         url = f"{self.base_url}/api/version"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=10) as resp:
-                resp.raise_for_status()
-                return True
+        session = await self.get_session()
+        async with session.get(url, timeout=10) as resp:
+            resp.raise_for_status()
+            return True
 
     async def get_models(self) -> list[str]:
         url = f"{self.base_url}/api/tags"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=10) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
-                return [m["name"] for m in data.get("models", [])]
+        session = await self.get_session()
+        async with session.get(url, timeout=10) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+            return [m["name"] for m in data.get("models", [])]
 
     async def chat(
         self,
@@ -48,27 +59,19 @@ class OllamaClient:
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
+            "think": False,
             "keep_alive": -1,  # Keep model loaded in memory permanently
             "options": {"num_ctx": num_ctx, "temperature": temperature},
         }
         if format:
             payload["format"] = format
 
+        _LOGGER.debug("Querying Ollama at %s (model: %s)", url, model)
 
-        # 🔎 Log full payload for debugging
-        try:
-            _LOGGER.debug(
-                "Querying Ollama at %s with payload:\n%s",
-                url,
-                json.dumps(payload, ensure_ascii=False, indent=2),
-            )
-        except Exception as e:
-            _LOGGER.debug("Failed to serialize payload for logging: %s", e)
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, timeout=60) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
+        session = await self.get_session()
+        async with session.post(url, json=payload, timeout=120) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
 
         if "message" in data and "content" in data["message"]:
             return data["message"]["content"]
@@ -92,25 +95,22 @@ class OllamaClient:
             "model": model,
             "messages": messages,
             "stream": False,
+            "think": False,
             "keep_alive": -1,
             "options": {"num_ctx": num_ctx, "temperature": temperature},
         }
         if format:
             payload["format"] = format
 
-        try:
-            _LOGGER.debug(
-                "Querying Ollama at %s with payload:\n%s",
-                url,
-                json.dumps(payload, ensure_ascii=False, indent=2),
-            )
-        except Exception as e:
-            _LOGGER.debug("Failed to serialize payload for logging: %s", e)
+        _LOGGER.debug(
+            "Querying Ollama at %s (model: %s, messages: %d)",
+            url, model, len(messages)
+        )
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, timeout=60) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
+        session = await self.get_session()
+        async with session.post(url, json=payload, timeout=30) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
 
         if "message" in data and "content" in data["message"]:
             return data["message"]["content"]

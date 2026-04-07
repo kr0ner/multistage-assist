@@ -7,24 +7,24 @@ CONF_STAGE1_IP = "stage1_ip"
 CONF_STAGE1_PORT = "stage1_port"
 CONF_STAGE1_MODEL = "stage1_model"
 
-# Stage 3: Google Gemini for Chat (Cloud fallback)
+# Stage 3: Cloud LLM for Reasoning and Discovery
+CONF_STAGE3_PROVIDER = "stage3_provider"  # "gemini", "openai", "anthropic", "grok"
+CONF_STAGE3_MODEL = "stage3_model"
 CONF_GOOGLE_API_KEY = "google_api_key"
-CONF_STAGE3_MODEL = "stage3_model"  # e.g. "gemini-2.0-flash"
+CONF_OPENAI_API_KEY = "openai_api_key"
+CONF_ANTHROPIC_API_KEY = "anthropic_api_key"
+CONF_GROK_API_KEY = "grok_api_key"
 
-# Embedding: Ollama for Semantic Cache (defaults to stage1 settings)
-CONF_EMBEDDING_IP = "embedding_ip"
-CONF_EMBEDDING_PORT = "embedding_port"
-CONF_EMBEDDING_MODEL = "embedding_model"
 
-# Reranker: For semantic cache validation
-CONF_RERANKER_IP = "reranker_ip"
-CONF_RERANKER_PORT = "reranker_port"
+# Semantic Cache Addon: For vector lookup and embedding
+CONF_CACHE_ADDON_IP = "cache_addon_ip"
+CONF_CACHE_ADDON_PORT = "cache_addon_port"
+REQUIRED_EMBEDDING_MODEL = "models/multilingual-minilm"  # Hard-enforced model for addon
 
 # --- Expert Settings (YAML only, not in config flow UI) ---
 # These allow power users to fine-tune behavior
 
 # Semantic Cache Settings
-CONF_RERANKER_THRESHOLD = "reranker_threshold"
 CONF_HYBRID_ENABLED = "hybrid_enabled"
 CONF_HYBRID_ALPHA = "hybrid_alpha"  # 0.0-1.0, weight for semantic vs keyword
 CONF_HYBRID_NGRAM_SIZE = "hybrid_ngram_size"  # 1=words, 2=bigrams, 3=trigrams
@@ -51,12 +51,14 @@ CONF_DEBUG_LLM_PROMPTS = "debug_llm_prompts"  # Log LLM prompts and responses
 CONF_DEBUG_INTENT_RESOLUTION = "debug_intent_resolution"  # Log intent resolution steps
 
 # Default values for expert settings
+DEFAULT_CACHE_ADDON_HOST = "192.168.178.2"
+DEFAULT_CACHE_ADDON_PORT = 9876
+
 EXPERT_DEFAULTS = {
-    CONF_RERANKER_THRESHOLD: 0.73,
     CONF_HYBRID_ENABLED: True,
     CONF_HYBRID_ALPHA: 0.7,
     CONF_HYBRID_NGRAM_SIZE: 2,
-    CONF_VECTOR_THRESHOLD: 0.5,
+    CONF_VECTOR_THRESHOLD: 0.75,
     CONF_VECTOR_TOP_K: 10,
     CONF_CACHE_REGENERATE_ON_STARTUP: True,
     CONF_CACHE_MAX_ENTRIES: 10000,

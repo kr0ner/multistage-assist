@@ -10,11 +10,11 @@ Configure via: **Settings → Devices & Services → Add Integration → MultiSt
 |--------|-------------|---------|
 | **Ollama Host** | IP/hostname for Ollama server | `localhost` |
 | **Ollama Port** | Ollama API port | `11434` |
-| **Ollama Model** | LLM model for intent parsing | `qwen3:4b` |
+| **Ollama Model** | LLM model for intent parsing | `qwen3.5:4b-q4_K_M` |
 | **Google API Key** | Gemini API key for Stage 3 | (required) |
 | **Gemini Model** | Gemini model name | `gemini-2.0-flash` |
-| **Reranker Host** | IP/hostname for reranker add-on | `localhost` |
-| **Reranker Port** | Reranker API port | `5000` |
+| **Cache Addon Host** | IP/hostname for cache add-on | `localhost` |
+| **Cache Addon Port** | Cache API port | `9876` |
 
 ## Expert Settings (YAML)
 
@@ -23,7 +23,7 @@ Add to `configuration.yaml` for advanced tuning:
 ```yaml
 multistage_assist:
   # --- Semantic Cache Tuning ---
-  reranker_threshold: 0.73     # Minimum reranker score for cache hit (0.0-1.0)
+  vector_threshold: 0.85       # Minimum similarity score for cache hit (0.0-1.0)
   hybrid_enabled: true          # Enable hybrid keyword + vector search
   hybrid_alpha: 0.7             # Weight: 0.0 = keyword only, 1.0 = vector only
   hybrid_ngram_size: 2          # N-gram size for BM25 (1=words, 2=bigrams)
@@ -72,7 +72,7 @@ After copying, reload scripts: **Developer Tools → YAML → Reload Scripts**
 The semantic cache requires an embedding model. Pull it before first use:
 
 ```bash
-ollama pull mxbai-embed-large
+ollama pull models/multilingual-minilm
 ```
 
 To use a different model:

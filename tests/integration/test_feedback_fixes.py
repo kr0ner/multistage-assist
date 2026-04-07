@@ -5,7 +5,7 @@ from multistage_assist.stage1_cache import Stage1CacheProcessor
 from multistage_assist.capabilities.atomic_command import AtomicCommandCapability
 from multistage_assist.capabilities.implicit_intent import ImplicitIntentCapability
 from multistage_assist.capabilities.keyword_intent import KeywordIntentCapability
-from multistage_assist.stage3_gemini import Stage3GeminiProcessor
+from multistage_assist.stage3_cloud import Stage3CloudProcessor
 from multistage_assist.const import CONF_STAGE3_MODEL
 
 @pytest.mark.asyncio
@@ -55,7 +55,7 @@ async def test_gemini_config_model():
     # Case 1: Default config (no specific model set)
     config = {"google_api_key": "fake_key"} 
     # Note: Logic falls back to default if key missing
-    stage3 = Stage3GeminiProcessor(hass, config)
+    stage3 = Stage3CloudProcessor(hass, config)
     # stage3 uses config.get(CONF_STAGE3_MODEL, "gemini-1.5-flash")
     # if CONF_STAGE3_MODEL is "stage3_model", and it's missing in config -> default
     assert stage3._gemini_client.model == "gemini-2.5-flash"  # The new default we set
@@ -65,7 +65,7 @@ async def test_gemini_config_model():
         "google_api_key": "fake_key",
         CONF_STAGE3_MODEL: "gemini-pro-configured"
     }
-    stage3_explicit = Stage3GeminiProcessor(hass, config_explicit)
+    stage3_explicit = Stage3CloudProcessor(hass, config_explicit)
     assert stage3_explicit._gemini_client.model == "gemini-pro-configured"
 
 @pytest.mark.asyncio
@@ -94,7 +94,7 @@ async def test_hass_get_state_ambiguity_bypass():
     hass = MagicMock()
     
     # Setup Stage1Cache with SemanticCache
-    config = {"cache_enabled": True, "reranker_enabled": True}
+    config = {"cache_enabled": True}
     stage1 = Stage1CacheProcessor(hass, config)
     
     # Mock SemanticCacheCapability
@@ -120,12 +120,13 @@ async def test_hass_get_state_ambiguity_bypass():
     sem_cap._addon_url = MagicMock(return_value="http://fake")
     
     # Mock aiohttp response
-    # The reranker returns "matches" list
+    # The cache addon returns the best match
     mock_response_data = {
         "found": True,
+        "score": 0.95,
         "matches": [
-             {"intent": "HassGetState", "entity_ids": ["light.kitchen"], "score": 0.85},
-             {"intent": "HassGetState", "entity_ids": ["light.living"], "score": 0.84}
+             {"intent": "HassGetState", "entity_ids": ["light.kitchen"], "score": 0.95},
+             {"intent": "HassGetState", "entity_ids": ["light.living"], "score": 0.94}
         ]
     }
     

@@ -7,6 +7,7 @@ import logging
 from typing import Any, Dict
 
 from .base import Capability
+from ..constants.messages_de import DISAMBIGUATION_MESSAGES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -15,7 +16,7 @@ class DisambiguationCapability(Capability):
     """Ask the user to clarify which device was meant."""
 
     name = "disambiguation"
-    description = "Ask the user to clarify between multiple matched entities."
+    description = "Ask the user to clarify between multiple matched entities using natural language questions. Used when intent resolution is ambiguous."
 
     async def run(self, user_input, entities: Dict[str, str], **_: Any) -> Dict[str, Any]:
         """Generate disambiguation question from entity friendly names.
@@ -33,18 +34,18 @@ class DisambiguationCapability(Capability):
         _LOGGER.debug("[Disambiguation] Generating question for %d candidates", count)
         
         if count == 0:
-            return {"message": "Welches Gerät meinst du?"}
+            return {"message": DISAMBIGUATION_MESSAGES["which_device"]}
         
         if count == 1:
             # Shouldn't happen, but handle it
-            return {"message": f"Meinst du {names[0]}?"}
+            return {"message": DISAMBIGUATION_MESSAGES["mean_one"].format(name=names[0])}
         
         if count == 2:
             # "Meinst du X oder Y?"
-            message = f"Meinst du {names[0]} oder {names[1]}?"
+            message = DISAMBIGUATION_MESSAGES["mean_two"].format(name1=names[0], name2=names[1])
         else:
             # "Welches meinst du: A, B, C oder D?"
             options = ", ".join(names[:-1]) + f" oder {names[-1]}"
-            message = f"Welches meinst du: {options}?"
+            message = DISAMBIGUATION_MESSAGES["mean_multiple"].format(options=options)
         
         return {"message": message}

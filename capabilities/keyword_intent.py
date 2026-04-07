@@ -2,7 +2,13 @@ import logging
 from typing import Any, Dict, Optional, List
 
 from .base import Capability
-from custom_components.multistage_assist.conversation_utils import (
+from ..utils.german_utils import (
+    DOMAIN_DESCRIPTIONS,
+    IMPLICIT_PHRASES,
+    GERMAN_ARTICLES,
+    GERMAN_PREPOSITIONS,
+)
+from ..constants.entity_keywords import (
     LIGHT_KEYWORDS,
     COVER_KEYWORDS,
     SENSOR_KEYWORDS,
@@ -32,6 +38,7 @@ class KeywordIntentCapability(Capability):
     """Derive intent/domain from keywords."""
 
     name = "keyword_intent"
+    description = "Determine the target domain and intent from natural language using tiered matching: 1. Exact string matching against domain keyword dictionaries 2. Fuzzy Levenshtein distance matching for typos 3. Specialized LLM reasoning for slot extraction (area, floor, parameters). Supports complex control modes like Temporary and Delayed control."
 
     DOMAIN_KEYWORDS = {
         "light": _extract_nouns(LIGHT_KEYWORDS),
@@ -186,12 +193,27 @@ User: "Saugroboter in die Küche" -> intent: HassVacuumStart, area: Küche, doma
         },
     }
 
+    def __init__(self, hass, config):
+        super().__init__(hass, config)
+        self.memory = None
+
+    def set_memory(self, memory_cap):
+        self.memory = memory_cap
+
     SCHEMA = {
         "type": "object",
         "properties": {
             "intent": {"type": ["string", "null"]},
             "area": {"type": ["string", "null"]},
+            "floor": {"type": ["string", "null"]},
             "domain": {"type": ["string", "null"]},
+            "command": {"type": ["string", "null"]},
+            "duration": {"type": ["string", "null"]},
+            "position": {"type": ["string", "null"]},
+            "brightness": {"type": ["string", "null"]},
+            "temperature": {"type": ["string", "null"]},
+            "device_class": {"type": ["string", "null"]},
+            "state": {"type": ["string", "null"]},
             "slots": {
                 "type": "object",
                 "additionalProperties": True
@@ -239,6 +261,21 @@ User: "Saugroboter in die Küche" -> intent: HassVacuumStart, area: Küche, doma
         dist = self._levenshtein(word, keyword)
         return dist if dist <= max_distance else None
 
+
+    async def _semantic_match(self, text: str) -> Optional[str]:
+        """Direct access to semantic cache for integration tests/fallbacks."""
+        from .semantic_cache import SemanticCacheCapability
+        # Use existing semantic_cache capability if available or direct stage1
+        from ..stage1_cache import match
+        
+        result, score = await match(text)
+        if score > 0.85: # Threshold from previous logic
+            # Handle list/str from new cache results
+            if isinstance(result, list):
+                return result[0] if result else None
+            return result
+        return None
+
     def _detect_domain(self, text: str) -> Optional[str]:
         t = text.lower()
         words = t.split()
@@ -247,6 +284,7 @@ User: "Saugroboter in die Küche" -> intent: HassVacuumStart, area: Küche, doma
         matches = [
             d for d, kws in self.DOMAIN_KEYWORDS.items() if any(k in t for k in kws)
         ]
+        
         if len(matches) == 1:
             return matches[0]
         if "climate" in matches and "sensor" in matches:
@@ -302,15 +340,22 @@ User: "Saugroboter in die Küche" -> intent: HassVacuumStart, area: Küche, doma
   - "Ist das Rollo geschlossen?" → state: closed
   - "Ist das Rollo offen?" → state: open"""
 
+        personal_info = ""
+        if self.memory:
+            data = await self.memory.get_all_personal_data()
+            if data:
+                personal_info = "Known Personal Information:\n" + "\n".join(f"- {k}: {v}" for k, v in data.items()) + "\n\n"
+
         system = f"""You are a smart home assistant. Identify the intent and entities.
-Allowed Intents: {', '.join(intents)}
+{personal_info}Allowed Intents: {', '.join(intents)}
 Allowed Slots: area, name, domain, floor, duration, command, device_class, position, temperature, brightness.
 
 Rules: {meta.get('rules', '')}
-- Use 'floor' for: Erdgeschoss, EG, Obergeschoss, OG, Untergeschoss, UG, Keller, Dachgeschoss, DG, oben, unten.
-- Use 'area' for rooms: Küche, Bad, Büro.
-- If generic words (Licht, Lampe), 'name' is EMPTY.
+- Use 'floor' for floor levels or levels (e.g. Erdgeschoss, Keller, DG, oben, unten).
+- Use 'area' for ANY specific room, area or location mentioned (e.g. Küche, Wohnzimmer, Bad, Büro, Flur, Garage).
+- If generic words (Licht, Lampe, Rollo) are used without a specific name, 'name' is EMPTY.
 - Do NOT use 'alle', 'alles', 'ganze' for 'area' or 'name'.
+- ALWAYS use one of the "Allowed Intents" exactly as written.
 {get_state_instructions}
 
 Examples:
@@ -327,14 +372,28 @@ Examples:
             _LOGGER.warning("[KeywordIntent] No intent extracted: %s", data)
             return {}
 
-        slots = data.get("slots") or {k: v for k, v in data.items() if k != "intent"}
+        slots = data.get("slots") or {}
+        # Merge top-level properties from schema into slots (Ollama often puts them at top level)
+        known_slots = [
+            "area", "floor", "domain", "command", "duration", 
+            "position", "brightness", "temperature", "device_class", "state"
+        ]
+        for prop in known_slots:
+            val = data.get(prop)
+            if val is not None and val != "" and not slots.get(prop):
+                slots[prop] = val
+        
+        # Pull extra keys from top level if slots was missing but props were there
+        if not slots:
+            slots = {k: v for k, v in data.items() if k not in ("intent", "slots")}
+
         if "domain" not in slots:
             slots["domain"] = domain
             
         # Post-processing: Remove "alle" from area/name if LLM put it there
-        if slots.get("area") and slots["area"].lower() in ("alle", "alles", "ganze", "gesamte", "sämtliche"):
+        if slots.get("area") and str(slots["area"]).lower() in ("alle", "alles", "ganze", "gesamte", "sämtliche"):
             slots["area"] = None
-        if slots.get("name") and slots["name"].lower() in ("alle", "alles", "ganze", "gesamte", "sämtliche"):
+        if slots.get("name") and str(slots["name"]).lower() in ("alle", "alles", "ganze", "gesamte", "sämtliche"):
             slots["name"] = None
 
         return {"domain": domain, "intent": data["intent"], "slots": slots}

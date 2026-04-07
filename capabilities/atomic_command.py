@@ -15,7 +15,7 @@ class AtomicCommandCapability(Capability):
     """
 
     name = "atomic_command"
-    description = "Splits compound commands into atomic actions."
+    description = "Split compound commands (e.g., 'A and B', 'A then B') into individual atomic actions using LLM reasoning. Ensures complex multi-device or multi-area requests are processed as separate steps."
 
     PROMPT = {
         "system": """You are a smart home intent parser.

@@ -2,7 +2,8 @@ import logging
 from typing import Any, Dict, Optional
 from homeassistant.core import Context
 from .base import Capability
-from custom_components.multistage_assist.conversation_utils import make_response
+from ..conversation_utils import make_response
+from ..constants.messages_de import VACUUM_MESSAGES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -12,30 +13,26 @@ class VacuumCapability(Capability):
     The script handles room/floor/global logic internally.
     """
     name = "vacuum"
-    description = "Control vacuum robots."
+    description = "Control vacuum robots. Supports dry cleaning (saugen) and wet cleaning (mop/wischen). Handles room, floor, and global cleaning scopes. Uses fast-path for mode detection and LLM for area/floor extraction."
 
     SCRIPT_ENTITY_ID = "script.vacuum_universal_clean"
     
     PROMPT = {
         "system": """Extract vacuum command details from the user's request.
-
 - mode: 'vacuum' for dry cleaning (saugen, staubsaugen), 'mop' for wet cleaning (wischen, feucht)
-- area: Room name (without articles like 'den', 'die', 'das'), or null if not specified
-- floor: Floor name (Erdgeschoss, Obergeschoss, Keller, etc.), or null if not specified
-- scope: 'GLOBAL' if whole house/apartment mentioned, or null if not specified
-
-Examples:
-"Sauge die Küche" → {"mode": "vacuum", "area": "Küche", "floor": null, "scope": null}
-"Wische den Keller" → {"mode": "mop", "area": "Keller", "floor": null, "scope": null}
-"Staubsauge das Erdgeschoss" → {"mode": "vacuum", "area": null, "floor": "Erdgeschoss", "scope": null}
-"Sauge das ganze Haus" → {"mode": "vacuum", "area": null, "floor": null, "scope": "GLOBAL"}""",
+- area: Room name (without articles like 'den', 'die', 'das'), or null
+- floor: Floor name, or null
+- scope: 'GLOBAL' if whole house/apartment mentioned, or null
+IMPORTANT: Always output room and floor names in German (the original user input language), e.g., 'Wohnzimmer' NOT 'living room'.""",
         "schema": {
+            "type": "object",
             "properties": {
-                "mode": {"type": "string"},
+                "mode": {"type": "string", "enum": ["vacuum", "mop"]},
                 "area": {"type": ["string", "null"]},
                 "floor": {"type": ["string", "null"]},
                 "scope": {"type": ["string", "null"]},
-            }
+            },
+            "required": ["mode", "area", "floor", "scope"]
         }
     }
 
@@ -43,10 +40,18 @@ Examples:
         if intent_name != "HassVacuumStart":
             return {}
 
-        # Extract vacuum details via LLM
+        # 1. Fast Path: Mode Detection
+        text = user_input.text.lower()
+        hinted_mode = None
+        if any(w in text for w in ["wisch", "mop", "feucht"]):
+            hinted_mode = "mop"
+        elif any(w in text for w in ["saug", "staubsaug"]):
+            hinted_mode = "vacuum"
+
+        # 2. Extract vacuum details via LLM
         extracted = await self._extract_vacuum_details(user_input.text)
         
-        mode = extracted.get("mode", "vacuum")
+        mode = hinted_mode or extracted.get("mode", "vacuum")
         scope = extracted.get("scope")
         floor_name = extracted.get("floor")
         area_name = extracted.get("area")
@@ -71,7 +76,7 @@ Examples:
         if not target_val:
              return {
                 "status": "handled",
-                "result": await make_response("Ich habe kein Ziel (Raum oder Etage) verstanden.", user_input)
+                "result": await make_response(VACUUM_MESSAGES["no_target"], user_input)
             }
 
         # 4. Execute Script
@@ -91,7 +96,7 @@ Examples:
             _LOGGER.error("Failed to trigger vacuum script: %s", e)
             return {
                 "status": "handled",
-                "result": await make_response("Fehler beim Starten des Saugroboters.", user_input)
+                "result": await make_response(VACUUM_MESSAGES["script_error"], user_input)
             }
 
         # 5. Confirmation
@@ -100,7 +105,10 @@ Examples:
         
         return {
             "status": "handled",
-            "result": await make_response(f"Alles klar, ich lasse {msg_target} {action}.", user_input)
+            "result": await make_response(
+                VACUUM_MESSAGES["confirmation"].format(target=msg_target, action=action),
+                user_input
+            )
         }
 
     async def _normalize_area_name(self, user_input, name: str) -> Optional[str]:

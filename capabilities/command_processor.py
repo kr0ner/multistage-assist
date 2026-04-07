@@ -11,7 +11,7 @@ from .intent_confirmation import IntentConfirmationCapability
 from .disambiguation import DisambiguationCapability
 from .plural_detection import PluralDetectionCapability
 from .disambiguation_select import DisambiguationSelectCapability
-from .memory import MemoryCapability
+from .knowledge_graph import KnowledgeGraphCapability
 
 from custom_components.multistage_assist.conversation_utils import (
     make_response,
@@ -33,10 +33,7 @@ NOCACHE_INTENTS = {"HassTimerSet", "HassTimerCancel"}
 
 class CommandProcessorCapability(Capability):
     """
-    Orchestrates the execution pipeline:
-    Filter -> Plural Check -> Disambiguation -> Execution -> Confirmation
-    
-    Called by ExecutionPipeline for each resolved intent+entities.
+    Orchestrates the high-level execution pipeline: 1. State-aware candidate filtering 2. Plural detection 3. Entity disambiguation 4. Final intent execution 5. Natural language confirmation generation. Also manages semantic cache storage for verified successful commands.
     """
 
     name = "command_processor"
@@ -48,7 +45,7 @@ class CommandProcessorCapability(Capability):
         self.disambiguation = DisambiguationCapability(hass, config)
         self.plural = PluralDetectionCapability(hass, config)
         self.select = DisambiguationSelectCapability(hass, config)
-        self.memory = MemoryCapability(hass, config)
+        self.memory = KnowledgeGraphCapability(hass, config)
         self.semantic_cache = None  # Injected by ExecutionPipeline
     
     def set_cache(self, cache):
@@ -120,11 +117,22 @@ class CommandProcessorCapability(Capability):
         # --- Handle Learning Confirmation ---
         if pending_type == "learning_confirmation":
             return await self._handle_learning_confirmation(user_input, pending_data)
+        
+        # --- Escalate Unhandled Pending Types (e.g. slot_filling) ---
+        # If we don't have candidates, we can't do entity disambiguation.
+        # Escalate back to stages for re-processing.
+        if not pending_data.get("candidates"):
+            _LOGGER.debug("[CommandProcessor] Unhandled pending type '%s' without candidates -> escalation", pending_type)
+            return {
+                "status": "escalate",
+                "result": pending_data, # Pass back the original context
+            }
             
         # --- Handle Entity Disambiguation ---
+        candidates_map = pending_data.get("candidates", {})
         candidates = [
             {"entity_id": eid, "name": name, "ordinal": i + 1}
-            for i, (eid, name) in enumerate(pending_data["candidates"].items())
+            for i, (eid, name) in enumerate(candidates_map.items())
         ]
 
         selected = await self.select.run(user_input, candidates=candidates)

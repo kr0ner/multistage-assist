@@ -102,7 +102,17 @@ async def test_confirmation_generation(
     user_input = make_input("test")
 
     # Mock entity IDs
-    entity_ids = [f"light.{d.lower().replace(' ', '_')}" for d in devices]
+    entity_ids = []
+    for d in devices:
+        domain = "light"
+        if "rollo" in d.lower() or "markise" in d.lower() or "jalousie" in d.lower():
+            domain = "cover"
+        elif "heizung" in d.lower() or "thermostat" in d.lower():
+            domain = "climate"
+        elif "ventilator" in d.lower():
+            domain = "fan"
+        
+        entity_ids.append(f"{domain}.{d.lower().replace(' ', '_')}")
 
     result = await confirmation_capability.run(
         user_input,

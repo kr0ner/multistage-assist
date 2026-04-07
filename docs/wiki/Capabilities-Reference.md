@@ -6,7 +6,7 @@ Complete reference of all available capabilities in MultiStage Assist.
 
 ### semantic_cache
 
-**Purpose:** Fast cache lookup via external reranker add-on with anchor patterns.
+**Purpose:** Fast cache lookup via external cache add-on with anchor patterns.
 
 **Input:** User input text
 
@@ -14,7 +14,7 @@ Complete reference of all available capabilities in MultiStage Assist.
 
 **Features:**
 - **Anchor patterns** - Pre-generated command patterns for all entities/areas
-- **Reranker validation** - External add-on validates matches (threshold: 0.73)
+- **Vector validation** - External add-on validates matches (threshold: 0.85)
 - **Hybrid search** - Combines vector similarity + BM25 keyword matching
 - **User learning** - Stores verified successful commands
 - Preserves disambiguation context for re-prompting
@@ -28,7 +28,7 @@ Complete reference of all available capabilities in MultiStage Assist.
 - Delayed control intents - time-sensitive
 
 **Config Options:**
-- `reranker_threshold`: Min score for hit (default: 0.73)
+- `vector_threshold`: Min score for hit (default: 0.85)
 - `hybrid_enabled`: Enable hybrid search (default: true)
 - `hybrid_alpha`: Vector vs keyword weight (default: 0.7)
 - `cache_max_entries`: Max user cache size (default: 10000)

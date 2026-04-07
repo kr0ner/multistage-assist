@@ -77,7 +77,9 @@ from .semantic_cache_types import (
 )
 
 # Increment to force cache regeneration when patterns change
-CACHE_VERSION = 4
+CACHE_VERSION = 6
+
+from .german_utils import get_prepositional_area
 
 # Import async_should_expose at module level for testability
 # Falls back to a function that always returns True if HA components not available
@@ -133,18 +135,19 @@ class SemanticCacheBuilder:
     - Saving anchors to disk for fast subsequent startups
     """
 
-    def __init__(self, hass, config, get_embedding_func, normalize_func):
-        """Initialize builder.
-        
-        Args:
-            hass: Home Assistant instance
-            config: Configuration dict
-            get_embedding_func: Async function to get embeddings (calls add-on)
-            normalize_func: Function to normalize numeric values in text
-        """
+    def __init__(
+        self, 
+        hass, 
+        config: Dict[str, Any],
+        get_embedding_func,
+        normalize_func,
+        batch_embedding_func=None
+    ):
+        """Initialize builder."""
         self.hass = hass
         self.config = config
         self._get_embedding = get_embedding_func
+        self._batch_embed = batch_embedding_func
         self._normalize_numeric_value = normalize_func
 
     async def load_anchor_cache(self) -> Tuple[bool, List[CacheEntry]]:
@@ -234,15 +237,20 @@ class SemanticCacheBuilder:
         if text_norm != text:
             text = text_norm
 
-        _LOGGER.debug("[SemanticCache] Generating embedding for: '%s'", text)
-        embedding = await self._get_embedding(text)
-        if embedding is None:
-            _LOGGER.warning("[SemanticCache] Failed to generate embedding for anchor: '%s'", text)
-            return None
+        _LOGGER.debug("[SemanticCache] Creating entry for: '%s'", text)
+        
+        # Embedding can be deferred for batching
+        emb_list = None
+        if not self._batch_embed:
+            embedding = await self._get_embedding(text)
+            if embedding is None:
+                _LOGGER.warning("[SemanticCache] Failed to generate embedding for anchor: '%s'", text)
+                return None
+            emb_list = embedding.tolist()
 
         return CacheEntry(
             text=text,
-            embedding=embedding.tolist(),
+            embedding=emb_list,
             intent=intent,
             entity_ids=entity_ids or [],
             slots=slots,
@@ -456,8 +464,30 @@ class SemanticCacheBuilder:
                     )
 
         # Generate global anchors (no area, domain-wide)
+        # CRITICAL: DO NOT introduce local embedding generation here! 
+        # All embeddings must come from the add-on via self._batch_embed or self._get_embedding.
         _LOGGER.info("[SemanticCache] Generating global anchors...")
         new_anchors.extend(await self._generate_global_anchors())
+
+        # --- BATCH EMBEDDING ---
+        if self._batch_embed and new_anchors:
+            _LOGGER.info("[SemanticCache] Batch embedding %d anchors...", len(new_anchors))
+            texts = [a.text for a in new_anchors]
+            
+            # Divide into chunks to avoid too large requests
+            CHUNK_SIZE = 100
+            for i in range(0, len(texts), CHUNK_SIZE):
+                chunk_texts = texts[i:i + CHUNK_SIZE]
+                chunk_embeddings = await self._batch_embed(chunk_texts)
+                
+                if chunk_embeddings:
+                    for j, emb in enumerate(chunk_embeddings):
+                        new_anchors[i + j].embedding = emb.tolist()
+                else:
+                    _LOGGER.error("[SemanticCache] Batch embedding failed for chunk %d", i // CHUNK_SIZE)
+
+            # Filter out entries that failed to embed
+            new_anchors = [a for a in new_anchors if a.embedding is not None]
 
         _LOGGER.info("[SemanticCache] Created %d semantic anchors", len(new_anchors))
         return new_anchors
@@ -474,58 +504,76 @@ class SemanticCacheBuilder:
         """Generate area-scope anchors."""
         anchors = []
         
-        for pattern_tuple in area_patterns:
-            pattern, intent, extra_slots = pattern_tuple
+        # Pre-calculate prepositional form for the area
+        full_prep_phrase = get_prepositional_area(area_name)
+        # Robustly extract just the prepositional part using case-insensitive split
+        # to avoid "Kinder Badezimmer Kinder Badezimmer" duplication
+        parts = re.split(re.escape(area_name), full_prep_phrase, maxsplit=1, flags=re.IGNORECASE)
+        area_prep = parts[0].strip() if parts else ""
+        
+        # Generate for both plural and singular device words
+        # Users often say "Licht" even if there are multiple.
+        device_plural = DOMAIN_DEVICE_WORDS.get(domain, f"die {domain}")
+        device_singular = DOMAIN_DEVICE_WORDS_SINGULAR.get(domain, f"das {domain}")
+        
+        device_variants = [device_plural]
+        if device_singular != device_plural:
+            device_variants.append(device_singular)
             
-            # Get all case forms for device word
-            device_nom = DOMAIN_DEVICE_WORDS_NOMINATIVE.get(domain, device_word)
-            device_dat = DOMAIN_DEVICE_WORDS_DATIVE.get(domain, device_word)
-            
-            try:
-                text = pattern.format(
-                    area=area_name, 
-                    device=device_word, 
-                    device_nom=device_nom,
-                    device_dat=device_dat
-                )
-            except KeyError:
-                continue
-            
-            # Deduplicate by actual generated text (not by intent)
-            text_key = (domain, area_name, text)
-            if text_key in processed:
-                continue
-            processed.add(text_key)
-
-            slots = {"area": area_name, "domain": domain, **extra_slots}
-            
-            # Use all entities in the area
-            area_entity_ids = [e[0] for e in entity_list]
-            
-            # Filter non-dimmable lights for dimming intents
-            if domain == "light" and intent == "HassLightSet":
-                dimmable_ids = []
-                for eid in area_entity_ids:
-                    state = self.hass.states.get(eid)
-                    if state:
-                        modes = state.attributes.get("supported_color_modes", [])
-                        if not modes or modes != ["onoff"]:
-                            dimmable_ids.append(eid)
-                area_entity_ids = dimmable_ids
-                if not area_entity_ids:
+        for d_word in device_variants:
+            for pattern_tuple in area_patterns:
+                pattern, intent, extra_slots = pattern_tuple
+                
+                # Get all case forms for the current device word variant
+                device_nom = DOMAIN_DEVICE_WORDS_NOMINATIVE.get(domain, d_word)
+                device_dat = DOMAIN_DEVICE_WORDS_DATIVE.get(domain, d_word)
+                
+                try:
+                    text = pattern.format(
+                        area=area_name, 
+                        area_prep=area_prep,
+                        device=d_word, 
+                        device_nom=device_nom,
+                        device_dat=device_dat
+                    )
+                except KeyError:
                     continue
-
-            entry = await self._create_anchor_entry(
-                text=text,
-                intent=intent,
-                slots=slots,
-                entity_ids=area_entity_ids,
-                required_disambiguation=(len(area_entity_ids) > 1),
-                generated=True
-            )
-            
-            if entry:
-                anchors.append(entry)
+                
+                # Deduplicate by actual generated text (not by intent)
+                text_key = (domain, area_name, text)
+                if text_key in processed:
+                    continue
+                processed.add(text_key)
+    
+                slots = {"area": area_name, "domain": domain, **extra_slots}
+                
+                # Use all entities in the area
+                area_entity_ids = [e[0] for e in entity_list]
+                
+                # Filter non-dimmable lights for dimming intents
+                if domain == "light" and intent == "HassLightSet":
+                    dimmable_ids = []
+                    for eid in area_entity_ids:
+                        state = self.hass.states.get(eid)
+                        if state:
+                            modes = state.attributes.get("supported_color_modes", [])
+                            if not modes or modes != ["onoff"]:
+                                dimmable_ids.append(eid)
+                    area_entity_ids = dimmable_ids
+                    if not area_entity_ids:
+                        continue
+    
+                entry = await self._create_anchor_entry(
+                    text=text,
+                    intent=intent,
+                    slots=slots,
+                    entity_ids=area_entity_ids,
+                    required_disambiguation=(len(area_entity_ids) > 1),
+                    generated=True
+                )
+                
+                if entry:
+                    anchors.append(entry)
         
         return anchors
 
@@ -610,59 +658,74 @@ class SemanticCacheBuilder:
         """Generate floor-scope anchors (reuses area patterns with floor substitution)."""
         anchors = []
         
-        for pattern_tuple in area_patterns:
-            pattern, intent, extra_slots = pattern_tuple
+        # Pre-calculate prepositional form for the floor
+        full_prep_phrase = get_prepositional_area(floor_name)
+        parts = re.split(re.escape(floor_name), full_prep_phrase, maxsplit=1, flags=re.IGNORECASE)
+        area_prep = parts[0].strip() if parts else ""
+        
+        # Generate for both plural and singular device words
+        device_plural = DOMAIN_DEVICE_WORDS.get(domain, f"die {domain}")
+        device_singular = DOMAIN_DEVICE_WORDS_SINGULAR.get(domain, f"das {domain}")
+        
+        device_variants = [device_plural]
+        if device_singular != device_plural:
+            device_variants.append(device_singular)
             
-            # Get all case forms for device word
-            device_nom = DOMAIN_DEVICE_WORDS_NOMINATIVE.get(domain, device_word)
-            device_dat = DOMAIN_DEVICE_WORDS_DATIVE.get(domain, device_word)
-            
-            try:
-                # Reuse area patterns - substitute {area} with floor_name
-                text = pattern.format(
-                    area=floor_name, 
-                    device=device_word, 
-                    device_nom=device_nom,
-                    device_dat=device_dat
-                )
-            except KeyError:
-                continue
-            
-            # Deduplicate by actual generated text (not by intent)
-            floor_key = (domain, floor_name, text)
-            if floor_key in processed:
-                continue
-            processed.add(floor_key)
-
-            slots = {"floor": floor_name, "domain": domain, **extra_slots}
-            
-            # Use all entities on the floor
-            floor_entity_ids = [e[0] for e in entity_list]
-            
-            # Filter non-dimmable lights for dimming intents
-            if domain == "light" and intent == "HassLightSet":
-                dimmable_ids = []
-                for eid in floor_entity_ids:
-                    state = self.hass.states.get(eid)
-                    if state:
-                        modes = state.attributes.get("supported_color_modes", [])
-                        if not modes or modes != ["onoff"]:
-                            dimmable_ids.append(eid)
-                floor_entity_ids = dimmable_ids
-                if not floor_entity_ids:
+        for d_word in device_variants:
+            for pattern_tuple in area_patterns:
+                pattern, intent, extra_slots = pattern_tuple
+                
+                # Get all case forms for the current device word variant
+                device_nom = DOMAIN_DEVICE_WORDS_NOMINATIVE.get(domain, d_word)
+                device_dat = DOMAIN_DEVICE_WORDS_DATIVE.get(domain, d_word)
+                
+                try:
+                    # Reuse area patterns - substitute {area} with floor_name and {area_prep} with floor_prep
+                    text = pattern.format(
+                        area=floor_name, 
+                        area_prep=area_prep,
+                        device=d_word, 
+                        device_nom=device_nom,
+                        device_dat=device_dat
+                    )
+                except KeyError:
                     continue
-
-            entry = await self._create_anchor_entry(
-                text=text,
-                intent=intent,
-                slots=slots,
-                entity_ids=floor_entity_ids,
-                required_disambiguation=(len(floor_entity_ids) > 1),
-                generated=True
-            )
-            
-            if entry:
-                anchors.append(entry)
+                
+                # Deduplicate by actual generated text (not by intent)
+                floor_key = (domain, floor_name, text)
+                if floor_key in processed:
+                    continue
+                processed.add(floor_key)
+    
+                slots = {"floor": floor_name, "domain": domain, **extra_slots}
+                
+                # Use all entities on the floor
+                floor_entity_ids = [e[0] for e in entity_list]
+                
+                # Filter non-dimmable lights for dimming intents
+                if domain == "light" and intent == "HassLightSet":
+                    dimmable_ids = []
+                    for eid in floor_entity_ids:
+                        state = self.hass.states.get(eid)
+                        if state:
+                            modes = state.attributes.get("supported_color_modes", [])
+                            if not modes or modes != ["onoff"]:
+                                dimmable_ids.append(eid)
+                    floor_entity_ids = dimmable_ids
+                    if not floor_entity_ids:
+                        continue
+    
+                entry = await self._create_anchor_entry(
+                    text=text,
+                    intent=intent,
+                    slots=slots,
+                    entity_ids=floor_entity_ids,
+                    required_disambiguation=(len(floor_entity_ids) > 1),
+                    generated=True
+                )
+                
+                if entry:
+                    anchors.append(entry)
         
         return anchors
 
@@ -721,10 +784,27 @@ class SemanticCacheBuilder:
             
             # Nominative (for queries)
             device_word_nom = DOMAIN_DEVICE_WORDS_NOMINATIVE.get(domain, "das Gerät")
-            article_nom = device_word_nom.split()[0] if " " in device_word_nom else ""
             # Dative
             device_word_dat = DOMAIN_DEVICE_WORDS_DATIVE.get(domain, "dem Gerät")
+
+            # Domain name to prefix if missing (e.g. "Licht", "Rollladen")
+            # Logic: If entity name is "Dusche", prefix "Licht". If "Deckenlicht", prefix nothing.
+            domain_noun = device_word_acc.split()[-1] if " " in device_word_acc else ""
+            if domain_noun.lower() in name.lower():
+                # Already present
+                prefix = ""
+            else:
+                prefix = f" {domain_noun}"
+
+            # Prepare case-specific full device words
+            article_acc = device_word_acc.split()[0] if " " in device_word_acc else ""
+            full_dev_acc = f"{article_acc}{prefix}".strip()
+
+            article_nom = device_word_nom.split()[0] if " " in device_word_nom else ""
+            full_dev_nom = f"{article_nom}{prefix}".strip()
+
             article_dat = device_word_dat.split()[0] if " " in device_word_dat else ""
+            full_dev_dat = f"{article_dat}{prefix}".strip()
             
             # Use ENTITY_PHRASE_PATTERNS but filtered for NO AREA
             entity_patterns = ENTITY_PHRASE_PATTERNS.get(domain, [])
@@ -734,19 +814,19 @@ class SemanticCacheBuilder:
                 if "{area}" in pattern_template:
                     continue
                 
-                # Determine which article to use based on pattern
+                # Determine which device word variant to use based on pattern
                 if "{device_nom}" in pattern_template:
-                    article = article_nom
+                    dev_to_use = full_dev_nom
                 elif "{device_dat}" in pattern_template:
-                    article = article_dat
+                    dev_to_use = full_dev_dat
                 else:
-                    article = article_acc
+                    dev_to_use = full_dev_acc
                 
                 try:
                     text = pattern_template.format(
-                        device=article,
-                        device_nom=article_nom,
-                        device_dat=article_dat,
+                        device=dev_to_use,
+                        device_nom=full_dev_nom,
+                        device_dat=full_dev_dat,
                         entity_name=name
                     ).replace("  ", " ").strip()
                 except KeyError:

@@ -1,4 +1,3 @@
-
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 from multistage_assist.stage1_cache import Stage1CacheProcessor
@@ -11,6 +10,16 @@ async def test_stage1_fallback_entity_resolution():
     # Mock HASS and Config
     hass = MagicMock()
     config = {}
+    
+    # Input User Text (Define early to avoid UnboundLocalError)
+    user_input = conversation.ConversationInput(
+        text="Schalte alle Lampen im Haus aus",
+        context=None,
+        conversation_id="123",
+        language="de",
+        agent_id="test_agent",
+        device_id="test_device_123"
+    )
     
     # Mock SemanticCache
     mock_cache = AsyncMock()
@@ -31,9 +40,13 @@ async def test_stage1_fallback_entity_resolution():
         "filtered_by_deps": []
     }
     
-    # Mock Clarification
-    mock_clarification = AsyncMock()
-    mock_clarification.run.return_value = [] # No multi-command split
+    # Mock ImplicitIntent
+    mock_implicit = AsyncMock()
+    mock_implicit.run.return_value = [user_input.text] # No rephrasal
+    
+    # Mock AtomicCommand
+    mock_atomic = AsyncMock()
+    mock_atomic.run.return_value = [user_input.text] # No splitting
     
     # Mock Memory
     mock_memory = AsyncMock()
@@ -47,22 +60,13 @@ async def test_stage1_fallback_entity_resolution():
     def get_capability(name):
         if name == "semantic_cache": return mock_cache
         if name == "entity_resolver": return mock_resolver
-        if name == "clarification": return mock_clarification
-        if name == "memory": return mock_memory
+        if name == "implicit_intent": return mock_implicit
+        if name == "atomic_command": return mock_atomic
+        if name == "knowledge_graph": return mock_memory
         return None
     
     processor.get = MagicMock(side_effect=get_capability)
     processor.has = MagicMock(return_value=True)
-
-    # Input User Text
-    user_input = conversation.ConversationInput(
-        text="Schalte alle Lampen im Haus aus",
-        context=None,
-        conversation_id="123",
-        language="de",
-        agent_id="test_agent",
-        device_id="test_device_123"
-    )
 
     # Run Process
     result = await processor.process(user_input)
@@ -80,4 +84,3 @@ async def test_stage1_fallback_entity_resolution():
     call_args = mock_resolver.run.call_args
     assert call_args[0][0] == user_input # First arg matches user_input
     assert call_args[1]['entities'] == {"domain": "light"} # kwargs['entities'] matches cache slots
-

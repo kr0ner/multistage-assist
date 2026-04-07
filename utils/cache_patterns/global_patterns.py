@@ -33,7 +33,9 @@ GLOBAL_PHRASE_PATTERNS = {
     ],
     "media_player": [
         ("Schalte alle Fernseher aus", "HassTurnOff", {}),
+        ("Schalte alle Fernseher an", "HassTurnOn", {}),
         ("Schalte alle Geräte aus", "HassTurnOff", {}),
+        ("Schalte alle Geräte an", "HassTurnOn", {}),
     ],
     "automation": [
         ("Deaktiviere alle Automatisierungen", "HassTurnOff", {}),

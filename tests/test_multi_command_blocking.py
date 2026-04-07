@@ -62,7 +62,8 @@ def mock_hass():
 
 @pytest.fixture
 def mock_config():
-    return {"reranker_ip": "localhost", "reranker_port": 9876}
+    from multistage_assist.const import CONF_CACHE_ADDON_IP, CONF_CACHE_ADDON_PORT
+    return {CONF_CACHE_ADDON_IP: "localhost", CONF_CACHE_ADDON_PORT: 9876}
 
 
 class TestMultiCommandBlockOnPending:

@@ -8,12 +8,16 @@ Configure via: **Settings → Devices & Services → Add Integration → MultiSt
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| **Ollama Host** | IP/hostname for Ollama server | `localhost` |
+| **Ollama Host** | IP/hostname for Ollama server | `127.0.0.1` |
 | **Ollama Port** | Ollama API port | `11434` |
-| **Ollama Model** | LLM model for intent parsing | `qwen3.5:4b-q4_K_M` |
-| **Google API Key** | Gemini API key for Stage 3 | (required) |
-| **Gemini Model** | Gemini model name | `gemini-2.0-flash` |
-| **Cache Addon Host** | IP/hostname for cache add-on | `localhost` |
+| **Ollama Model** | LLM model for intent parsing | `qwen3:4b-q4_K_M` |
+| **Cloud Provider** | Stage 3 provider | `gemini` (also: openai, anthropic, grok) |
+| **Cloud Model** | Cloud model name | `gemini-2.0-flash-lite` |
+| **Google API Key** | Gemini API key for Stage 3 | (optional) |
+| **OpenAI API Key** | OpenAI API key | (optional) |
+| **Anthropic API Key** | Anthropic API key | (optional) |
+| **Grok API Key** | Grok API key | (optional) |
+| **Cache Addon Host** | IP/hostname for cache add-on | `local-multistage-cache` |
 | **Cache Addon Port** | Cache API port | `9876` |
 
 ## Expert Settings (YAML)
@@ -23,24 +27,24 @@ Add to `configuration.yaml` for advanced tuning:
 ```yaml
 multistage_assist:
   # --- Semantic Cache Tuning ---
-  vector_threshold: 0.85       # Minimum similarity score for cache hit (0.0-1.0)
+  vector_threshold: 0.75        # Minimum similarity score for cache hit (0.0-1.0)
   hybrid_enabled: true          # Enable hybrid keyword + vector search
   hybrid_alpha: 0.7             # Weight: 0.0 = keyword only, 1.0 = vector only
   hybrid_ngram_size: 2          # N-gram size for BM25 (1=words, 2=bigrams)
   vector_search_threshold: 0.5  # Minimum vector similarity for candidates
   vector_search_top_k: 10       # Max candidates from vector search
-  
+
   # --- Cache Behavior ---
   cache_regenerate_on_startup: true  # Regenerate anchors on HA restart
   cache_max_entries: 10000           # Maximum user-learned cache entries
-  
+
   # --- Low-Hardware Mode ---
   skip_stage1_llm: false  # Cache-only mode (see below)
-  
+
   # --- LLM Behavior ---
   llm_timeout: 30         # Timeout in seconds for LLM calls
   llm_max_retries: 2      # Retry count on LLM failure
-  
+
   # --- Debugging ---
   debug_cache_hits: false          # Log detailed cache hit/miss info
   debug_llm_prompts: false         # Log full LLM prompts and responses
@@ -97,7 +101,7 @@ logger:
 | `stage0` | NLU recognition results |
 | `stage1_cache` | Cache lookup hits/misses |
 | `stage2_llm` | LLM intent parsing |
-| `stage3_gemini` | Gemini API calls |
+| `stage3_cloud` | Cloud LLM API calls |
 | `semantic_cache` | Cache operations |
 | `entity_resolver` | Entity matching |
 | `intent_executor` | Intent execution |

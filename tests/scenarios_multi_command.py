@@ -11,46 +11,12 @@ from multistage_assist.stage1_cache import Stage1CacheProcessor
 from multistage_assist.stage2_llm import Stage2LLMProcessor
 from multistage_assist.stage3_cloud import Stage3CloudProcessor
 from multistage_assist import conversation_utils
-
-class MockIntentResponse:
-    def __init__(self, language="en"):
-        self.speech = {}
-        self.response_type = None
-
-    def async_set_speech(self, text, type="plain", extra_data=None):
-        self.speech[type] = {"speech": text, "extra_data": extra_data}
-
-@pytest.fixture(autouse=True)
-def patch_intent_response():
-    with patch(
-        "multistage_assist.conversation_utils.intent.IntentResponse", MockIntentResponse
-    ):
-        yield
-
-@pytest.fixture(autouse=True)
-def patch_make_response():
-    async def _mock_make_response(message, user_input, end=False):
-        resp = MockIntentResponse(language=user_input.language or "de")
-        resp.async_set_speech(message)
-        res = MagicMock()
-        res.response = resp
-        res.conversation_id = user_input.conversation_id
-        res.continue_conversation = not end
-        return res
-
-    p1 = patch(
-        "multistage_assist.conversation.make_response", side_effect=_mock_make_response
-    )
-
-    import sys
-    if "custom_components.multistage_assist.conversation_utils" in sys.modules:
-        mock_utils = sys.modules[
-            "custom_components.multistage_assist.conversation_utils"
-        ]
-        mock_utils.make_response.side_effect = _mock_make_response
-
-    with p1:
-        yield
+from .scenario_fixtures import (
+    MockIntentResponse,
+    patch_intent_response,
+    patch_make_response,
+    create_base_agent,
+)
 
 @pytest.fixture
 def agent(hass, config_entry, integration_llm_config):

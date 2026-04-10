@@ -37,14 +37,14 @@
 |---------|--------------|
 | "Licht im Bad an" | Turns on bathroom lights |
 | "Licht auf 50%" | Sets brightness to 50% |
-| "Licht heller" | Increases brightness by 20% of current |
-| "Licht dunkler" | Decreases brightness by 20% of current |
+| "Licht heller" | Increases brightness by 35% of current |
+| "Licht dunkler" | Decreases brightness by 35% of current |
 | "Es ist zu dunkel" | → "Mache das Licht heller" (via clarification) |
 | "Licht für 5 Minuten an" | Turns on, restores after 5 min |
 
 ### Brightness Step Logic
-- **Relative changes**: 20% of current value (not absolute)
-- **Minimum step**: 5%
+- **Relative changes**: 35% of current value (not absolute)
+- **Minimum step**: 10%
 - **From off (0%)**: Turns on to 30%
 
 ## Covers

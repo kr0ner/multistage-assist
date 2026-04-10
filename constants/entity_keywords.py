@@ -198,6 +198,34 @@ _ENTITY_PLURALS: Dict[str, str] = {
     **OTHER_ENTITY_PLURALS,
 }
 
+# Backward-compatible alias
+ENTITY_PLURALS = _ENTITY_PLURALS
+
+
+# --- INTENT DIRECTION INDICATORS ---
+# Used by semantic cache to verify match polarity (on vs off)
+
+ON_INDICATORS: Set[str] = {" an", "oeffne", " hoch", "heller", "helligkeit erhoehen"}
+OFF_INDICATORS: Set[str] = {" aus", "schliesse", " runter", " zu", "dunkler", "helligkeit verringern"}
+
+# --- QUESTION KEYWORDS ---
+# Words indicating the user is asking about state, not commanding an action
+QUESTION_KEYWORDS: List[str] = ["ist ", "sind ", "brennt ", "leuchtet ", "status", "wie ", "wo ", "welche "]
+
+
+# --- VACUUM MODE KEYWORDS ---
+# Fast-path mode detection for vacuum commands
+VACUUM_MOP_KEYWORDS: List[str] = ["wisch", "mop", "feucht"]
+VACUUM_DRY_KEYWORDS: List[str] = ["saug", "staubsaug"]
+
+
+# --- CALENDAR GENERIC TITLES ---
+# Titles too generic to accept as a real event summary
+CALENDAR_GENERIC_TITLES: Set[str] = {
+    "termin", "kalendereintrag", "eintrag", "event", "meeting",
+    "besprechung", "termin erstellen", "neuer termin",
+}
+
 # Export for backward compatibility
 ENTITY_PLURALS = _ENTITY_PLURALS
 

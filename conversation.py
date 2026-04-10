@@ -137,175 +137,21 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
         text_lower = user_input.text.strip().lower()
 
         # ZERO: Check for global exit commands
-        # Matches against exact set {"abbruch", "stop", ...} or checks if it starts with "abbruch "
         if text_lower in EXIT_COMMANDS or any(text_lower.startswith(cmd + " ") for cmd in EXIT_COMMANDS):
             _LOGGER.info("[Pipeline] Global exit command detected: '%s'", user_input.text)
             if conv_id in self._execution_pending:
                 del self._execution_pending[conv_id]
-                _LOGGER.info("[Pipeline] Cleared pending state for %s", conv_id)
-            return await make_response("Vorgang abgebrochen.", user_input)
+            return await make_response(SYSTEM_MESSAGES["exit_abort"], user_input)
         
-        # CLEANUP: Remove any stale pending states from OTHER conversations
+        # CLEANUP: Remove stale/zombie pending states
         self._cleanup_stale_pending(current_conv_id=conv_id)
+        self._evict_zombies()
 
         # FIRST: Check if ExecutionPipeline owns this conversation
-        # (could be disambiguation, slot-filling, follow-up - we don't care why)
-        # 🔎 Check for pending execution for this conversation
-        # BUG 3 Fix: Also cleanup old zombies before checking
-        now = time.time()
-        zombies = [cid for cid, data in self._execution_pending.items() if (now - data.get("_created_at", 0)) > 3600]
-        for z in zombies:
-            _LOGGER.debug("[Pipeline] Evicting zombie pending transaction for %s", z)
-            del self._execution_pending[z]
-
         if conv_id in self._execution_pending:
-            pending_data = self._execution_pending.pop(conv_id)
-            remaining_commands = pending_data.pop("remaining_multi_commands", None)
-            created_at = pending_data.pop("_created_at", None)
-            retry_count = pending_data.pop("_retry_count", 0)
-            
-            # Check if this pending is stale (user took too long to respond)
-            if created_at:
-                age = time.time() - created_at
-                
-                # Zombie Check: If very old, discard completely
-                if age > PENDING_ABSOLUTE_TIMEOUT:
-                     _LOGGER.info("[Pipeline] Pending state too old (%.1fs > %ds) - discarding zombie", age, PENDING_ABSOLUTE_TIMEOUT)
-                     # Fall through to process new command fresh (drop pending)
-                
-                elif age > PENDING_TIMEOUT_SECONDS:
-                    if retry_count >= PENDING_MAX_RETRIES:
-                        # Too many retries - give up and start fresh
-                        _LOGGER.info("[Pipeline] Pending timeout after %d retries, clearing state", retry_count)
-                        # Fall through to process new command fresh
-                    else:
-                        # Re-ask the question
-                        _LOGGER.info("[Pipeline] Pending timeout (%.1fs), re-asking (retry %d)", age, retry_count + 1)
-                        pending_data["_created_at"] = time.time()
-                        pending_data["_retry_count"] = retry_count + 1
-                        if remaining_commands:
-                            pending_data["remaining_multi_commands"] = remaining_commands
-                        self._execution_pending[conv_id] = pending_data
-                        # Re-create the disambiguation question
-                        exec_result = await self._execution_pipeline.re_prompt_pending(
-                            user_input, pending_data
-                        )
-                        if exec_result and exec_result.response:
-                            return exec_result.response
-                        # If re-prompt fails, continue with user's new input
-            
-            _LOGGER.debug("[Pipeline] ExecutionPipeline owns conversation %s, continuing", conv_id)
-            
-            # Handle area_learning by routing to Stage2
-            pending_type = pending_data.get("type", "")
-            if pending_type == "area_learning":
-                stage2 = next((s for s in self.stages if s.name == "stage2_llm"), None)
-                if stage2:
-                    result = await stage2.continue_pending(user_input, pending_data)
-                    
-                    if result.status == "success":
-                        # Rerun original command if requested
-                        if result.params.get("rerun_command"):
-                            original_text = result.params.get("original_text")
-                            message = SYSTEM_MESSAGES['unknown_area_learned'].format(
-                                alias=result.params.get("learned_alias"), 
-                                area=result.params.get("learned_area")
-                            )
-                            _LOGGER.info("[Pipeline] Re-running original command: %s", original_text)
-                            
-                            # Create new input with original text
-                            new_input = with_new_text(user_input, original_text)
-                            rerun_result = await self._run_pipeline(new_input, context={})
-                            
-                            if rerun_result:
-                                # Prepend confirmation
-                                if hasattr(rerun_result, 'response') and hasattr(rerun_result.response, 'speech'):
-                                    existing = rerun_result.response.speech.get("plain", {}).get("speech", "")
-                                    rerun_result.response.async_set_speech(f"{message} {existing}")
-                                return rerun_result
-                        return await make_response(SYSTEM_MESSAGES['error_short'], user_input)
-                        
-                    elif result.status == "pending":
-                        # Re-ask question
-                        # Re-store pending state
-                        conv_id = user_input.conversation_id or "default"
-                        result.pending_data["_created_at"] = time.time()
-                        result.pending_data["_retry_count"] = pending_data.get("_retry_count", 0) + 1
-                        if remaining_commands:
-                            result.pending_data["remaining_multi_commands"] = remaining_commands
-                        self._execution_pending[conv_id] = result.pending_data
-                        
-                        message = result.pending_data.get("original_prompt", "")
-                        return await make_response(message, user_input)
-            
-            # Default: ExecutionPipeline handles disambiguation etc.
-            exec_result = await self._execution_pipeline.continue_pending(
-                user_input, pending_data
-            )
-
-            if exec_result.escalate:
-                _LOGGER.debug("Execution pipeline escalated pending turn - re-running pipeline")
-                # Resume pipeline with original context from pending_data
-                return await self._run_pipeline(user_input, exec_result.response)
-
-            
-            # If still pending, re-store (with remaining commands preserved and fresh timestamp)
-            if exec_result.pending_data:
-                exec_result.pending_data["_created_at"] = time.time()
-                exec_result.pending_data["_retry_count"] = 0
-                if remaining_commands:
-                    exec_result.pending_data["remaining_multi_commands"] = remaining_commands
-                self._execution_pending[conv_id] = exec_result.pending_data
-                if exec_result.response:
-                    return exec_result.response
-                return await self._fallback(user_input)
-
-            
-            # Current command completed - now process remaining commands if any
-            responses = []
-            if exec_result.response:
-                responses.append(exec_result.response)
-            
-            if remaining_commands:
-                _LOGGER.info("[Pipeline] Resuming %d remaining multi-commands", len(remaining_commands))
-                for i, cmd in enumerate(remaining_commands):
-                    _LOGGER.debug("[Pipeline] Remaining command %d/%d: '%s'", i + 1, len(remaining_commands), cmd)
-                    cmd_input = with_new_text(user_input, cmd)
-                    cmd_response = await self._run_pipeline(cmd_input, context={})
-                    
-                    if not cmd_response:
-                        continue
-                    
-                    # Check if this remaining command also triggered pending
-                    if conv_id in self._execution_pending:
-                        # Store the rest for later
-                        rest = remaining_commands[i + 1:]
-                        if rest:
-                            self._execution_pending[conv_id]["remaining_multi_commands"] = rest
-                            _LOGGER.info("[Pipeline] Remaining command paused, %d more remaining", len(rest))
-                        return cmd_response
-                    
-                    responses.append(cmd_response)
-            
-            # Combine all responses
-            if responses:
-                speeches = []
-                for resp in responses:
-                    if hasattr(resp, 'response') and hasattr(resp.response, 'speech'):
-                        speech = resp.response.speech.get("plain", {}).get("speech", "")
-                        if speech:
-                            speeches.append(speech)
-                
-                if speeches and len(speeches) > 1:
-                    combined = " ".join(speeches)
-                    first_resp = responses[0]
-                    if hasattr(first_resp, 'response'):
-                        first_resp.response.async_set_speech(combined)
-                    return first_resp
-                return responses[0]
-            
-            return await self._fallback(user_input)
-
+            result = await self._handle_pending_execution(user_input, conv_id)
+            if result:
+                return result
 
         # SECOND: If any stage owns a pending turn, let it resolve first.
         for stage in self.stages:
@@ -329,6 +175,168 @@ class MultiStageAssistAgent(conversation.AbstractConversationAgent):
         # THIRD: Run stages pipeline
         result = await self._run_pipeline(user_input)
         return result or await self._fallback(user_input)
+
+    def _evict_zombies(self) -> None:
+        """Remove pending states older than 1 hour."""
+        now = time.time()
+        zombies = [cid for cid, data in self._execution_pending.items() if (now - data.get("_created_at", 0)) > 3600]
+        for z in zombies:
+            _LOGGER.debug("[Pipeline] Evicting zombie pending transaction for %s", z)
+            del self._execution_pending[z]
+
+    async def _handle_pending_execution(
+        self, user_input: conversation.ConversationInput, conv_id: str
+    ) -> Optional[conversation.ConversationResult]:
+        """Handle pending execution state (disambiguation, slot-filling, etc).
+        
+        Returns a ConversationResult if handled, or None to continue to pipeline.
+        """
+        pending_data = self._execution_pending.pop(conv_id)
+        remaining_commands = pending_data.pop("remaining_multi_commands", None)
+        created_at = pending_data.pop("_created_at", None)
+        retry_count = pending_data.pop("_retry_count", 0)
+        
+        # Check if this pending is stale (user took too long to respond)
+        if created_at:
+            age = time.time() - created_at
+            
+            if age > PENDING_ABSOLUTE_TIMEOUT:
+                _LOGGER.info("[Pipeline] Pending state too old (%.1fs) - discarding", age)
+                return None  # Fall through to fresh pipeline
+            
+            if age > PENDING_TIMEOUT_SECONDS:
+                if retry_count >= PENDING_MAX_RETRIES:
+                    _LOGGER.info("[Pipeline] Pending timeout after %d retries, clearing", retry_count)
+                    return None  # Fall through to fresh pipeline
+                
+                # Re-ask the question
+                _LOGGER.info("[Pipeline] Pending timeout (%.1fs), re-asking (retry %d)", age, retry_count + 1)
+                pending_data["_created_at"] = time.time()
+                pending_data["_retry_count"] = retry_count + 1
+                if remaining_commands:
+                    pending_data["remaining_multi_commands"] = remaining_commands
+                self._execution_pending[conv_id] = pending_data
+                exec_result = await self._execution_pipeline.re_prompt_pending(user_input, pending_data)
+                if exec_result and exec_result.response:
+                    return exec_result.response
+        
+        _LOGGER.debug("[Pipeline] ExecutionPipeline owns conversation %s, continuing", conv_id)
+        
+        # Handle area_learning by routing to Stage2
+        pending_type = pending_data.get("type", "")
+        if pending_type == "area_learning":
+            result = await self._handle_area_learning(user_input, pending_data, remaining_commands, conv_id)
+            if result:
+                return result
+        
+        # Default: ExecutionPipeline handles disambiguation etc.
+        exec_result = await self._execution_pipeline.continue_pending(user_input, pending_data)
+
+        if exec_result.escalate:
+            _LOGGER.debug("Execution pipeline escalated pending turn - re-running pipeline")
+            return await self._run_pipeline(user_input, exec_result.response)
+
+        # If still pending, re-store
+        if exec_result.pending_data:
+            exec_result.pending_data["_created_at"] = time.time()
+            exec_result.pending_data["_retry_count"] = 0
+            if remaining_commands:
+                exec_result.pending_data["remaining_multi_commands"] = remaining_commands
+            self._execution_pending[conv_id] = exec_result.pending_data
+            if exec_result.response:
+                return exec_result.response
+            return await self._fallback(user_input)
+
+        # Current command completed - process remaining multi-commands
+        return await self._process_remaining_commands(
+            user_input, conv_id, exec_result.response, remaining_commands
+        )
+
+    async def _handle_area_learning(
+        self, user_input, pending_data: dict, remaining_commands, conv_id: str
+    ) -> Optional[conversation.ConversationResult]:
+        """Handle area learning pending state."""
+        stage2 = next((s for s in self.stages if s.name == "stage2_llm"), None)
+        if not stage2:
+            return None
+            
+        result = await stage2.continue_pending(user_input, pending_data)
+        
+        if result.status == "success":
+            if result.params.get("rerun_command"):
+                original_text = result.params.get("original_text")
+                message = SYSTEM_MESSAGES['unknown_area_learned'].format(
+                    alias=result.params.get("learned_alias"), 
+                    area=result.params.get("learned_area")
+                )
+                new_input = with_new_text(user_input, original_text)
+                rerun_result = await self._run_pipeline(new_input, context={})
+                if rerun_result:
+                    if hasattr(rerun_result, 'response') and hasattr(rerun_result.response, 'speech'):
+                        existing = rerun_result.response.speech.get("plain", {}).get("speech", "")
+                        rerun_result.response.async_set_speech(f"{message} {existing}")
+                    return rerun_result
+            return await make_response(SYSTEM_MESSAGES['error_short'], user_input)
+            
+        if result.status == "pending":
+            result.pending_data["_created_at"] = time.time()
+            result.pending_data["_retry_count"] = pending_data.get("_retry_count", 0) + 1
+            if remaining_commands:
+                result.pending_data["remaining_multi_commands"] = remaining_commands
+            self._execution_pending[conv_id] = result.pending_data
+            message = result.pending_data.get("original_prompt", "")
+            return await make_response(message, user_input)
+        
+        return None
+
+    async def _process_remaining_commands(
+        self, user_input, conv_id: str, 
+        first_response, remaining_commands
+    ) -> conversation.ConversationResult:
+        """Process remaining multi-commands after current one completes."""
+        responses = []
+        if first_response:
+            responses.append(first_response)
+        
+        if remaining_commands:
+            _LOGGER.info("[Pipeline] Resuming %d remaining multi-commands", len(remaining_commands))
+            for i, cmd in enumerate(remaining_commands):
+                cmd_input = with_new_text(user_input, cmd)
+                cmd_response = await self._run_pipeline(cmd_input, context={})
+                
+                if not cmd_response:
+                    continue
+                
+                if conv_id in self._execution_pending:
+                    rest = remaining_commands[i + 1:]
+                    if rest:
+                        self._execution_pending[conv_id]["remaining_multi_commands"] = rest
+                    return cmd_response
+                
+                responses.append(cmd_response)
+        
+        return self._combine_responses(responses) or await self._fallback(user_input)
+
+    def _combine_responses(self, responses: list):
+        """Combine multiple responses into one by joining speeches."""
+        if not responses:
+            return None
+        if len(responses) == 1:
+            return responses[0]
+        
+        speeches = []
+        for resp in responses:
+            if hasattr(resp, 'response') and hasattr(resp.response, 'speech'):
+                speech = resp.response.speech.get("plain", {}).get("speech", "")
+                if speech:
+                    speeches.append(speech)
+        
+        if len(speeches) > 1:
+            first_resp = responses[0]
+            if hasattr(first_resp, 'response'):
+                first_resp.response.async_set_speech(" ".join(speeches))
+            return first_resp
+        return responses[0]
 
     async def _run_pipeline(
         self, 

@@ -350,6 +350,317 @@ class IntentExecutorCapability(Capability):
         return executed_prerequisites
 
 
+    async def _handle_timebox_or_delay(
+        self, intent_name, eid, current_params, language, timebox_failures
+    ) -> Optional[tuple]:
+        """Handle TemporaryControl, TurnOn/Off with duration, and DelayedControl.
+        
+        Returns (effective_intent, response) tuple if handled (continue to next eid),
+        or (effective_intent, None) if intent was converted but not yet handled,
+        or None if not applicable.
+        """
+        hass = self.hass
+        minutes, seconds = self._extract_duration(current_params)
+
+        if intent_name == "TemporaryControl":
+            command = current_params.get("command", "on")
+            action = COMMAND_STATE_MAP.get(command, "off")
+
+            if minutes > 0 or seconds > 0:
+                success = await self._call_timebox_script(eid, minutes, seconds, action=action)
+                if not success:
+                    timebox_failures.append(eid)
+                _LOGGER.debug(
+                    "[IntentExecutor] Timebox %s on %s for %dm%ds (success=%s)",
+                    action, eid, minutes, seconds, success
+                )
+                resp = ha_intent.IntentResponse(language=language)
+                resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
+
+                state_obj = hass.states.get(eid)
+                name = state_obj.attributes.get("friendly_name", eid) if state_obj else eid
+
+                action_de = ACTION_VERBS.get(action, action)
+                duration_str = current_params.get("duration")
+                if not duration_str:
+                    duration_str = format_seconds_to_string(minutes * 60 + seconds)
+
+                speech = build_confirmation(
+                    "TemporaryControl",
+                    [name],
+                    params={"duration_str": duration_str, "action": action_de}
+                )
+                resp.async_set_speech(speech)
+                return (intent_name, resp)
+            else:
+                effective = "HassTurnOn" if action == "on" else "HassTurnOff"
+                return (effective, None)
+
+        elif (intent_name in ("HassTurnOn", "HassTurnOff")) and (minutes > 0 or seconds > 0):
+            action = "on" if intent_name == "HassTurnOn" else "off"
+            success = await self._call_timebox_script(eid, minutes, seconds, action=action)
+            if not success:
+                timebox_failures.append(eid)
+
+            resp = ha_intent.IntentResponse(language=language)
+            resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
+
+            state_obj = hass.states.get(eid)
+            name = state_obj.attributes.get("friendly_name", eid) if state_obj else eid
+            action_de = ACTION_VERBS.get(action, action)
+
+            duration_str = current_params.get("duration")
+            if not duration_str:
+                duration_str = format_seconds_to_string(minutes * 60 + seconds)
+
+            speech = build_confirmation(
+                "TemporaryControl",
+                [name],
+                params={"duration_str": duration_str, "action": action_de}
+            )
+            resp.async_set_speech(speech)
+            return (intent_name, resp)
+
+        elif intent_name == "DelayedControl":
+            delay_str = current_params.get("delay", "")
+            command = current_params.get("command", "on")
+            action = COMMAND_STATE_MAP.get(command, "off")
+
+            delay_minutes, delay_seconds = self._parse_delay_or_time(delay_str)
+
+            if delay_minutes > 0 or delay_seconds > 0:
+                success = await self._call_delay_script(
+                    eid, delay_minutes, delay_seconds, action=action
+                )
+                if not success:
+                    timebox_failures.append(eid)
+
+                _LOGGER.debug(
+                    "[IntentExecutor] DelayedControl %s on %s in %dm%ds (success=%s)",
+                    action, eid, delay_minutes, delay_seconds, success
+                )
+
+                resp = ha_intent.IntentResponse(language=language)
+                resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
+
+                state_obj = hass.states.get(eid)
+                name = state_obj.attributes.get("friendly_name", eid) if state_obj else eid
+
+                action_de = ACTION_VERBS.get(action, action)
+                delay_display = delay_str if delay_str else format_seconds_to_string(
+                    delay_minutes * 60 + delay_seconds
+                )
+
+                speech = build_confirmation(
+                    "DelayedControl",
+                    [name],
+                    params={"delay_str": delay_display, "action": action_de}
+                )
+                resp.async_set_speech(speech)
+                return (intent_name, resp)
+            else:
+                effective = "HassTurnOn" if action == "on" else "HassTurnOff"
+                return (effective, None)
+
+        return None
+
+    def _handle_light_step(
+        self, eid, current_params, final_executed_params
+    ) -> Optional[str]:
+        """Handle light brightness step_up/step_down adjustments.
+        
+        Modifies current_params and final_executed_params in place.
+        Returns new effective_intent if changed (e.g. HassTurnOn for off lights), else None.
+        """
+        brightness_val = current_params.get("brightness") or current_params.get("command")
+        if not brightness_val:
+            return None
+        
+        val = brightness_val
+        if val not in ("step_up", "step_down"):
+            return None
+
+        state_obj = self.hass.states.get(eid)
+        if not state_obj:
+            current_params.pop("brightness", None)
+            current_params.pop("command", None)
+            return None
+
+        cur_255 = state_obj.attributes.get("brightness") or 0
+        cur_pct = int((cur_255 / 255.0) * 100)
+        light_is_off = state_obj.state == "off" or cur_pct == 0
+        new_effective = None
+
+        if val == "step_up":
+            if light_is_off:
+                new_pct = 30
+                new_effective = "HassTurnOn"
+                _LOGGER.debug(
+                    "[IntentExecutor] step_up on OFF light %s: switching to HassTurnOn with brightness=%d%%",
+                    eid, new_pct
+                )
+            else:
+                change = max(10, int(cur_pct * self.BRIGHTNESS_STEP / 100))
+                new_pct = min(100, cur_pct + change)
+        else:
+            change = max(10, int(cur_pct * self.BRIGHTNESS_STEP / 100))
+            new_pct = max(0, cur_pct - change)
+
+        current_params["brightness"] = new_pct
+        final_executed_params["brightness"] = new_pct
+        if new_pct > cur_pct or light_is_off:
+            final_executed_params["direction"] = "increased"
+        else:
+            final_executed_params["direction"] = "decreased"
+        _LOGGER.debug(
+            "[IntentExecutor] %s on %s: %d%% -> %d%% (direction=%s)",
+            val, eid, cur_pct, new_pct, final_executed_params["direction"]
+        )
+        return new_effective
+
+    def _handle_cover_step(
+        self, eid, current_params, final_executed_params
+    ) -> None:
+        """Handle cover step_up/step_down position adjustments.
+        
+        Modifies current_params and final_executed_params in place.
+        """
+        cmd = current_params.get("command")
+        if cmd not in ("step_up", "step_down"):
+            return
+
+        state_obj = self.hass.states.get(eid)
+        if state_obj:
+            cur_pos = state_obj.attributes.get("current_position", 0) or 0
+
+            if cmd == "step_up":
+                new_pos = min(100, cur_pos + self.COVER_STEP)
+            else:
+                new_pos = max(0, cur_pos - self.COVER_STEP)
+
+            current_params["position"] = new_pos
+            current_params.pop("command", None)
+            final_executed_params["position"] = new_pos
+            if new_pos > cur_pos:
+                final_executed_params["direction"] = "increased"
+            else:
+                final_executed_params["direction"] = "decreased"
+            _LOGGER.debug(
+                "[IntentExecutor] Cover %s on %s: %d%% -> %d%% (direction=%s)",
+                cmd, eid, cur_pos, new_pos, final_executed_params["direction"]
+            )
+        else:
+            if cmd == "step_up":
+                current_params["position"] = 50
+            else:
+                current_params["position"] = 0
+            current_params.pop("command", None)
+
+    def _build_state_query_speech(
+        self, user_input, results, entity_ids, all_entity_ids, params, language
+    ) -> Optional[str]:
+        """Build speech text for HassGetState / HassClimateGetTemperature queries.
+        
+        Returns speech text string, or None if default speech is adequate.
+        """
+        hass = self.hass
+        
+        # Collect entity data
+        names = []
+        states = []
+        for eid, _ in results:
+            state_obj = hass.states.get(eid)
+            if not state_obj:
+                continue
+            friendly = state_obj.attributes.get("friendly_name", eid)
+            names.append(friendly)
+            states.append(state_obj.state)
+
+        domain = entity_ids[0].split(".")[0] if entity_ids else None
+
+        user_text = user_input.text.lower()
+        query_state = params.get("state", "").lower()
+
+        from ..constants.entity_keywords import LIST_QUESTION_WORDS, ALL_KEYWORDS
+
+        is_list_question = any(w in user_text for w in LIST_QUESTION_WORDS)
+        is_all_question = any(w in user_text for w in ALL_KEYWORDS)
+
+        from ..utils.response_builder import STATE_DESCRIPTIONS_DE, build_state_response
+
+        state_map = {
+            "closed": ["closed"], "geschlossen": ["closed"],
+            "open": ["open"], "offen": ["open"],
+            "on": ["on"], "an": ["on"],
+            "off": ["off"], "aus": ["off"],
+        }
+        expected_states = state_map.get(query_state, [query_state]) if query_state else []
+
+        domain_states = STATE_DESCRIPTIONS_DE.get(domain, {})
+        positive_word = domain_states.get(expected_states[0], query_state) if expected_states else ""
+
+        opposite_word = get_opposite_state_word(positive_word)
+
+        from ..constants.messages_de import get_state_response as _get_state_response
+        from ..constants.entity_keywords import DOMAIN_NAMES_PLURAL as _DOMAIN_NAMES_PLURAL
+
+        if is_list_question and query_state:
+            plural_device = _DOMAIN_NAMES_PLURAL.get(domain, "Geräte")
+
+            if len(names) == 0:
+                return _get_state_response("none_match", device=plural_device, state=positive_word)
+            elif len(names) == 1:
+                return _get_state_response("state_is", device=names[0], state=positive_word)
+            elif len(names) <= 5:
+                return _get_state_response("states_are", devices=join_names(names), state=positive_word)
+            else:
+                return _get_state_response("states_are", devices=str(len(names)), state=positive_word)
+
+        elif is_all_question and query_state:
+            all_names = []
+            all_states = []
+            for eid in all_entity_ids:
+                state_obj = hass.states.get(eid)
+                if state_obj:
+                    all_names.append(state_obj.attributes.get("friendly_name", eid))
+                    all_states.append(state_obj.state)
+
+            matching = [n for n, s in zip(all_names, all_states) if s in expected_states]
+            not_matching = [n for n, s in zip(all_names, all_states) if s not in expected_states]
+
+            if not not_matching:
+                return CONFIRMATION_TEMPLATES["state_all_yes"].format(state=positive_word)
+            else:
+                if len(not_matching) == 1:
+                    return CONFIRMATION_TEMPLATES["state_some_no_singular"].format(
+                        name=not_matching[0], opposite=opposite_word
+                    )
+                elif len(not_matching) <= 3:
+                    exceptions = join_names(not_matching)
+                    return CONFIRMATION_TEMPLATES["state_some_no_plural"].format(
+                        names=exceptions, opposite=opposite_word
+                    )
+                else:
+                    return CONFIRMATION_TEMPLATES["state_some_no_count"].format(
+                        count=len(not_matching), opposite=opposite_word
+                    )
+
+        elif query_state and len(all_entity_ids) == 1:
+            entity_state = states[0] if states else hass.states.get(all_entity_ids[0]).state
+            entity_name = names[0] if names else all_entity_ids[0].split(".")[-1]
+
+            if entity_state in expected_states:
+                return CONFIRMATION_TEMPLATES["state_yes_prefix"].format(
+                    name=entity_name, state=positive_word
+                )
+            else:
+                return CONFIRMATION_TEMPLATES["state_no_prefix"].format(
+                    name=entity_name, opposite=opposite_word
+                )
+
+        else:
+            return build_state_response(names, states, domain)
+
     async def run(
         self,
         user_input,
@@ -443,123 +754,15 @@ class IntentExecutorCapability(Capability):
             if intent_name == "HassClimateGetTemperature" and domain == "sensor":
                 effective_intent = "HassGetState"
 
-            # --- 2. TIMEBOX: TemporaryControl or HassTurnOn/Off with duration ---
-            minutes, seconds = self._extract_duration(current_params)
-            
-            # Handle TemporaryControl (convert to timebox)
-            if intent_name == "TemporaryControl":
-                command = current_params.get("command", "on")
-                action = COMMAND_STATE_MAP.get(command, "off")
-                
-                if minutes > 0 or seconds > 0:
-                    success = await self._call_timebox_script(eid, minutes, seconds, action=action)
-                    if not success:
-                        timebox_failures.append(eid)
-                    _LOGGER.debug(
-                        "[IntentExecutor] Timebox %s on %s for %dm%ds (success=%s)",
-                        action, eid, minutes, seconds, success
-                    )
-                    resp = ha_intent.IntentResponse(language=language)
-                    resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
-                    
-                    # Generate confirmation speech
-                    state_obj = hass.states.get(eid)
-                    name = state_obj.attributes.get("friendly_name", eid) if state_obj else eid
-                    
-                    action_de = ACTION_VERBS.get(action, action)
-                    duration_str = current_params.get("duration")
-                    if not duration_str:
-                        duration_str = format_seconds_to_string(minutes * 60 + seconds)
-
-                    speech = build_confirmation(
-                        "TemporaryControl",
-                        [name],
-                        params={"duration_str": duration_str, "action": action_de}
-                    )
-                    resp.async_set_speech(speech)
-                    
+            # --- 2. TIMEBOX / DELAY: TemporaryControl, TurnOn/Off+duration, DelayedControl ---
+            tb_result = await self._handle_timebox_or_delay(
+                intent_name, eid, current_params, language, timebox_failures
+            )
+            if tb_result is not None:
+                effective_intent, resp = tb_result
+                if resp is not None:
                     results.append((eid, resp))
                     continue
-                else:
-                    # No duration - convert to regular on/off
-                    effective_intent = "HassTurnOn" if action == "on" else "HassTurnOff"
-            
-            elif (intent_name == "HassTurnOn" or intent_name == "HassTurnOff") and (
-                minutes > 0 or seconds > 0
-            ):
-                action = "on" if intent_name == "HassTurnOn" else "off"
-                success = await self._call_timebox_script(eid, minutes, seconds, action=action)
-                if not success:
-                    timebox_failures.append(eid)
-
-                # Create response with speech
-                resp = ha_intent.IntentResponse(language=language)
-                resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
-                
-                state_obj = hass.states.get(eid)
-                name = state_obj.attributes.get("friendly_name", eid) if state_obj else eid
-                action_de = ACTION_VERBS.get(action, action)
-                
-                duration_str = current_params.get("duration")
-                if not duration_str:
-                    duration_str = format_seconds_to_string(minutes * 60 + seconds)
-
-                speech = build_confirmation(
-                    "TemporaryControl",
-                    [name],
-                    params={"duration_str": duration_str, "action": action_de}
-                )
-                resp.async_set_speech(speech)
-                
-                results.append((eid, resp))
-                continue
-
-            # --- 2b. DELAYED CONTROL: DelayedControl ---
-            # Handle delayed actions (execute action after delay)
-            if intent_name == "DelayedControl":
-                delay_str = current_params.get("delay", "")
-                command = current_params.get("command", "on")
-                action = COMMAND_STATE_MAP.get(command, "off")
-                
-                # Parse delay (duration like "10 Minuten" or time like "15:30")
-                delay_minutes, delay_seconds = self._parse_delay_or_time(delay_str)
-                
-                if delay_minutes > 0 or delay_seconds > 0:
-                    success = await self._call_delay_script(
-                        eid, delay_minutes, delay_seconds, action=action
-                    )
-                    if not success:
-                        timebox_failures.append(eid)
-                    
-                    _LOGGER.debug(
-                        "[IntentExecutor] DelayedControl %s on %s in %dm%ds (success=%s)",
-                        action, eid, delay_minutes, delay_seconds, success
-                    )
-                    
-                    resp = ha_intent.IntentResponse(language=language)
-                    resp.response_type = ha_intent.IntentResponseType.ACTION_DONE
-                    
-                    # Generate confirmation speech
-                    state_obj = hass.states.get(eid)
-                    name = state_obj.attributes.get("friendly_name", eid) if state_obj else eid
-                    
-                    action_de = ACTION_VERBS.get(action, action)
-                    delay_display = delay_str if delay_str else format_seconds_to_string(
-                        delay_minutes * 60 + delay_seconds
-                    )
-                    
-                    speech = build_confirmation(
-                        "DelayedControl",
-                        [name],
-                        params={"delay_str": delay_display, "action": action_de}
-                    )
-                    resp.async_set_speech(speech)
-                    
-                    results.append((eid, resp))
-                    continue
-                else:
-                    # No delay - convert to regular on/off
-                    effective_intent = "HassTurnOn" if action == "on" else "HassTurnOff"
 
             # --- 3. LIGHT LOGIC ---
             # Handle brightness from either 'brightness' or 'command' slot
@@ -581,85 +784,13 @@ class IntentExecutorCapability(Capability):
                     continue
 
                 # Step up/down logic (RELATIVE brightness adjustments)
-                # step_up: increase by BRIGHTNESS_STEP% of current (e.g., 50% -> 60% if step=20%)
-                # step_down: decrease by BRIGHTNESS_STEP% of current (e.g., 50% -> 40% if step=20%)
-                if val in ("step_up", "step_down"):
-                    state_obj = hass.states.get(eid)
-                    if state_obj:
-                        cur_255 = state_obj.attributes.get("brightness") or 0
-                        cur_pct = int((cur_255 / 255.0) * 100)
-                        light_is_off = state_obj.state == "off" or cur_pct == 0
-
-                        if val == "step_up":
-                            if light_is_off:
-                                # Light is off - use HassTurnOn to ensure it turns on
-                                new_pct = 30
-                                effective_intent = "HassTurnOn"  # Switch to turn on!
-                                _LOGGER.debug(
-                                    "[IntentExecutor] step_up on OFF light %s: switching to HassTurnOn with brightness=%d%%",
-                                    eid, new_pct
-                                )
-                            else:
-                                # Increase by BRIGHTNESS_STEP% of current, minimum 10%
-                                change = max(10, int(cur_pct * self.BRIGHTNESS_STEP / 100))
-                                new_pct = min(100, cur_pct + change)
-                        else:
-                            # step_down: reduce by BRIGHTNESS_STEP% of current, minimum 10%
-                            change = max(10, int(cur_pct * self.BRIGHTNESS_STEP / 100))
-                            new_pct = max(0, cur_pct - change)
-
-                        current_params["brightness"] = new_pct
-                        final_executed_params["brightness"] = new_pct
-                        # Track direction for confirmation message
-                        if new_pct > cur_pct or light_is_off:
-                            final_executed_params["direction"] = "increased"
-                        else:
-                            final_executed_params["direction"] = "decreased"
-                        _LOGGER.debug(
-                            "[IntentExecutor] %s on %s: %d%% -> %d%% (change: ±%d%%, direction=%s)",
-                            val, eid, cur_pct, new_pct, change if not light_is_off else new_pct,
-                            final_executed_params["direction"]
-                        )
-                    else:
-                        current_params.pop("brightness", None)
-                        current_params.pop("command", None)
+                new_intent = self._handle_light_step(eid, current_params, final_executed_params)
+                if new_intent:
+                    effective_intent = new_intent
 
             # --- 4. COVER: Step up/down logic (RELATIVE position adjustments) ---
-            # step_up = open more (increase position), step_down = close more (decrease position)
             if effective_intent == "HassSetPosition":
-                cmd = current_params.get("command")
-                if cmd in ("step_up", "step_down"):
-                    state_obj = hass.states.get(eid)
-                    if state_obj:
-                        # Cover position: 0 = closed, 100 = fully open
-                        cur_pos = state_obj.attributes.get("current_position", 0) or 0
-                        
-                        if cmd == "step_up":
-                            # Open more
-                            new_pos = min(100, cur_pos + self.COVER_STEP)
-                        else:
-                            # Close more
-                            new_pos = max(0, cur_pos - self.COVER_STEP)
-                        
-                        current_params["position"] = new_pos
-                        current_params.pop("command", None)  # Remove command, we now have position
-                        final_executed_params["position"] = new_pos
-                        # Track direction for confirmation message
-                        if new_pos > cur_pos:
-                            final_executed_params["direction"] = "increased"  # More open
-                        else:
-                            final_executed_params["direction"] = "decreased"  # More closed
-                        _LOGGER.debug(
-                            "[IntentExecutor] Cover %s on %s: %d%% -> %d%% (direction=%s)",
-                            cmd, eid, cur_pos, new_pos, final_executed_params["direction"]
-                        )
-                    else:
-                        # Can't get state, use reasonable defaults
-                        if cmd == "step_up":
-                            current_params["position"] = 50  # Open halfway
-                        else:
-                            current_params["position"] = 0   # Close completely
-                        current_params.pop("command", None)
+                self._handle_cover_step(eid, current_params, final_executed_params)
 
             # --- 5. TIMEBOX: Cover/Fan/Climate intents ---
             minutes, seconds = self._extract_duration(current_params)
@@ -806,124 +937,11 @@ class IntentExecutorCapability(Capability):
             )
 
             if not current_speech or current_speech.strip() == SYSTEM_MESSAGES["ok"]:
-                # Collect entity data
-                names = []
-                states = []
-                for eid, _ in results:
-                    state_obj = hass.states.get(eid)
-                    if not state_obj:
-                        continue
-                    friendly = state_obj.attributes.get("friendly_name", eid)
-                    names.append(friendly)
-                    states.append(state_obj.state)
-                
-                domain = entity_ids[0].split(".")[0] if entity_ids else None
-                
-                # Detect question type from user input
-                user_text = user_input.text.lower()
-                query_state = params.get("state", "").lower()
-                
-                from ..constants.entity_keywords import LIST_QUESTION_WORDS, ALL_KEYWORDS
-                
-                # "Welche Lichter sind an?" → LIST the matching ones
-                # "Sind alle Lichter an?" → YES/NO about ALL entities
-                is_list_question = any(w in user_text for w in LIST_QUESTION_WORDS)
-                is_all_question = any(w in user_text for w in ALL_KEYWORDS)
-                
-                from ..utils.response_builder import STATE_DESCRIPTIONS_DE, build_state_response
-                
-                # State mapping for comparison
-                state_map = {
-                    "closed": ["closed"],
-                    "geschlossen": ["closed"],
-                    "open": ["open"],
-                    "offen": ["open"],
-                    "on": ["on"],
-                    "an": ["on"],
-                    "off": ["off"],
-                    "aus": ["off"],
-                }
-                expected_states = state_map.get(query_state, [query_state]) if query_state else []
-                
-                # Get German state words
-                domain_states = STATE_DESCRIPTIONS_DE.get(domain, {})
-                positive_word = domain_states.get(expected_states[0], query_state) if expected_states else ""
-                
-                # Use centralized opposite word helper instead of hardcoded map
-                opposite_word = get_opposite_state_word(positive_word)
-                
-                from ..constants.messages_de import get_state_response
-                from ..constants.entity_keywords import DOMAIN_NAMES_PLURAL
-                
-                if is_list_question and query_state:
-                    # LIST QUESTION: "Welche Lichter sind an?" → list the matching ones (names)
-                    # names/states come from filtered results (only matching entities)
-                    
-                    plural_device = DOMAIN_NAMES_PLURAL.get(domain, "Geräte")
-                    
-                    if len(names) == 0:
-                        speech_text = get_state_response("none_match", device=plural_device, state=positive_word)
-                    elif len(names) == 1:
-                        speech_text = get_state_response("state_is", device=names[0], state=positive_word)
-                    elif len(names) <= 5:
-                        speech_text = get_state_response("states_are", devices=join_names(names), state=positive_word)
-                    else:
-                        speech_text = get_state_response("states_are", devices=str(len(names)), state=positive_word)
-                        
-                        
-                elif is_all_question and query_state:
-                    # YES/NO QUESTION: "Sind alle Lichter an?" → check ALL entities
-                    # Get names and states for ALL entities (not just filtered)
-                    all_names = []
-                    all_states = []
-                    for eid in all_entity_ids:
-                        state_obj = hass.states.get(eid)
-                        if state_obj:
-                            all_names.append(state_obj.attributes.get("friendly_name", eid))
-                            all_states.append(state_obj.state)
-                    
-                    matching = [n for n, s in zip(all_names, all_states) if s in expected_states]
-                    not_matching = [n for n, s in zip(all_names, all_states) if s not in expected_states]
-                    
-                    if not not_matching:
-                        # All match - simple "Ja"
-                        speech_text = CONFIRMATION_TEMPLATES["state_all_yes"].format(state=positive_word)
-                    else:
-                        # Some don't match - report the ones that DON'T match the query
-                        if len(not_matching) == 1:
-                            speech_text = CONFIRMATION_TEMPLATES["state_some_no_singular"].format(
-                                name=not_matching[0], opposite=opposite_word
-                            )
-                        elif len(not_matching) <= 3:
-                            exceptions = join_names(not_matching)
-                            speech_text = CONFIRMATION_TEMPLATES["state_some_no_plural"].format(
-                                names=exceptions, opposite=opposite_word
-                            )
-                        else:
-                            speech_text = CONFIRMATION_TEMPLATES["state_some_no_count"].format(
-                                count=len(not_matching), opposite=opposite_word
-                            )
-                
-                elif query_state and len(all_entity_ids) == 1:
-                    # SINGLE ENTITY YES/NO: "Ist das Licht in der Dusche an?"
-                    # → "Ja, Dusche ist an." / "Nein, Dusche ist aus."
-                    entity_state = states[0] if states else hass.states.get(all_entity_ids[0]).state
-                    entity_name = names[0] if names else all_entity_ids[0].split(".")[-1]
-                    
-                    if entity_state in expected_states:
-                        speech_text = CONFIRMATION_TEMPLATES["state_yes_prefix"].format(
-                            name=entity_name, state=positive_word
-                        )
-                    else:
-                        speech_text = CONFIRMATION_TEMPLATES["state_no_prefix"].format(
-                            name=entity_name, opposite=opposite_word
-                        )
-                
-                else:
-                    # Normal state query - use template
-                    speech_text = build_state_response(names, states, domain)
-                
-                final_resp.async_set_speech(speech_text)
+                speech_text = self._build_state_query_speech(
+                    user_input, results, entity_ids, all_entity_ids, params, language
+                )
+                if speech_text:
+                    final_resp.async_set_speech(speech_text)
 
         def _has_speech(r):
             s = getattr(r, "speech", None)

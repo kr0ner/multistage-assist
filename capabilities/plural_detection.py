@@ -1,7 +1,7 @@
 import logging
 from typing import Any, Dict
 from .base import Capability
-from custom_components.multistage_assist.conversation_utils import (
+from ..conversation_utils import (
     _ENTITY_PLURALS,
     _PLURAL_CUES,
 )
@@ -28,21 +28,12 @@ class PluralDetectionCapability(Capability):
     description = "Detect if a command refers to multiple entities (plural) or a single specific device. Employs: 1. Keyword check ('alle', 'beide') 2. Plural noun dictionary lookup 3. Singular noun dictionary lookup 4. LLM reasoning as final fallback. Prevents unnecessary disambiguation when the user intend to target a group."
 
     PROMPT = {
-        "system": """You act as a detector specialized in recognizing plural references in German commands.
+        "system": """Detect whether a German smart home command targets multiple entities (plural) or a single one.
 
-## Rule
-- Plural nouns or use of *"alle"* → respond with `true`
-- Singular nouns → respond with `false`
-- Uncertainty → respond with empty JSON
-
-## Examples
-"Schalte die Lampen an" => { "multiple_entities": true }
-"Schalte das Licht aus" => { "multiple_entities": false }
-"Öffne alle Rolläden" => { "multiple_entities": true }
-"Senke den Rolladen im Büro" => { "multiple_entities": false }
-"Schließe alle Fenster im Obergeschoss" => { "multiple_entities": true }
-"Fahre die Rolläden herunter" => { "multiple_entities": true }
-"Schalte die Lichter im Badezimmer an" => { "multiple_entities": true }
+Rules:
+- Plural nouns or quantifiers ("alle", "beide", "sämtliche") → true
+- Singular nouns (with "das", "der", "die" + singular) → false
+- If uncertain → return empty JSON
 """,
         "schema": {"properties": {"multiple_entities": {"type": "boolean"}}},
     }

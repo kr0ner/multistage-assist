@@ -2,6 +2,13 @@
 
 DOMAIN = "multistage_assist"
 
+# Domains whose entities are service-like and bypass HA exposure filtering.
+# These can't be individually exposed via Settings → Voice Assistants → Expose.
+SERVICE_DOMAINS = {"notify", "tts", "script", "automation", "scene"}
+
+# Domains that can serve as "light" targets (e.g. switches used as lights).
+LIGHT_COMPATIBLE_DOMAINS = {"light", "switch", "input_boolean"}
+
 # Stage 1: Local Ollama/LLM for Intent Detection
 CONF_STAGE1_IP = "stage1_ip"
 CONF_STAGE1_PORT = "stage1_port"
@@ -19,6 +26,7 @@ CONF_GROK_API_KEY = "grok_api_key"
 # Semantic Cache Addon: For vector lookup and embedding
 CONF_CACHE_ADDON_IP = "cache_addon_ip"
 CONF_CACHE_ADDON_PORT = "cache_addon_port"
+CONF_PROD_CACHE_KEY = "prod_cache_key"
 REQUIRED_EMBEDDING_MODEL = "models/multilingual-minilm"  # Hard-enforced model for addon
 
 # --- Expert Settings (YAML only, not in config flow UI) ---
@@ -48,7 +56,6 @@ CONF_LLM_MAX_RETRIES = "llm_max_retries"  # Default: 2
 # Debugging Settings (NEW)
 CONF_DEBUG_CACHE_HITS = "debug_cache_hits"  # Log cache hits/misses in detail
 CONF_DEBUG_LLM_PROMPTS = "debug_llm_prompts"  # Log LLM prompts and responses
-CONF_DEBUG_INTENT_RESOLUTION = "debug_intent_resolution"  # Log intent resolution steps
 
 # Default values for expert settings
 DEFAULT_CACHE_ADDON_HOST = "192.168.178.2"
@@ -67,5 +74,4 @@ EXPERT_DEFAULTS = {
     CONF_LLM_MAX_RETRIES: 2,
     CONF_DEBUG_CACHE_HITS: False,
     CONF_DEBUG_LLM_PROMPTS: False,
-    CONF_DEBUG_INTENT_RESOLUTION: False,
 }

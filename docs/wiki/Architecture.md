@@ -30,8 +30,10 @@ User Input
     │ (if unresolved or chat)
     ▼
 ┌─────────────────────────────────┐
-│ Stage 3: Gemini Cloud           │
-│ • Cloud fallback for edge cases │
+│ Stage 3: Cloud LLM              │
+│ • Polymorphic providers         │
+│   (Gemini/OpenAI/Anthropic/Grok)│
+│ • Multi-turn MCP tool reasoning │
 │ • Free-form conversation        │
 └─────────────────────────────────┘
 ```
@@ -86,46 +88,59 @@ When keyword_intent finds no domain:
 3. Fuzzy match against all entity names
 4. Execute if match score >= 80%
 
-## Stage 3: Gemini Cloud
+## Stage 3: Cloud LLM (stage3_cloud.py)
 
-Google Gemini API for edge cases and general conversation.
+Polymorphic cloud LLM for edge cases and general conversation.
+
+**Providers:** Gemini (default: `gemini-2.0-flash-lite`), OpenAI (`gpt-4o-mini`), Anthropic (`claude-3-5-sonnet-latest`), Grok (`grok-2-1212`).
 
 **Handles:**
 - Commands that local LLM couldn't resolve
 - General chat/conversation (jokes, help, etc.)
-- Complex multi-step reasoning
+- Complex multi-step reasoning with MCP tools (up to 5 turns)
+
+**MCP Tools:** `list_areas`, `list_entities`, `get_entity_details`, `list_automations`, `get_automation_details`, `store_personal_data`, `get_personal_data`, `get_system_capabilities`, `store_cache_entry`.
 
 ## Capabilities
 
 | Capability | Purpose |
 |------------|---------|
-| `clarification` | Split/transform commands |
-| `keyword_intent` | Detect domain/intent |
-| `intent_resolution` | Resolve entities |
-| `entity_resolver` | Find entity IDs |
-| `intent_executor` | Execute + verify |
-| `intent_confirmation` | Generate response |
-| `calendar` | Calendar events |
-| `timer` | Timer management |
-| `vacuum` | Vacuum slots |
-| `memory` | Learned aliases |
-| `area_alias` | Area matching |
+| `implicit_intent` | Rephrase vague commands ("zu dunkel" → "Licht heller") |
+| `atomic_command` | Split compound commands on "und", commas |
+| `keyword_intent` | LLM-based intent/domain/slot extraction |
+| `entity_resolver` | Resolve entities by area, name, device class |
+| `area_resolver` | Fuzzy area name matching |
+| `intent_executor` | Execute HA intents + state verification |
+| `intent_confirmation` | Generate natural confirmation messages |
+| `command_processor` | Orchestrate: filter, disambiguate, execute, confirm, cache |
+| `semantic_cache` | Vector-based lookup with hybrid BM25 |
+| `knowledge_graph` | Device deps, user facts, area/entity aliases |
+| `mcp` | MCP tool registry for LLM tool access |
+| `prompt_context` | Build entity/area context for LLM prompts |
+| `calendar` | Multi-turn calendar event creation |
+| `timer` | Multi-turn timer creation |
+| `vacuum` | LLM-based room/mode parsing |
+| `step_control` | Relative adjustments (brightness ±35%, cover ±25%) |
+| `plural_detection` | Detect plural/singular references |
+| `disambiguation` | Multi-turn entity selection |
 
 ## LLM Configuration
 
-```yaml
-llm:
-  model: "qwen3.5:4b-q4_K_M"
-  host: "192.168.178.108"
-  port: 11434
-```
+Configured via integration UI (Settings → Devices & Services → MultiStage Assist):
+- **Ollama Host**: IP/hostname (default: `127.0.0.1`)
+- **Ollama Port**: API port (default: `11434`)
+- **Ollama Model**: default `qwen3:4b-q4_K_M`
+- **Cloud Provider**: gemini, openai, anthropic, or grok
+- **Cloud Model**: provider-specific default
+
+See [Configuration](Configuration.md) for expert YAML settings.
 
 ## Entity Exposure
 
 Only entities exposed to conversation assistant are considered.
 Configure in: Settings → Voice Assistants → Expose
 
-## Memory
+## Knowledge Graph & Memory
 
-Learned aliases stored in:
-`/config/.storage/multistage_assist_memory.json`
+Learned aliases, device dependencies, and personal data stored via `KnowledgeGraphCapability` in:
+`/config/.storage/multistage_assist_knowledge_graph.json`

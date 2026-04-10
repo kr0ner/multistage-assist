@@ -217,6 +217,47 @@ class KnowledgeGraphCapability(Capability):
                     
         return all_deps
 
+    async def filter_candidates_by_usability(
+        self, entity_ids: List[str]
+    ) -> Tuple[List[str], List[str]]:
+        """Filter a list of entities to only those that are currently usable.
+        
+        An entity is unusable if it has a powered_by dependency that is OFF
+        and the activation mode is NOT 'auto'.
+        """
+        usable = []
+        filtered = []
+        
+        for eid in entity_ids:
+            is_usable, reason = await self.is_entity_usable(eid)
+            if is_usable:
+                usable.append(eid)
+            else:
+                filtered.append(eid)
+                _LOGGER.debug("[KnowledgeGraph] Filtered %s: %s", eid, reason)
+                
+        return usable, filtered
+
+    async def is_entity_usable(self, entity_id: str) -> Tuple[bool, Optional[str]]:
+        """Check if a single entity is usable given current dependencies."""
+        deps = await self.get_dependencies(entity_id)
+        for dep in deps:
+            target_state = self.hass.states.get(dep.target_entity)
+            if not target_state:
+                continue
+                
+            if dep.relation_type == RelationType.POWERED_BY:
+                if target_state.state in ("off", "unavailable"):
+                    if dep.activation_mode != ActivationMode.AUTO:
+                        return False, f"Powered by {dep.target_entity} which is {target_state.state}"
+                        
+            elif dep.relation_type == RelationType.COUPLED_WITH:
+                # Coupled devices don't necessarily make it unusable, 
+                # they just usually get synced during execution.
+                pass
+                
+        return True, None
+
     async def resolve_for_action(self, entity_id: str, action: str) -> DependencyResolution:
         """Resolve prerequisites for an action."""
         # Mapping common intents to actions if needed, but executor usually passes action

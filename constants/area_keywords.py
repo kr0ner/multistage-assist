@@ -7,6 +7,8 @@ from typing import Dict, List, Set
 
 
 # Mapping for room aliases (user name -> canonical name)
+# Include BOTH umlaut and ASCII-transliterated variants so lookups
+# work regardless of input encoding — no runtime patching needed.
 AREA_ALIASES: Dict[str, str] = {
     "bad": "Badezimmer",
     "wc": "Gäste-WC",
@@ -15,10 +17,12 @@ AREA_ALIASES: Dict[str, str] = {
     "wz": "Wohnzimmer",
     "ez": "Esszimmer",
     "kue": "Küche",
+    "küche": "Küche",
     "fl": "Flur",
     "flur": "Flur",
     "ke": "Keller",
     "buero": "Büro",
+    "büro": "Büro",
     "arbeitszimmer": "Büro",
     "garage": "Garage",
     "carport": "Carport",

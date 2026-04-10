@@ -18,33 +18,17 @@ class AtomicCommandCapability(Capability):
     description = "Split compound commands (e.g., 'A and B', 'A then B') into individual atomic actions using LLM reasoning. Ensures complex multi-device or multi-area requests are processed as separate steps."
 
     PROMPT = {
-        "system": """You are a smart home intent parser.
-Task: Split the input into precise atomic German commands.
+        "system": """You are a smart home command splitter.
+Task: Split compound commands into atomic actions. Each action becomes one array element.
 
-CRITICAL RULES:
-1. **ALWAYS** split compound commands with "und" into separate array elements.
-2. Each action must be its own string in the output array.
-3. Use specific device names if given.
-4. **PRESERVE** time/duration constraints (e.g., "für 5 Minuten", "für 1 Stunde").
-5. **SPLIT** opposite actions (an/aus, auf/zu, heller/dunkler) in different locations into separate commands.
-6. **MULTI-AREA COMMANDS**: If "und" connects AREAS/FLOORS with the same action, split into separate commands for each area.
-7. **NEVER INVENT** durations or constraints that are not in the original input!
-
-Examples:
-Input: "Licht im Bad an und Rollo runter"
-Output: ["Schalte Licht im Bad an", "Fahre Rollo runter"]
-
-Input: "Mache das Licht in der Küche an und im Flur aus"
-Output: ["Mache das Licht in der Küche an", "Mache das Licht im Flur aus"]
-
-Input: "Stelle die Heizung im Wohnzimmer auf 22 Grad und im Schlafzimmer auf 18 Grad"
-Output: ["Stelle die Heizung im Wohnzimmer auf 22 Grad", "Stelle die Heizung im Schlafzimmer auf 18 Grad"]
-
-Input: "Fahre alle Rolläden im Untergeschoss und Obergeschoss herunter"
-Output: ["Fahre alle Rolläden im Untergeschoss herunter", "Fahre alle Rolläden im Obergeschoss herunter"]
-
-Input: "Alle Lichter im Erdgeschoss und ersten Stock aus"
-Output: ["Schalte alle Lichter im Erdgeschoss aus", "Schalte alle Lichter im ersten Stock aus"]
+Rules:
+1. Split on conjunctions ("und", "dann") and commas into separate array elements.
+2. Each resulting command must be a single, self-contained action.
+3. Preserve device names, area/floor references, and parameters in each split command.
+4. Preserve time/duration constraints — never invent constraints not in the input.
+5. If a conjunction connects different areas/floors with the same action, split per area.
+6. If a single area has multiple actions, split per action.
+7. Output the user's language (German).
 """,
         "schema": {
             "type": "array",

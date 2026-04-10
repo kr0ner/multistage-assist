@@ -77,64 +77,36 @@ STATE_TRANSLATIONS: Dict[str, str] = {
 COMPOUND_SEPARATOR: str = " und "
 
 
-def nominative_to_accusative(phrase: str) -> str:
-    if not phrase: return phrase
-    words = phrase.split()
-    if not words: return phrase
-    if words[0].lower() == "der":
-        words[0] = "den" if words[0].islower() else "Den"
-    return " ".join(words)
+def normalize_umlauts(text: str) -> str:
+    """Normalize German umlauts and ß to ASCII equivalents."""
+    return text.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
 
 
-def nominative_to_dative(phrase: str) -> str:
-    if not phrase: return phrase
-    words = phrase.split()
-    if not words: return phrase
-    dative_map = {"der": "dem", "das": "dem", "die": "der"}
-    article = words[0].lower()
-    if article in dative_map:
-        new_article = dative_map[article]
-        words[0] = new_article if words[0].islower() else new_article.capitalize()
-    return " ".join(words)
-
-
-def capitalize_article_phrase(phrase: str) -> str:
-    if not phrase: return phrase
-    words = phrase.split()
-    if len(words) < 2: return phrase
-    result = [words[0]]
-    for word in words[1:]: result.append(word.capitalize())
-    return " ".join(result)
-
-
-def remove_articles(text: str) -> str:
-    if not text: return ""
-    return " ".join([w for w in text.split() if w.lower() not in GERMAN_ARTICLES])
-
-
-def remove_prepositions(text: str) -> str:
-    if not text: return ""
-    return " ".join([w for w in text.split() if w.lower() not in GERMAN_PREPOSITIONS])
+def remove_articles_and_prepositions(text: str) -> str:
+    """Remove German articles and prepositions from text."""
+    if not text:
+        return ""
+    return " ".join(
+        w for w in text.split()
+        if w.lower() not in GERMAN_ARTICLES and w.lower() not in GERMAN_PREPOSITIONS
+    )
 
 
 def map_area_alias(text: str) -> str:
     """Robust room alias mapping."""
     if not text: return text
-    ALIASES = dict(AREA_ALIASES)
-    if "buero" in ALIASES and "büro" not in ALIASES: ALIASES["büro"] = ALIASES["buero"]
-    if "kue" in ALIASES and "küche" not in ALIASES: ALIASES["küche"] = ALIASES["kue"]
 
     words = text.split()
     mapped = []
     for word in words:
         clean = word.lower().strip(",.!?:")
-        if clean in ALIASES:
-            target = ALIASES[clean]
+        if clean in AREA_ALIASES:
+            target = AREA_ALIASES[clean]
             mapped.append(target if word[0].isupper() else target.lower())
         else:
-            canon = clean.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
-            if canon in ALIASES:
-                target = ALIASES[canon]
+            canon = normalize_umlauts(clean)
+            if canon in AREA_ALIASES:
+                target = AREA_ALIASES[canon]
                 mapped.append(target if word[0].isupper() else target.lower())
             else:
                 mapped.append(word)
@@ -155,8 +127,9 @@ def get_prepositional_area(area_name: str) -> str:
 
 def canonicalize(text: str) -> str:
     if not text: return ""
-    t = unicodedata.normalize('NFC', text.lower())
-    t = t.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+    import unicodedata
+    t = unicodedata.normalize('NFC', text) # Preserving casing as requested
+    t = normalize_umlauts(t)
     t = re.sub(r"[^\w\s%°]+", " ", t)
     return re.sub(r"\s+", " ", t).strip()
 
@@ -314,9 +287,6 @@ def normalize_for_cache(text: str) -> Tuple[str, List]:
         if re.search(pattern, text_norm, flags=re.IGNORECASE):
             extracted.append(fraction_val)
             text_norm = re.sub(pattern, "50 prozent", text_norm, flags=re.IGNORECASE)
-
-    # 4. Strip only filler words — keep articles and prepositions
-    text_norm = strip_filler_words(text_norm)
 
     return re.sub(r"\s+", " ", text_norm).strip(), extracted
 

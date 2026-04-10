@@ -35,14 +35,18 @@ Numbers in commands (percentages, degrees, etc.) are normalized to "centroids" t
 - "Rollo auf 37%" and "Rollo auf 82%" both normalize to **"Rollo auf 50 Prozent"**.
 - This applies to temperature, brightness, position, and durations.
 
+## 8. Multi word entity/area names
+The model needs to understand that some area or entity names consist of more than one word e.g. "Kinder Badezimmer" "Kinderzimmer 1" "Wohn-Esszimmer"
+
 ---
 **Note**: These principles ensure that the semantic cache remains accurate and does not execute dangerous or unintended actions based on overly aggressive text simplification.
 
 # Verification Strategy
 
-To ensure these principles remain stable over time, every major update MUST pass the **Local Full-Stack Verification** workflow:
+To ensure these principles remain stable over time, run the embedding principles test suite:
 
-1. **Local Fine-Tuning**: Run `tools/fine_tune_cache.py --model minilm --epochs 4` to align the embedding model with the newest training data (which includes Principle 7 number centroids and multi-command escalation).
-2. **Mock Add-on Simulation**: Deploy `tools/mock_addon.py` to serve `/embed` and `/lookup` endpoints locally using the fine-tuned model.
-3. **Integration Regression**: Run `pytest tests/integration/test_anchor_hit_rate.py` against the local mock endpoint.
-4. **Hit Rate Target**: A successful update MUST achieve **> 98% hit rate** on the anchor test suite before being considered stable for production deployment.
+```bash
+pytest tests/test_embedding_principles.py -v
+```
+
+This test file encodes all 7 principles as automated assertions against the normalization pipeline. Every change to cache normalization or embedding logic MUST pass this suite before merging.

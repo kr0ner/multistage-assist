@@ -151,6 +151,32 @@ def fuzzy_match(query: str, candidate: str) -> int:
 from .german_utils import GERMAN_ARTICLES, GERMAN_PREPOSITIONS, remove_articles_and_prepositions
 
 
+def levenshtein_distance(s1: str, s2: str) -> int:
+    """Calculate Levenshtein edit distance between two strings.
+    
+    Args:
+        s1: First string
+        s2: Second string
+        
+    Returns:
+        Minimum number of single-character edits (insert/delete/substitute)
+    """
+    if len(s1) > len(s2):
+        s1, s2 = s2, s1
+    
+    distances = range(len(s1) + 1)
+    for i2, c2 in enumerate(s2):
+        new_distances = [i2 + 1]
+        for i1, c1 in enumerate(s1):
+            if c1 == c2:
+                new_distances.append(distances[i1])
+            else:
+                new_distances.append(1 + min(distances[i1], distances[i1 + 1], new_distances[-1]))
+        distances = new_distances
+    
+    return distances[-1]
+
+
 def normalize_for_fuzzy(text: str) -> str:
     """Normalize text for fuzzy matching.
     

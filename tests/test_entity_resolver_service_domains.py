@@ -15,8 +15,8 @@ sys.path.insert(0, os.getcwd())
 
 from multistage_assist.capabilities.entity_resolver import (
     EntityResolverCapability,
-    SERVICE_DOMAINS,
 )
+from multistage_assist.const import SERVICE_DOMAINS
 
 
 @pytest.fixture

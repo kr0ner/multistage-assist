@@ -8,6 +8,7 @@ from ..utils.german_utils import (
     GERMAN_ARTICLES,
     GERMAN_PREPOSITIONS,
 )
+from ..utils.fuzzy_utils import levenshtein_distance
 from ..constants.entity_keywords import (
     LIGHT_KEYWORDS,
     COVER_KEYWORDS,
@@ -56,21 +57,18 @@ class KeywordIntentCapability(Capability):
 
     # Common rule for temp control
     _TEMP_RULE = """
-- 'TemporaryControl': Use this if a DURATION is specified with "für" (e.g. "für 10 Minuten").
-  - 'duration': The duration string (e.g. "10 Minuten").
-  - 'command': "on" (an/ein/auf) or "off" (aus/zu).
+- 'TemporaryControl': Use this if a DURATION is specified with the preposition for temporary action.
+  - 'duration': The duration string.
+  - 'command': "on" or "off".
 """
 
     # Rule for delayed/scheduled control
     _DELAYED_RULE = """
 - 'DelayedControl': Use this if action should be DELAYED/SCHEDULED:
-  - Keywords: "in X Minuten", "um X Uhr" (NOT "für" - that's temporary!)
-  - 'delay': The delay/time string (e.g. "10 Minuten", "15:30", "15 Uhr").
-  - 'command': "on" (an/ein/auf) or "off" (aus/zu).
-  - Examples:
-    - "Schalte IN 10 Minuten das Licht aus" → DelayedControl, delay="10 Minuten"
-    - "Mach UM 15 Uhr das Licht an" → DelayedControl, delay="15 Uhr"
-"""
+  - Keywords indicating future time offset or absolute time (NOT temporary duration).
+  - 'delay': The delay/time string.
+  - 'command': "on" or "off".
+"""""
 
     INTENT_DATA = {
         "light": {
@@ -83,21 +81,11 @@ class KeywordIntentCapability(Capability):
                 "DelayedControl",
             ],
             "rules": """For HassLightSet:
-- 'command': use 'step_up' (heller) or 'step_down' (dunkler) for relative changes.
-- 'brightness': use integer 0-100 ONLY for explicit percentages (e.g., "50 Prozent").
+- 'command': use 'step_up' for relative brightness increase, 'step_down' for decrease.
+- 'brightness': use integer 0-100 ONLY for explicit percentages.
 - Do NOT put step_up/step_down in brightness slot!
 """
             + _TEMP_RULE + _DELAYED_RULE,
-            "examples": """User: "Schalte das Licht an" -> intent: HassTurnOn, domain: light, command: an
-User: "Licht aus" -> intent: HassTurnOff, domain: light, command: aus
-User: "Licht in der Küche an" -> intent: HassTurnOn, area: Küche, domain: light, command: an
-User: "Mache das Licht heller" -> intent: HassLightSet, domain: light, command: step_up
-User: "Licht auf 50%" -> intent: HassLightSet, domain: light, brightness: 50
-User: "Licht für 10 Minuten an" -> intent: TemporaryControl, domain: light, command: an, duration: 10 Minuten
-User: "Licht im Obergeschoss aus" -> intent: HassTurnOff, floor: Obergeschoss, domain: light, command: aus
-User: "Ist das Licht an?" -> intent: HassGetState, domain: light, state: on
-User: "Licht im DG aus" -> intent: HassTurnOff, floor: DG, domain: light, command: aus
-"""
         },
         "cover": {
             "intents": [
@@ -109,9 +97,6 @@ User: "Licht im DG aus" -> intent: HassTurnOff, floor: DG, domain: light, comman
                 "DelayedControl",
             ],
             "rules": _TEMP_RULE + _DELAYED_RULE,
-            "examples": """User: "Rollo im Bad auf 50%" -> intent: HassSetPosition, area: Bad, domain: cover, position: 50
-User: "Rollläden im Schlafzimmer ganz zu" -> intent: HassTurnOff, area: Schlafzimmer, domain: cover
-"""
         },
         "switch": {
             "intents": [
@@ -122,9 +107,6 @@ User: "Rollläden im Schlafzimmer ganz zu" -> intent: HassTurnOff, area: Schlafz
                 "DelayedControl",
             ],
             "rules": _TEMP_RULE + _DELAYED_RULE,
-            "examples": """User: "Schalter an" -> intent: HassTurnOn, domain: switch, command: an
-User: "Steckdose im Bad aus" -> intent: HassTurnOff, area: Bad, domain: switch, command: aus
-"""
         },
         "fan": {
             "intents": [
@@ -135,9 +117,6 @@ User: "Steckdose im Bad aus" -> intent: HassTurnOff, area: Bad, domain: switch, 
                 "DelayedControl",
             ],
             "rules": _TEMP_RULE + _DELAYED_RULE,
-            "examples": """User: "Ventilator an" -> intent: HassTurnOn, domain: fan, command: an
-User: "Mach den Lüfter im Büro aus" -> intent: HassTurnOff, area: Büro, domain: fan, command: aus
-"""
         },
         "media_player": {
             "intents": ["HassTurnOn", "HassTurnOff", "HassGetState"],
@@ -145,10 +124,7 @@ User: "Mach den Lüfter im Büro aus" -> intent: HassTurnOff, area: Büro, domai
         },
         "sensor": {
             "intents": ["HassGetState"],
-            "rules": "- device_class: required (temperature, humidity, power, energy, battery).\n- name: EMPTY unless specific.",
-            "examples": """User: "Wie warm ist es im Bad?" -> intent: HassGetState, area: Bad, domain: sensor, device_class: temperature
-User: "Wieviel Strom verbraucht der Fernseher?" -> intent: HassGetState, domain: sensor, name: Fernseher, device_class: power
-"""
+            "rules": "- device_class: required (temperature, humidity, power, energy, battery).\n- name: EMPTY unless a specific device is named.",
         },
         "climate": {
             "intents": [
@@ -158,22 +134,14 @@ User: "Wieviel Strom verbraucht der Fernseher?" -> intent: HassGetState, domain:
                 "HassGetState",
             ],
             "rules": "",
-            "examples": """User: "Heizung im Büro auf 22 Grad" -> intent: HassClimateSetTemperature, area: Büro, domain: climate, temperature: 22
-User: "Wie warm ist es im Wohnzimmer?" -> intent: HassGetState, area: Wohnzimmer, domain: climate, device_class: temperature
-"""
         },
         "timer": {
             "intents": ["HassTimerSet"],
             "rules": "",
-            "examples": """User: "Stelle einen Timer auf 5 Minuten" -> intent: HassTimerSet, domain: timer, duration: 5 Minuten
-"""
         },
         "vacuum": {
             "intents": ["HassVacuumStart", "HassVacuumReturnToBase"],
             "rules": "",
-            "examples": """User: "Staubsauger starten" -> intent: HassVacuumStart, domain: vacuum
-User: "Saugroboter in die Küche" -> intent: HassVacuumStart, area: Küche, domain: vacuum
-"""
         },
         "calendar": {
             "intents": ["HassCalendarCreate", "HassCreateEvent"],
@@ -187,8 +155,8 @@ User: "Saugroboter in die Küche" -> intent: HassVacuumStart, area: Küche, doma
                 "DelayedControl",
             ],
             "rules": """- 'name': The automation/device name.
-- If DURATION specified with "für", use TemporaryControl.
-- If DELAYED with "in X Minuten" or "um X Uhr", use DelayedControl.
+- If DURATION specified for temporary action, use TemporaryControl.
+- If DELAYED to a future time, use DelayedControl.
 """ + _TEMP_RULE + _DELAYED_RULE,
         },
     }
@@ -222,35 +190,11 @@ User: "Saugroboter in die Küche" -> intent: HassVacuumStart, area: Küche, doma
         "required": ["intent", "slots"]
     }
 
-    def _levenshtein(self, word: str, keyword: str) -> int:
-        """Calculate Levenshtein distance between two strings."""
-        if len(word) > len(keyword):
-            word, keyword = keyword, word
-        
-        distances = range(len(word) + 1)
-        for i2, c2 in enumerate(keyword):
-            new_distances = [i2 + 1]
-            for i1, c1 in enumerate(word):
-                if c1 == c2:
-                    new_distances.append(distances[i1])
-                else:
-                    new_distances.append(1 + min((distances[i1], distances[i1 + 1], new_distances[-1])))
-            distances = new_distances
-        
-        return distances[-1]
-
     def _fuzzy_match_distance(self, word: str, keyword: str, max_distance: int = 2) -> Optional[int]:
         """Return edit distance if within threshold, else None.
         
-        Handles typos like:
-        - Character swaps: "lihct" → "licht"
-        - Missing chars: "rolläden" → "rollläden"
-        - Extra chars: "lichtt" → "licht"
-        
-        Only for words of similar length to avoid false positives.
+        Strict same-length matching to catch typos without false positives.
         """
-        # Length check - Enforce strict length equality to avoid matching "schalte" (7) to "schalter" (8)
-        # Allows typos like "lihct" -> "licht" (swaps) but prevents insertions/deletions that change word type
         if len(word) != len(keyword):
             return None
         
@@ -258,7 +202,7 @@ User: "Saugroboter in die Küche" -> intent: HassVacuumStart, area: Küche, doma
         if len(keyword) < 5:
             return 0 if word == keyword else None
         
-        dist = self._levenshtein(word, keyword)
+        dist = levenshtein_distance(word, keyword)
         return dist if dist <= max_distance else None
 
 
@@ -334,11 +278,7 @@ User: "Saugroboter in die Küche" -> intent: HassVacuumStart, area: Küche, doma
         get_state_instructions = ""
         if "HassGetState" in intents:
             get_state_instructions = """
-- For HassGetState: use 'state' slot to capture the QUERIED state:
-  - "Sind alle Lichter aus?" → state: off
-  - "Sind alle Lichter an?" → state: on
-  - "Ist das Rollo geschlossen?" → state: closed
-  - "Ist das Rollo offen?" → state: open"""
+- For HassGetState: use 'state' slot to capture the QUERIED state (on/off/open/closed)."""
 
         personal_info = ""
         if self.memory:
@@ -346,20 +286,17 @@ User: "Saugroboter in die Küche" -> intent: HassVacuumStart, area: Küche, doma
             if data:
                 personal_info = "Known Personal Information:\n" + "\n".join(f"- {k}: {v}" for k, v in data.items()) + "\n\n"
 
-        system = f"""You are a smart home assistant. Identify the intent and entities.
+        system = f"""You are a smart home assistant. Identify the intent and extract slots from the user's command.
 {personal_info}Allowed Intents: {', '.join(intents)}
 Allowed Slots: area, name, domain, floor, duration, command, device_class, position, temperature, brightness.
 
 Rules: {meta.get('rules', '')}
-- Use 'floor' for floor levels or levels (e.g. Erdgeschoss, Keller, DG, oben, unten).
-- Use 'area' for ANY specific room, area or location mentioned (e.g. Küche, Wohnzimmer, Bad, Büro, Flur, Garage).
-- If generic words (Licht, Lampe, Rollo) are used without a specific name, 'name' is EMPTY.
-- Do NOT use 'alle', 'alles', 'ganze' for 'area' or 'name'.
+- Use 'floor' for floor/level references.
+- Use 'area' for room/area/location references.
+- If generic device words are used without a specific name, 'name' must be EMPTY.
+- Do NOT put quantifiers like 'all' in 'area' or 'name'.
 - ALWAYS use one of the "Allowed Intents" exactly as written.
 {get_state_instructions}
-
-Examples:
-{meta.get('examples', '')}
 """
         data = await self._safe_prompt(
             {"system": system, "schema": self.SCHEMA}, {"user_input": text}

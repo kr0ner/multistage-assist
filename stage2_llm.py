@@ -11,7 +11,6 @@ Flow:
 """
 
 import logging
-import json
 from typing import Any, Dict, List, Optional
 
 from homeassistant.components import conversation

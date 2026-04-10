@@ -6,20 +6,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.components import conversation
 from homeassistant.helpers import intent
 
-# Import keyword constants
+# Import keyword constants used by dependent modules
 from .constants.entity_keywords import (
-    LIGHT_KEYWORDS,
-    COVER_KEYWORDS,
-    SWITCH_KEYWORDS,
-    FAN_KEYWORDS,
-    MEDIA_KEYWORDS,
-    SENSOR_KEYWORDS,
-    CLIMATE_KEYWORDS,
-    VACUUM_KEYWORDS,
-    TIMER_KEYWORDS,
-    CALENDAR_KEYWORDS,
-    AUTOMATION_KEYWORDS,
-    OTHER_ENTITY_PLURALS,
     ENTITY_PLURALS as _ENTITY_PLURALS,
 )
 
@@ -87,29 +75,6 @@ def join_names(names: List[str]) -> str:
     """
     from .utils.response_builder import join_names as _join_names
     return _join_names(names)
-
-
-def normalize_speech_for_tts(text: str) -> str:
-    """Normalize text for text-to-speech output.
-    
-    This is a backward-compatible wrapper around response_builder.
-    """
-    from .utils.response_builder import normalize_for_tts
-    return normalize_for_tts(text)
-
-
-def format_chat_history(history: List[Dict[str, str]], max_words: int = 500) -> str:
-    full_text = []
-    word_count = 0
-    for turn in reversed(history):
-        role = "User" if turn["role"] == "user" else "Jarvis"
-        content = turn["content"]
-        count = len(content.split())
-        if word_count + count > max_words:
-            break
-        full_text.insert(0, f"{role}: {content}")
-        word_count += count
-    return "\n".join(full_text)
 
 
 def parse_duration_string(duration: Any) -> int:

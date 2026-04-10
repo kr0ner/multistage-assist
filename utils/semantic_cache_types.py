@@ -13,7 +13,7 @@ DEFAULT_EMBEDDING_MODEL = "multilingual-minilm"
 # Semantic Cache configuration
 
 # Configuration defaults
-DEFAULT_VECTOR_THRESHOLD = 0.82  # Validated threshold for multilingual-minilm
+DEFAULT_VECTOR_THRESHOLD = 0.75  # Must match const.py EXPERT_DEFAULTS[CONF_VECTOR_THRESHOLD]
 DEFAULT_VECTOR_TOP_K = 10  # Number of candidates for lookup
 DEFAULT_MAX_ENTRIES = 2000  # Must be large enough for all generated anchors + user entries
 MIN_CACHE_WORDS = 3

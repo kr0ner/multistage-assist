@@ -70,6 +70,10 @@ class OllamaClient:
 
         session = await self.get_session()
         async with session.post(url, json=payload, timeout=120) as resp:
+            if resp.status == 400:
+                err_text = await resp.text()
+                _LOGGER.error("Ollama 400 Bad Request (Invalid Schema?): %s", err_text)
+                resp.raise_for_status()
             resp.raise_for_status()
             data = await resp.json()
 

@@ -242,6 +242,7 @@ CONFIRMATION_TEMPLATES: Dict[str, str] = {
     "noted": "Alles klar, gemerkt.",
     "not_noted": "Okay, nicht gemerkt.",
     "cancelled": "Abgebrochen.",
+    "exit_abort": "Vorgang abgebrochen.",
     
     # Action confirmations (with placeholders)
     "turned_on": "{device} ist an.",
@@ -323,6 +324,8 @@ SYSTEM_MESSAGES: Dict[str, str] = {
     "error_short": "Fehler.",
 
     # Fallbacks
+    "ask_field_generic": "Bitte gib {field} an.",
+    
     # Confirmation prompts
     "confirm_or_abort": "Sag 'Ja' zum Bestätigen oder 'Nein' zum Abbrechen.",
     "confirm_only": "Sag 'Ja' zum Bestätigen.",

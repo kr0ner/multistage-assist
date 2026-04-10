@@ -34,27 +34,11 @@ _LOGGER = logging.getLogger(__name__)
 # ============================================================================
 # CACHE BYPASS INTENTS
 # ============================================================================
-# These intents should ALWAYS go to LLM, never be cached or matched from cache.
-#
-# WHY TIMER/CALENDAR BYPASS CACHE:
-# Timer and calendar commands often have contextual information that the
-# cache normalization strips out. For example:
-#   "Stelle einen Timer auf 15 Minuten der mich an das Gulasch erinnert"
-# The cache normalizes this to just "Timer auf Minuten" and loses the
-# crucial "der mich an das Gulasch erinnert" part.
-#
-# The LLM can properly parse the full command including:
-#   - Timer name/description
-#   - Calendar event details
-#   - Reminder context
-#
-# Simple device control commands (lights, covers, etc.) are safe to cache
-# because they have predictable structure with extractable numeric values.
+# These intents should ALWAYS go to LLM, never be matched from cache.
+# Timer cancel needs the specific timer name which can't be generalized.
 # ============================================================================
 CACHE_BYPASS_INTENTS: set = {
-    "HassTimerSet",      # Timer commands need full context (name, description)
-    "HassTimerCancel",   # Timer cancel needs timer name
-    # Future: Add calendar intents here when implemented
+    "HassTimerCancel",   # Timer cancel needs specific timer name
 }
 
 
@@ -96,7 +80,6 @@ class Stage1CacheProcessor(BaseStage):
             normalized = await memory_cap.get_area_alias(clean_word)
             if normalized:
                 _LOGGER.debug("[Stage1Cache] Alias: '%s' → '%s'", clean_word, normalized)
-                import re
                 pattern = re.compile(re.escape(clean_word), re.IGNORECASE)
                 text = pattern.sub(normalized, text, count=1)
 
@@ -285,8 +268,8 @@ class Stage1CacheProcessor(BaseStage):
                 cache_slots["duration"] = duration_str
                 _LOGGER.debug("[Stage1Cache] Extracted duration='%s' from text", duration_str)
         
-        # NOTE: HassTimerSet bypasses cache (see CACHE_BYPASS_INTENTS)
-        # Timer commands need LLM to preserve context like "der mich an das Gulasch erinnert"
+        # NOTE: Timer/Calendar intents CAN be cached as intent patterns.
+        # Variable fields (description, duration) are re-extracted from original text.\n
 
         return StageResult.success(
             intent=cached["intent"],

@@ -162,23 +162,35 @@ class PromptExecutor:
     ) -> dict[str, Any] | list | None:
         ip, port, model = _get_stage_config(self.config, stage)
         client = OllamaClient(ip, port)
+        
+        # 1. First attempt: Native JSON Schema (Structured Outputs)
         try:
             resp_text = await client.chat(
                 model,
                 system_prompt,
                 json.dumps(context, ensure_ascii=False),
                 temperature=temperature,
-                format=schema,  # Pass native JSON schema for Structured Outputs
+                format=schema,
             )
-            
-            _LOGGER.debug("Stage %s raw response: %s", stage.name, resp_text)
-            print(f"\nRAW OLLAMA RESPONSE: {repr(resp_text)}")
-            print(f"RAW OLLAMA SCHEMA PASSED: {json.dumps(schema)}")
-            
-            # Since we're using Native Structured Outputs, Ollama guarantees valid JSON.
-            # However, some models still wrap the output in markdown code blocks like ```json ... ```
-            return extract_json_from_llm_string(resp_text)
-
+            _LOGGER.debug("Stage %s (schema) raw response: %s", stage.name, resp_text)
+            result = extract_json_from_llm_string(resp_text)
+            if self._validate_schema(result, schema):
+                return result
+            _LOGGER.info("Stage %s attempt 1 (schema) invalid, retrying with format='json'...", stage.name)
         except Exception as err:
-            _LOGGER.warning("Stage %s execution failed (%s): %s", stage.name, type(err).__name__, err)
+            _LOGGER.info("Stage %s attempt 1 (schema) failed: %s, retrying with format='json'...", stage.name, err)
+
+        # 2. Level 2 Fallback: Basic JSON Mode
+        try:
+            resp_text = await client.chat(
+                model,
+                system_prompt,
+                json.dumps(context, ensure_ascii=False),
+                temperature=temperature,
+                format="json",
+            )
+            _LOGGER.debug("Stage %s (json-mode) raw response: %s", stage.name, resp_text)
+            return extract_json_from_llm_string(resp_text)
+        except Exception as err:
+            _LOGGER.warning("Stage %s fallback (json-mode) failed: %s", stage.name, err)
             return None

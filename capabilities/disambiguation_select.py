@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 
 from .base import Capability
 from ..constants.messages_de import ORDINAL_MAP, ALL_KEYWORDS, NONE_KEYWORDS
+from ..utils.german_utils import normalize_umlauts
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,15 +34,11 @@ class DisambiguationSelectCapability(Capability):
 You match the user's answer to the correct entity from the list. Do not explain.
 
 ## Input
-- user_input: User's German response naming a device
+- user_input: User's response naming a device
 - input_entities: List of { "entity_id": string, "name": string, "ordinal": integer }
 
 ## Task
-Match by meaning - the user might use:
-- Synonyms: "Deckenleuchte" → "Küche Licht"
-- Abbreviations: "Süd" → "Esszimmer Süd"
-- Partial names: "Spiegel" → "Badezimmer Spiegel"
-
+Match by meaning - the user might use synonyms, abbreviations, or partial names.
 Return the entity_ids that match. If uncertain, return empty array.
 """,
         "schema": {
@@ -183,9 +180,7 @@ Return the entity_ids that match. If uncertain, return empty array.
     def _normalize(self, text: str) -> str:
         """Normalize text for fuzzy matching."""
         text = text.lower().strip()
-        # German umlaut normalization
-        text = text.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
-        text = text.replace("ß", "ss")
+        text = normalize_umlauts(text)
         # Remove common articles and punctuation
         text = re.sub(r"^(der|die|das|den|dem)\s+", "", text)
         text = re.sub(r"[^\w\s]", "", text)

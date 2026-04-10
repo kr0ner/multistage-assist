@@ -4,7 +4,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from .multi_turn_base import MultiTurnCapability
-from custom_components.multistage_assist.conversation_utils import (
+from ..conversation_utils import (
     make_response,
     parse_duration_string,
     format_seconds_to_string,
@@ -33,10 +33,9 @@ class TimerCapability(MultiTurnCapability):
     
     # Prompt to extract timer description from natural language
     PROMPT = {
-        "system": """Extract a short, descriptive timer label (max 2-3 words) from the user's request. 
-If no clear purpose is mentioned, return an empty string.
-
-Example: "5 Minuten Timer für den Tee" → {"description": "Tee"}""",
+        "system": """Extract a short, descriptive timer label (max 2-3 words) from the user's request.
+Exclude any mention of the duration (e.g. "5 minutes", "10 min").
+If no clear purpose is mentioned, return an empty string.""",
         "schema": {
             "type": "object",
             "properties": {

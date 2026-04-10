@@ -31,9 +31,23 @@ def extract_json_from_llm_string(text: str) -> Dict[str, Any]:
         cleaned = match.group(1).strip()
     
     # 2. Heuristically strip leading/trailing non-bracket text
-    if "{" in cleaned and "}" in cleaned:
-        start_idx = cleaned.find("{")
-        end_idx = cleaned.rfind("}")
+    if ("{" in cleaned and "}" in cleaned) or ("[" in cleaned and "]" in cleaned):
+        # Find first and last bracket of ANY kind
+        start_idx_obj = cleaned.find("{")
+        start_idx_arr = cleaned.find("[")
+        
+        # Determine start index (first of either)
+        if start_idx_obj != -1 and start_idx_arr != -1:
+            start_idx = min(start_idx_obj, start_idx_arr)
+        else:
+            start_idx = start_idx_obj if start_idx_obj != -1 else start_idx_arr
+            
+        # Determine end index (last of corresponding bracket)
+        if start_idx == start_idx_obj:
+            end_idx = cleaned.rfind("}")
+        else:
+            end_idx = cleaned.rfind("]")
+            
         # Only slice if it looks like a JSON block
         if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
             cleaned = cleaned[start_idx : end_idx + 1]

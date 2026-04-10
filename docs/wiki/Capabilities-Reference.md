@@ -6,7 +6,7 @@ Complete reference of all available capabilities in MultiStage Assist.
 
 ### semantic_cache
 
-**Purpose:** Fast cache lookup via external cache add-on with anchor patterns.
+**Purpose:** Fast cache lookup via semantic vectors with hybrid BM25 keyword matching.
 
 **Input:** User input text
 
@@ -14,7 +14,7 @@ Complete reference of all available capabilities in MultiStage Assist.
 
 **Features:**
 - **Anchor patterns** - Pre-generated command patterns for all entities/areas
-- **Vector validation** - External add-on validates matches (threshold: 0.85)
+- **3-tier lookup** - Anchor check (fastest) → Local fuzzy (learned entries, top 5) → Remote add-on fallback
 - **Hybrid search** - Combines vector similarity + BM25 keyword matching
 - **User learning** - Stores verified successful commands
 - Preserves disambiguation context for re-prompting
@@ -23,12 +23,12 @@ Complete reference of all available capabilities in MultiStage Assist.
 - Short texts (< 3 words) - likely disambiguation responses
 - Disambiguation follow-ups ("Küche", "Beide", "das erste")
 - Relative brightness commands (`step_up`/`step_down`) - depend on current state
-- Timer intents (`HassTimerSet`) - one-time events
+- Timer intents (`HassTimerSet`, `HassTimerCancel`) - context-dependent
 - Calendar intents (`HassCalendarCreate`) - unique events
 - Delayed control intents - time-sensitive
 
 **Config Options:**
-- `vector_threshold`: Min score for hit (default: 0.85)
+- `vector_search_threshold`: Min score for hit (default: 0.75)
 - `hybrid_enabled`: Enable hybrid search (default: true)
 - `hybrid_alpha`: Vector vs keyword weight (default: 0.7)
 - `cache_max_entries`: Max user cache size (default: 10000)
@@ -45,19 +45,39 @@ Complete reference of all available capabilities in MultiStage Assist.
 
 ---
 
-### clarification
+### implicit_intent
 
-**Purpose:** Split compound commands and transform implicit commands.
+**Purpose:** Rephrase vague/implicit commands into explicit ones.
+
+**Input:** User input text
+
+**Output:** List of rephrased commands
+
+**Features:**
+- Fast-path direct mappings checked first (no LLM)
+- LLM fallback (temperature=0.3) for implicit phrases not in direct mappings
+
+**Implicit Phrases:**
+- "zu dunkel" → "Mache Licht heller"
+- "zu hell" → "Mache Licht dunkler"
+- "zu kalt" → "Mache Heizung wärmer"
+- "zu warm" → "Mache Heizung kälter"
+
+---
+
+### atomic_command
+
+**Purpose:** Split compound commands into individual atomic commands.
 
 **Input:** User input text
 
 **Output:** Array of atomic commands
 
 **Features:**
-- Splits "und" compounds
-- Converts "zu dunkel" → "Licht heller"
-- Preserves durations
-- Handles multi-area commands
+- Splits on "und", "dann", commas
+- Multi-area detection ("Licht in der Küche an und im Flur aus")
+- Floor splitting ("Erdgeschoss und Obergeschoss")
+- LLM temperature: 0.1 (very deterministic)
 
 **Example:**
 ```
@@ -226,22 +246,20 @@ Output: "Das Licht im Büro ist auf 50% gesetzt."
 
 ### memory
 
-**Purpose:** Store and retrieve learned aliases.
-
-**Input:** Get/set operations
-
-**Output:** Stored data
+**Purpose:** Store and retrieve learned aliases and personal data (unified in `KnowledgeGraphCapability`).
 
 **Storage:**
 - Area aliases: "bad" → "Badezimmer"
 - Entity aliases: "daniels handy" → "notify.mobile_app_..."
 - Floor mappings
+- Device dependencies: powered_by, coupled_with, lux_sensor, associated_cover, energy_parent
+- Personal data: names, preferences, birthdays, roles
 
 ---
 
 ### area_alias
 
-**Purpose:** Fuzzy match area names.
+**Purpose:** Fuzzy match area names using `AreaResolverCapability`.
 
 **Input:** User query, candidate areas
 
@@ -272,9 +290,63 @@ Output: "Das Licht im Büro ist auf 50% gesetzt."
 
 **Purpose:** Generate yes/no answers for state queries.
 
-**Input:** User input, domain, state, entity_ids
+---
 
-**Output:** Yes/no response text
+### mcp
+
+**Purpose:** MCP tool registry for LLM access to home automation.
+
+**9 Tools Registered:**
+| Tool | Purpose |
+|---|---|
+| `list_areas` | Rooms/areas with floor assignments and aliases |
+| `list_entities` | Smart devices filtered by domain/area/device_class |
+| `get_entity_details` | State and attributes for specific entity |
+| `list_automations` | All exposed automations |
+| `get_automation_details` | Config/state of automation |
+| `store_personal_data` | Save household facts |
+| `get_personal_data` | Retrieve stored facts by key |
+| `get_system_capabilities` | List intents, domains, features |
+| `store_cache_entry` | Learn command phrasing in semantic cache |
+
+**LLM Reasoning:** `resolve_intent_via_llm()` for multi-turn tool reasoning via OllamaClient.
+
+---
+
+### step_control
+
+**Purpose:** Relative adjustments for brightness and cover position.
+
+**Step Sizes:**
+- **Brightness**: ±35% of current value (minimum step: 10%)
+- **Cover**: ±25% of current position
+- **From off**: step_up turns on to 30%
+
+---
+
+### prompt_context
+
+**Purpose:** Build entity/area context for LLM prompts.
+
+**Input:** Hint list specifying which context to include
+
+**Output:** Formatted context string for system prompts
+
+---
+
+### command_processor
+
+**Purpose:** Orchestrate the full execution pipeline.
+
+**Flow:**
+1. State-aware candidate filtering (turn off → only ON entities)
+2. Plural detection ("alle" = no disambiguation)
+3. Entity disambiguation (if multiple candidates)
+4. Intent execution with Knowledge Graph prerequisites
+5. Natural language confirmation
+6. Semantic cache storage (on verified success)
+
+**Methods:** `process()`, `continue_disambiguation()`, `re_prompt_pending()`
 
 ---
 

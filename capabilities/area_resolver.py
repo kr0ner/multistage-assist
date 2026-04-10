@@ -47,13 +47,13 @@ class AreaResolverCapability(Capability):
 You are a smart home helper that maps a user's spoken location to the correct internal Home Assistant name.
 
 ## Input
-- user_query: The name spoken by the user (e.g. "Bad", "Keller", "Oben").
+- user_query: The name spoken by the user.
 - candidates: A list of available names (Areas or Floors).
 
 ## Task
-1. Find the candidate that best matches `user_query`.
-2. Handle synonyms: "Bad" -> "Badezimmer", "Keller" -> "Untergeschoss", "Unten" -> "Erdgeschoss".
-3. **Global Scope:** If the user says "Haus", "Wohnung", "Überall", "Alles", return "GLOBAL".
+1. Find the candidate that best matches `user_query` by meaning or synonym.
+2. Handle abbreviations, colloquial names, and partial matches.
+3. **Global Scope:** If the user references the entire home/apartment, return "GLOBAL".
 4. If no candidate matches plausibly, return null.
 """,
         "schema": {

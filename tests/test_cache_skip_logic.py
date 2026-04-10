@@ -65,55 +65,49 @@ class TestCompoundCommandCacheSkip:
 
 
 class TestNonCacheableIntents:
-    """Tests for intents that should not be cached."""
+    """Tests for intents that should skip re-caching on cache hits."""
 
-    def test_temporary_control_in_skip_list(self):
-        """TemporaryControl should be in the non-cacheable list."""
-        non_cacheable = (
-            "HassCalendarCreate",
-            "HassCreateEvent",
-            "HassTimerSet",
-            "HassStartTimer",
-            "TemporaryControl",
-        )
-        
-        assert "TemporaryControl" in non_cacheable
+    def test_timer_set_in_nocache_intents(self):
+        """HassTimerSet should be in NOCACHE_INTENTS (skip re-caching)."""
+        from multistage_assist.capabilities.command_processor import NOCACHE_INTENTS
+        assert "HassTimerSet" in NOCACHE_INTENTS
 
-    def test_timer_set_in_skip_list(self):
-        """HassTimerSet should be in the non-cacheable list."""
-        non_cacheable = (
-            "HassCalendarCreate",
-            "HassCreateEvent",
-            "HassTimerSet",
-            "HassStartTimer",
-            "TemporaryControl",
-        )
-        
-        assert "HassTimerSet" in non_cacheable
+    def test_timer_cancel_in_nocache_intents(self):
+        """HassTimerCancel should be in NOCACHE_INTENTS."""
+        from multistage_assist.capabilities.command_processor import NOCACHE_INTENTS
+        assert "HassTimerCancel" in NOCACHE_INTENTS
+
+    def test_calendar_in_nocache_intents(self):
+        """HassCalendarCreate should be in NOCACHE_INTENTS."""
+        from multistage_assist.capabilities.command_processor import NOCACHE_INTENTS
+        assert "HassCalendarCreate" in NOCACHE_INTENTS
 
     def test_regular_intents_cacheable(self):
-        """Regular intents like HassTurnOn should be cacheable."""
-        non_cacheable = (
-            "HassCalendarCreate",
-            "HassCreateEvent",
-            "HassTimerSet",
-            "HassStartTimer",
-            "TemporaryControl",
-        )
-        
-        assert "HassTurnOn" not in non_cacheable
-        assert "HassTurnOff" not in non_cacheable
-        assert "HassLightSet" not in non_cacheable
+        """Regular intents should not be in NOCACHE_INTENTS."""
+        from multistage_assist.capabilities.command_processor import NOCACHE_INTENTS
+        assert "HassTurnOn" not in NOCACHE_INTENTS
+        assert "HassTurnOff" not in NOCACHE_INTENTS
+        assert "HassLightSet" not in NOCACHE_INTENTS
+
+    def test_timer_not_in_cache_bypass(self):
+        """HassTimerSet should NOT be in CACHE_BYPASS_INTENTS (timer intents are now cacheable)."""
+        from multistage_assist.stage1_cache import CACHE_BYPASS_INTENTS
+        assert "HassTimerSet" not in CACHE_BYPASS_INTENTS
+
+    def test_timer_cancel_still_bypasses_cache(self):
+        """HassTimerCancel should still bypass cache (needs specific timer name)."""
+        from multistage_assist.stage1_cache import CACHE_BYPASS_INTENTS
+        assert "HassTimerCancel" in CACHE_BYPASS_INTENTS
 
 
 class TestVectorThreshold:
     """Tests for vector search threshold configuration."""
 
-    def test_default_threshold_is_0_82(self):
-        """Default vector threshold should be 0.82 (validated for multilingual-minilm)."""
+    def test_default_threshold_is_0_75(self):
+        """Default vector threshold should be 0.75 (aligned with const.py EXPERT_DEFAULTS)."""
         from utils.semantic_cache_types import DEFAULT_VECTOR_THRESHOLD
         
-        assert DEFAULT_VECTOR_THRESHOLD == 0.82
+        assert DEFAULT_VECTOR_THRESHOLD == 0.75
 
     def test_threshold_filters_candidates(self):
         """Threshold should filter out low-scoring candidates."""

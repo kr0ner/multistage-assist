@@ -3,7 +3,8 @@ from typing import Any, Dict, Optional
 from homeassistant.core import Context
 from .base import Capability
 from ..conversation_utils import make_response
-from ..constants.messages_de import VACUUM_MESSAGES
+from ..constants.messages_de import VACUUM_MESSAGES, GLOBAL_KEYWORDS
+from ..constants.entity_keywords import VACUUM_MOP_KEYWORDS, VACUUM_DRY_KEYWORDS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,11 +20,11 @@ class VacuumCapability(Capability):
     
     PROMPT = {
         "system": """Extract vacuum command details from the user's request.
-- mode: 'vacuum' for dry cleaning (saugen, staubsaugen), 'mop' for wet cleaning (wischen, feucht)
-- area: Room name (without articles like 'den', 'die', 'das'), or null
+- mode: 'vacuum' for dry cleaning, 'mop' for wet cleaning
+- area: Room name (without articles), or null
 - floor: Floor name, or null
 - scope: 'GLOBAL' if whole house/apartment mentioned, or null
-IMPORTANT: Always output room and floor names in German (the original user input language), e.g., 'Wohnzimmer' NOT 'living room'.""",
+IMPORTANT: Always output room and floor names in the user's original language.""",
         "schema": {
             "type": "object",
             "properties": {
@@ -43,9 +44,9 @@ IMPORTANT: Always output room and floor names in German (the original user input
         # 1. Fast Path: Mode Detection
         text = user_input.text.lower()
         hinted_mode = None
-        if any(w in text for w in ["wisch", "mop", "feucht"]):
+        if any(w in text for w in VACUUM_MOP_KEYWORDS):
             hinted_mode = "mop"
-        elif any(w in text for w in ["saug", "staubsaug"]):
+        elif any(w in text for w in VACUUM_DRY_KEYWORDS):
             hinted_mode = "vacuum"
 
         # 2. Extract vacuum details via LLM
@@ -59,7 +60,7 @@ IMPORTANT: Always output room and floor names in German (the original user input
         target_val = None
         
         # 1. Global Scope ("Sauge das ganze Haus")
-        if scope == "GLOBAL" or (area_name and area_name.lower() in ("haus", "wohnung", "alles", "ganze haus")):
+        if scope == "GLOBAL" or (area_name and area_name.lower() in GLOBAL_KEYWORDS):
             target_val = "Alles"
 
         # 2. Floor Scope ("Wische das Erdgeschoss")

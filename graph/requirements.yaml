@@ -1,0 +1,747 @@
+# MultiStage Assist — Requirements (structured data)
+#
+# Machine-readable requirements loaded into the code graph.
+# Each requirement has: category, title, description, source_files, test_files, status.
+# The graph builder cross-references these with actual code nodes and test edges.
+
+# =============================================================================
+# Pipeline Architecture
+# =============================================================================
+REQ-PIPE-001:
+  category: pipeline
+  title: "4-Stage Escalation"
+  description: "Sequential escalation through Stage 0 (NLU) → 1 (cache) → 2 (local LLM) → 3 (cloud LLM). Each returns StageResult with 6 statuses."
+  source_files: [conversation.py, stage_result.py]
+  test_files: [tests/test_conversation.py]
+  status: implemented
+
+REQ-PIPE-002:
+  category: pipeline
+  title: "Minimalist Escalate Philosophy"
+  description: "Prefer cheapest/fastest path. Escalate only when unable to resolve with sufficient certainty."
+  source_files: []
+  test_files: []
+  status: implemented
+
+REQ-PIPE-003:
+  category: pipeline
+  title: "Stage 0 — HA Built-in NLU"
+  description: "Uses hassil recognize_best(). No LLM. Escalates on no match or >10 candidates."
+  source_files: [stage0.py]
+  test_files: [tests/test_nlu_passthrough.py]
+  status: implemented
+
+REQ-PIPE-004:
+  category: pipeline
+  title: "Stage 0 Dry-run Recognition"
+  description: "Dry-run NLU recognition without executing intent. Returns normalized entities dict."
+  source_files: [stage0.py]
+  test_files: [tests/test_nlu_passthrough.py]
+  status: implemented
+
+REQ-PIPE-005:
+  category: pipeline
+  title: "Stage 1 — Semantic Cache Lookup"
+  description: "3-tier lookup: anchor check → local fuzzy → remote add-on fallback."
+  source_files: [stage1_cache.py, capabilities/semantic_cache.py]
+  test_files: [tests/test_semantic_cache.py, tests/test_stage1_fallback_fix.py]
+  status: implemented
+
+REQ-PIPE-006:
+  category: pipeline
+  title: "Stage 1 Preprocessing"
+  description: "Runs ImplicitIntentCapability + AtomicCommandCapability before cache lookup."
+  source_files: [stage1_cache.py]
+  test_files: [tests/test_cache_skip_logic.py]
+  status: implemented
+
+REQ-PIPE-007:
+  category: pipeline
+  title: "Stage 1 Cache Bypass Intents"
+  description: "CACHE_BYPASS_INTENTS: HassTimerCancel. These always escalate to LLM."
+  source_files: [stage1_cache.py]
+  test_files: [tests/test_cache_skip_logic.py, tests/test_nlu_passthrough.py]
+  status: implemented
+
+REQ-PIPE-008:
+  category: pipeline
+  title: "Stage 1 Multi-Command Return"
+  description: "If atomic command returns >1 command, returns multi_command status."
+  source_files: [stage1_cache.py]
+  test_files: [tests/test_multi_command_blocking.py]
+  status: implemented
+
+REQ-PIPE-009:
+  category: pipeline
+  title: "Stage 2 — Local LLM Intent Parsing"
+  description: "Uses Ollama LLM for intent, domain, slot extraction. Multi-turn for Timer/Calendar/Vacuum."
+  source_files: [stage2_llm.py]
+  test_files: []
+  status: implemented
+
+REQ-PIPE-010:
+  category: pipeline
+  title: "Stage 2 Area Alias Learning"
+  description: "If area resolution returns unknown_area, returns pending status asking user for clarification."
+  source_files: [stage2_llm.py]
+  test_files: [tests/test_area_learning.py]
+  status: implemented
+
+REQ-PIPE-011:
+  category: pipeline
+  title: "Stage 3 — Polymorphic Cloud LLM"
+  description: "4 providers: Gemini, OpenAI, Anthropic, Grok. Up to 5 reasoning turns. 9 MCP tools."
+  source_files: [stage3_cloud.py, capabilities/mcp.py, capabilities/llm_providers.py]
+  test_files: [tests/test_mcp_recovery.py]
+  status: implemented
+
+REQ-PIPE-012:
+  category: pipeline
+  title: "Stage 3 Muscle Memory"
+  description: "Stage 3 stores successful resolutions back to Stage 1 via store_cache_entry MCP tool."
+  source_files: [stage3_cloud.py, capabilities/mcp.py]
+  test_files: [tests/test_memory_mcp.py]
+  status: implemented
+
+REQ-PIPE-013:
+  category: pipeline
+  title: "Conversation Orchestration"
+  description: "Sequential: exit check → cleanup stale → ownership check → pending timeout → stages 0→1→2→3."
+  source_files: [conversation.py]
+  test_files: [tests/test_conversation.py]
+  status: implemented
+
+REQ-PIPE-014:
+  category: pipeline
+  title: "Global Exit Commands"
+  description: "Abbruch, Stop, etc. immediately clear pending state and return abort response."
+  source_files: [conversation.py, utils/german_utils.py]
+  test_files: [tests/test_conversation.py]
+  status: implemented
+
+REQ-PIPE-015:
+  category: pipeline
+  title: "Pending Timeout Management"
+  description: "15s re-ask, max 2 retries (30s), absolute 5min (300s)."
+  source_files: [conversation.py]
+  test_files: [tests/test_multi_command_blocking.py]
+  status: implemented
+
+REQ-PIPE-016:
+  category: pipeline
+  title: "StageResult Contract"
+  description: "6 statuses: success, escalate, escalate_chat, multi_command, pending, error."
+  source_files: [stage_result.py]
+  test_files: []
+  status: implemented
+
+# =============================================================================
+# Semantic Cache
+# =============================================================================
+REQ-CACHE-001:
+  category: caching
+  title: "Dual-Mode Operation"
+  description: "Normal mode (external add-on + local) and add-on-only mode."
+  source_files: [capabilities/semantic_cache.py]
+  test_files: [tests/test_semantic_cache.py]
+  status: implemented
+
+REQ-CACHE-002:
+  category: caching
+  title: "3-Tier Lookup"
+  description: "Anchor check → local fuzzy → remote add-on fallback."
+  source_files: [capabilities/semantic_cache.py]
+  test_files: [tests/test_semantic_cache.py]
+  status: implemented
+
+REQ-CACHE-003:
+  category: caching
+  title: "Principle 1 — Grammatical Plurality"
+  description: "Licht ≠ Lichter. Normalization MUST NOT collapse plural forms."
+  source_files: [capabilities/semantic_cache.py]
+  test_files: [tests/test_embedding_principles.py]
+  status: implemented
+
+REQ-CACHE-004:
+  category: caching
+  title: "Principle 2 — Spatial Distinction"
+  description: "im Keller MUST be distinct from im Erdgeschoss in vector space."
+  source_files: [capabilities/semantic_cache.py]
+  test_files: [tests/test_embedding_principles.py]
+  status: implemented
+
+REQ-CACHE-005:
+  category: caching
+  title: "Principle 3 — Intent Differentiation"
+  description: "Schalte an MUST NEVER match Schalte aus."
+  source_files: [capabilities/semantic_cache.py]
+  test_files: [tests/test_embedding_principles.py]
+  status: implemented
+
+REQ-CACHE-006:
+  category: caching
+  title: "Principle 4 — Domain Representation"
+  description: "Domains MUST remain distinct in vector space."
+  source_files: [capabilities/semantic_cache.py]
+  test_files: [tests/test_embedding_principles.py]
+  status: implemented
+
+REQ-CACHE-007:
+  category: caching
+  title: "Principle 5 — Logical Opposites"
+  description: "Open MUST NOT be semantically identical to close."
+  source_files: [capabilities/semantic_cache.py]
+  test_files: [tests/test_embedding_principles.py]
+  status: implemented
+
+REQ-CACHE-008:
+  category: caching
+  title: "Principle 6 — Multi-Command Escalation"
+  description: "und or , in input → MULTIPLE_COMMANDS_ESCALATION token → escalate."
+  source_files: [capabilities/semantic_cache.py]
+  test_files: [tests/test_embedding_principles.py]
+  status: implemented
+
+REQ-CACHE-009:
+  category: caching
+  title: "Principle 7 — Number Normalization"
+  description: "Numbers normalized to centroids: 37% and 82% both → 50 Prozent."
+  source_files: [capabilities/semantic_cache.py]
+  test_files: [tests/test_embedding_principles.py]
+  status: implemented
+
+REQ-CACHE-010:
+  category: caching
+  title: "Principle 8 — Multi-Word Names"
+  description: "Support Kinder Badezimmer, Kinderzimmer 1, Wohn-Esszimmer."
+  source_files: [capabilities/semantic_cache.py]
+  test_files: [tests/test_embedding_principles.py]
+  status: implemented
+
+REQ-CACHE-011:
+  category: caching
+  title: "Variable Slot Stripping"
+  description: "Timer/calendar cached with variable slots stripped. Execution re-extracts."
+  source_files: [capabilities/semantic_cache.py]
+  test_files: [tests/test_semantic_cache.py]
+  status: implemented
+
+REQ-CACHE-012:
+  category: caching
+  title: "Cache Skip Filters"
+  description: "Skip caching for: short texts <3 words, disambiguation responses, relative brightness."
+  source_files: [capabilities/semantic_cache.py, capabilities/command_processor.py]
+  test_files: [tests/test_cache_skip_logic.py]
+  status: implemented
+
+REQ-CACHE-013:
+  category: caching
+  title: "User Learning"
+  description: "Successful execution stores command to cache for future learning."
+  source_files: [execution_pipeline.py, capabilities/command_processor.py]
+  test_files: [tests/test_semantic_cache.py]
+  status: implemented
+
+REQ-CACHE-014:
+  category: caching
+  title: "Expert Thresholds"
+  description: "vector_search_threshold (0.75), hybrid_alpha (0.7), cache_max_entries (10000)."
+  source_files: [const.py]
+  test_files: [tests/test_cache_ambiguity.py]
+  status: implemented
+
+# =============================================================================
+# Capabilities
+# =============================================================================
+REQ-CAP-001:
+  category: capabilities
+  title: "Base Class Contract"
+  description: "All capabilities extend Capability. Contract: name, description, async run()."
+  source_files: [capabilities/base.py]
+  test_files: []
+  status: implemented
+
+REQ-CAP-002:
+  category: capabilities
+  title: "Automatic Dependency Injection"
+  description: "BaseStage auto-injects KnowledgeGraph, AreaResolver, Memory."
+  source_files: [base_stage.py]
+  test_files: []
+  status: implemented
+
+REQ-CAP-003:
+  category: capabilities
+  title: "EntityResolver"
+  description: "Resolves entities from domain, area, floor, name. Fuzzy matching."
+  source_files: [capabilities/entity_resolver.py]
+  test_files: [tests/test_entity_resolver.py, tests/test_entity_resolver_safety.py, tests/test_entity_resolver_service_domains.py]
+  status: implemented
+
+REQ-CAP-004:
+  category: capabilities
+  title: "AreaResolver"
+  description: "Fuzzy-matches area names with German support."
+  source_files: [capabilities/area_resolver.py]
+  test_files: [tests/test_area_resolver_fuzzy.py]
+  status: implemented
+
+REQ-CAP-005:
+  category: capabilities
+  title: "KeywordIntent"
+  description: "LLM-based intent + domain + slot extraction."
+  source_files: [capabilities/keyword_intent.py]
+  test_files: [tests/test_keyword_intent_fuzzy.py]
+  status: implemented
+
+REQ-CAP-006:
+  category: capabilities
+  title: "IntentExecutor"
+  description: "BRIGHTNESS_STEP=35%, COVER_STEP=25%, min step 10%. KG prerequisites."
+  source_files: [capabilities/intent_executor.py]
+  test_files: [tests/test_intent_executor.py, tests/test_step_control.py]
+  status: implemented
+
+REQ-CAP-007:
+  category: capabilities
+  title: "IntentConfirmation"
+  description: "German confirmation templates from messages_de.py."
+  source_files: [capabilities/intent_confirmation.py]
+  test_files: [tests/test_response_builder.py]
+  status: implemented
+
+REQ-CAP-008:
+  category: capabilities
+  title: "CommandProcessor"
+  description: "Orchestrates: state filter → plural → disambiguate → execute → confirm → cache."
+  source_files: [capabilities/command_processor.py]
+  test_files: [tests/test_multi_command_blocking.py]
+  status: implemented
+
+REQ-CAP-009:
+  category: capabilities
+  title: "ImplicitIntent"
+  description: "Transforms zu dunkel → Licht heller. Fast path + LLM fallback."
+  source_files: [capabilities/implicit_intent.py]
+  test_files: [tests/integration/test_domain_filtering_llm.py]
+  status: implemented
+
+REQ-CAP-010:
+  category: capabilities
+  title: "AtomicCommand"
+  description: "Splits on und, dann, commas. Multi-area detection."
+  source_files: [capabilities/atomic_command.py]
+  test_files: [tests/test_cache_skip_logic.py]
+  status: implemented
+
+REQ-CAP-011:
+  category: capabilities
+  title: "MultiTurn Base"
+  description: "Mandatory/optional fields, auto-prompting, pending state."
+  source_files: [capabilities/multi_turn_base.py]
+  test_files: []
+  status: implemented
+
+REQ-CAP-012:
+  category: capabilities
+  title: "Timer"
+  description: "Duration mandatory. Optional: device_name, timer_name."
+  source_files: [capabilities/timer.py]
+  test_files: [tests/integration/test_timer_description.py]
+  status: implemented
+
+REQ-CAP-013:
+  category: capabilities
+  title: "Calendar"
+  description: "Summary + datetime + calendar mandatory. Relative dates. Confirmation."
+  source_files: [capabilities/calendar.py]
+  test_files: [tests/test_calendar.py, tests/test_calendar_intent.py]
+  status: implemented
+
+REQ-CAP-014:
+  category: capabilities
+  title: "Vacuum"
+  description: "Mode: vacuum/mop. Scope: room/floor/global."
+  source_files: [capabilities/vacuum.py]
+  test_files: [tests/integration/test_vacuum_mode.py]
+  status: implemented
+
+REQ-CAP-015:
+  category: capabilities
+  title: "KnowledgeGraph"
+  description: "POWERED_BY, COUPLED_WITH, LUX_SENSOR, ASSOCIATED_COVER. Learned aliases."
+  source_files: [capabilities/knowledge_graph.py]
+  test_files: [tests/test_knowledge_graph.py]
+  status: implemented
+
+REQ-CAP-016:
+  category: capabilities
+  title: "MCP Tools"
+  description: "9 tools: list_areas, list_entities, get_entity_details, etc."
+  source_files: [capabilities/mcp.py]
+  test_files: [tests/test_mcp_recovery.py, tests/test_memory_mcp.py]
+  status: implemented
+
+# =============================================================================
+# Execution
+# =============================================================================
+REQ-EXEC-001:
+  category: execution
+  title: "ExecutionPipeline Entry"
+  description: "Success → execute: filter → plural → disambiguate → execute → confirm → cache."
+  source_files: [execution_pipeline.py]
+  test_files: []
+  status: implemented
+
+REQ-EXEC-002:
+  category: execution
+  title: "State-Aware Filtering"
+  description: "Turn off → only ON entities. Turn on → only OFF. GetState → no filter."
+  source_files: [execution_pipeline.py]
+  test_files: []
+  status: implemented
+
+REQ-EXEC-003:
+  category: execution
+  title: "Global Query Handling"
+  description: "HassGetState with no entity_ids → all exposed entities in target domain."
+  source_files: [execution_pipeline.py]
+  test_files: [tests/test_get_state_response.py]
+  status: implemented
+
+REQ-EXEC-004:
+  category: execution
+  title: "Plural Detection"
+  description: "alle, beide → execute on all candidates without disambiguation."
+  source_files: [capabilities/command_processor.py]
+  test_files: []
+  status: implemented
+
+REQ-EXEC-005:
+  category: execution
+  title: "Disambiguation"
+  description: "2+ candidates → ask user. Pending state with candidates map."
+  source_files: [capabilities/disambiguation.py, capabilities/command_processor.py]
+  test_files: [tests/test_multi_command_blocking.py]
+  status: implemented
+
+REQ-EXEC-006:
+  category: execution
+  title: "KG Prerequisite Resolution"
+  description: "Check POWERED_BY/COUPLED_WITH before execution."
+  source_files: [capabilities/intent_executor.py]
+  test_files: [tests/test_knowledge_graph.py]
+  status: implemented
+
+REQ-EXEC-007:
+  category: execution
+  title: "Parameter Normalization"
+  description: "halb → 50, viertel → 25, percentages."
+  source_files: [capabilities/intent_executor.py]
+  test_files: [tests/test_intent_executor.py]
+  status: implemented
+
+REQ-EXEC-008:
+  category: execution
+  title: "Timebox Support"
+  description: "fuer X Minuten → script.timebox_entity_state with snapshot + restore."
+  source_files: [capabilities/intent_executor.py]
+  test_files: []
+  status: implemented
+
+REQ-EXEC-009:
+  category: execution
+  title: "Delay Support"
+  description: "in X Minuten → script.delay_action with target action + delay."
+  source_files: [capabilities/intent_executor.py]
+  test_files: []
+  status: implemented
+
+REQ-EXEC-010:
+  category: execution
+  title: "Cache Storage on Success"
+  description: "Store to cache after successful execution. Skip for NOCACHE_INTENTS."
+  source_files: [capabilities/command_processor.py]
+  test_files: [tests/test_semantic_cache.py]
+  status: implemented
+
+# =============================================================================
+# Internationalization
+# =============================================================================
+REQ-I18N-001:
+  category: i18n
+  title: "German-First Centralization"
+  description: "ALL user-facing strings in constants/messages_de.py."
+  source_files: [constants/messages_de.py]
+  test_files: [tests/test_messages_de.py]
+  status: implemented
+
+REQ-I18N-002:
+  category: i18n
+  title: "Umlaut Handling"
+  description: "Use normalize_umlauts() from utils/german_utils.py."
+  source_files: [utils/german_utils.py]
+  test_files: []
+  status: implemented
+
+REQ-I18N-003:
+  category: i18n
+  title: "Data-Driven Constants"
+  description: "Domain keywords, area aliases, global scope words in constants/."
+  source_files: [constants/area_keywords.py, constants/entity_keywords.py, constants/messages_de.py]
+  test_files: [tests/test_entity_keywords.py]
+  status: implemented
+
+# =============================================================================
+# Configuration
+# =============================================================================
+REQ-CONF-001:
+  category: configuration
+  title: "Service Domains"
+  description: "SERVICE_DOMAINS = {notify, tts, script, automation, scene}."
+  source_files: [const.py]
+  test_files: [tests/test_entity_resolver_service_domains.py]
+  status: implemented
+
+REQ-CONF-002:
+  category: configuration
+  title: "Light-Compatible Domains"
+  description: "LIGHT_COMPATIBLE_DOMAINS = {light, switch, input_boolean}."
+  source_files: [const.py]
+  test_files: [tests/test_dimmability_filtering.py]
+  status: implemented
+
+REQ-CONF-003:
+  category: configuration
+  title: "Expert Defaults"
+  description: "13 tunable parameters in EXPERT_DEFAULTS dict."
+  source_files: [const.py]
+  test_files: [tests/test_config_flow.py]
+  status: implemented
+
+REQ-CONF-004:
+  category: configuration
+  title: "Stage 3 Provider Selection"
+  description: "CONF_STAGE3_PROVIDER: gemini/openai/anthropic/grok."
+  source_files: [const.py, config_flow.py]
+  test_files: [tests/test_config_flow.py]
+  status: implemented
+
+# =============================================================================
+# Domain Support
+# =============================================================================
+REQ-DOM-001:
+  category: domain
+  title: "Light"
+  description: "Intents: TurnOn, TurnOff, LightSet, GetState, TemporaryControl."
+  source_files: [constants/domain_config.py, capabilities/intent_executor.py]
+  test_files: [tests/test_step_control.py, tests/test_dimmability_filtering.py]
+  status: implemented
+
+REQ-DOM-002:
+  category: domain
+  title: "Cover"
+  description: "Intents: TurnOn (open), TurnOff (close), SetPosition, GetState."
+  source_files: [constants/domain_config.py]
+  test_files: [tests/test_step_control.py]
+  status: implemented
+
+REQ-DOM-003:
+  category: domain
+  title: "Switch"
+  description: "Intents: TurnOn, TurnOff, GetState, TemporaryControl."
+  source_files: [constants/domain_config.py]
+  test_files: []
+  status: implemented
+
+REQ-DOM-004:
+  category: domain
+  title: "Climate"
+  description: "Intents: SetTemperature, TurnOn, TurnOff, GetState."
+  source_files: [constants/domain_config.py]
+  test_files: [tests/test_step_control.py]
+  status: implemented
+
+REQ-DOM-005:
+  category: domain
+  title: "Fan"
+  description: "Intents: TurnOn, TurnOff, GetState, TemporaryControl."
+  source_files: [constants/domain_config.py]
+  test_files: [tests/test_step_control.py]
+  status: implemented
+
+REQ-DOM-006:
+  category: domain
+  title: "Sensor"
+  description: "Intents: GetState (read-only)."
+  source_files: [constants/domain_config.py]
+  test_files: [tests/test_state_responses.py]
+  status: implemented
+
+REQ-DOM-007:
+  category: domain
+  title: "Timer"
+  description: "Intents: TimerSet (duration mandatory), TimerCancel."
+  source_files: [capabilities/timer.py]
+  test_files: [tests/integration/test_timer_description.py]
+  status: implemented
+
+REQ-DOM-008:
+  category: domain
+  title: "Calendar"
+  description: "Intents: CalendarCreate (summary + datetime + calendar mandatory)."
+  source_files: [capabilities/calendar.py]
+  test_files: [tests/test_calendar.py]
+  status: implemented
+
+REQ-DOM-009:
+  category: domain
+  title: "Vacuum"
+  description: "Intents: VacuumStart (room + mode mandatory)."
+  source_files: [capabilities/vacuum.py]
+  test_files: [tests/integration/test_vacuum_mode.py]
+  status: implemented
+
+REQ-DOM-010:
+  category: domain
+  title: "Automation"
+  description: "Intents: TurnOn, TurnOff, TemporaryControl."
+  source_files: [constants/domain_config.py]
+  test_files: []
+  status: implemented
+
+# =============================================================================
+# Testing
+# =============================================================================
+REQ-TEST-001:
+  category: testing
+  title: "Test Runner"
+  description: "bash scripts/run_tests.sh — auto venv, deps, env vars."
+  source_files: [scripts/run_tests.sh]
+  test_files: []
+  status: implemented
+
+REQ-TEST-002:
+  category: testing
+  title: "Every Change Needs a Test"
+  description: "Bug fixes and features MUST have a test."
+  source_files: []
+  test_files: []
+  status: implemented
+
+REQ-TEST-003:
+  category: testing
+  title: "Embedding Principles Verification"
+  description: "test_embedding_principles.py encodes all 8 cache principles."
+  source_files: []
+  test_files: [tests/test_embedding_principles.py]
+  status: implemented
+
+REQ-TEST-004:
+  category: testing
+  title: "Unit vs Integration Separation"
+  description: "Unit in tests/, integration in tests/integration/."
+  source_files: [scripts/run_tests.sh]
+  test_files: []
+  status: implemented
+
+# =============================================================================
+# Code Graph (meta-requirements)
+# =============================================================================
+REQ-GRAPH-001:
+  category: graph
+  title: "AST-Based Code Graph"
+  description: "SQLite graph from Python AST. Nodes: files, classes, functions, constants. Edges: imports, extends, tests, stage_uses."
+  source_files: [graph/build_graph.py]
+  test_files: [tests/test_code_graph.py]
+  status: implemented
+
+REQ-GRAPH-002:
+  category: graph
+  title: "Requirements as Structured Data"
+  description: "All REQ-* in graph/requirements.yaml. Graph builder loads into SQLite."
+  source_files: [graph/requirements.yaml]
+  test_files: [tests/test_code_graph.py]
+  status: implemented
+
+REQ-GRAPH-003:
+  category: graph
+  title: "MCP Query Tools"
+  description: "MCP server: file purpose, blast radius, requirement lookup, capability info, search."
+  source_files: [graph/graph_server.py]
+  test_files: [tests/test_code_graph.py]
+  status: implemented
+
+REQ-GRAPH-004:
+  category: graph
+  title: "Documentation Contract in Graph"
+  description: "Doc contract encoded as graph edges for blast-radius queries."
+  source_files: [graph/build_graph.py]
+  test_files: [tests/test_code_graph.py]
+  status: implemented
+
+# =============================================================================
+# Code Quality
+# =============================================================================
+REQ-QUAL-001:
+  category: quality
+  title: "No Bare Excepts"
+  description: "All except clauses must specify exception type. No bare except:."
+  source_files: []
+  test_files: []
+  status: implemented
+
+REQ-QUAL-002:
+  category: quality
+  title: "Safe Tool Argument Parsing"
+  description: "Malformed LLM tool args must not silently default to empty dict and execute."
+  source_files: [stage3_cloud.py, capabilities/mcp.py]
+  test_files: []
+  status: implemented
+
+REQ-QUAL-003:
+  category: quality
+  title: "No Dead Code"
+  description: "Unused capabilities, constants, modules must be removed."
+  source_files: []
+  test_files: []
+  status: implemented
+
+REQ-QUAL-004:
+  category: quality
+  title: "Consistent Import Style"
+  description: "All intra-package imports use relative imports. No absolute custom_components imports."
+  source_files: [capabilities/plural_detection.py, capabilities/command_processor.py, capabilities/calendar.py, capabilities/multi_turn_base.py, capabilities/timer.py]
+  test_files: []
+  status: implemented
+
+REQ-QUAL-005:
+  category: quality
+  title: "DRY Constants"
+  description: "German strings and question templates have single source of truth in constants/messages_de.py."
+  source_files: [constants/messages_de.py, utils/response_builder.py]
+  test_files: []
+  status: implemented
+
+REQ-QUAL-006:
+  category: quality
+  title: "Function Size Limit"
+  description: "Functions should not exceed ~150 lines. Large functions extract domain handlers."
+  source_files: [capabilities/intent_executor.py]
+  test_files: [tests/test_intent_executor.py]
+  status: implemented
+
+REQ-QUAL-007:
+  category: quality
+  title: "Shared Test Fixtures"
+  description: "Common test helpers like make_input() defined once in tests/conftest.py."
+  source_files: [tests/conftest.py]
+  test_files: []
+  status: implemented
+
+REQ-QUAL-008:
+  category: quality
+  title: "MCP Loop Deduplication"
+  description: "MCP multi-turn LLM tool-calling loop is a single _llm_tool_loop method."
+  source_files: [capabilities/mcp.py]
+  test_files: []
+  status: implemented

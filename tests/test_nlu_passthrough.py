@@ -75,11 +75,11 @@ async def test_bypass_intents_skip_cache(hass, config_entry):
     stage1.capabilities_map["semantic_cache"] = mock_cache
     
     user_input = MagicMock()
-    user_input.text = "Stelle einen Timer"
+    user_input.text = "Lösche den Timer"
     user_input.conversation_id = "test_conv_3"
     
-    # Context from Stage0 with timer intent
-    context = {"nlu_intent": "HassTimerSet"}
+    # Context from Stage0 with timer cancel intent (still bypasses cache)
+    context = {"nlu_intent": "HassTimerCancel"}
     
     result = await stage1.process(user_input, context)
     

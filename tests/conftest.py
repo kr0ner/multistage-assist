@@ -8,13 +8,13 @@ _LOGGER = logging.getLogger(__name__)
 
 # --- PRE-IMPORT MOCKING ---
 # We need to mock Home Assistant modules before they're imported anywhere.
-if "homeassistant" not in sys.modules:
+if True: # Force mocking even if already partially mocked
     ha_mock = MagicMock()
     ha_mock.__path__ = [] # Mark as package
     sys.modules["homeassistant"] = ha_mock
     sys.modules["homeassistant.core"] = MagicMock()
     sys.modules["homeassistant.util"] = MagicMock()
-    
+
     import datetime as dt_pkg
     class MockDT:
         @staticmethod
@@ -22,7 +22,7 @@ if "homeassistant" not in sys.modules:
             try:
                 if "t" in s: s = s.replace("t", "T")
                 return dt_pkg.datetime.fromisoformat(s.replace("Z", "+00:00"))
-            except:
+            except (ValueError, TypeError):
                 return dt_pkg.datetime.now(dt_pkg.timezone.utc)
         @staticmethod
         def utcnow():
@@ -30,12 +30,12 @@ if "homeassistant" not in sys.modules:
     ha_mock.util = MagicMock()
     ha_mock.util.dt = MockDT
     sys.modules["homeassistant.util.dt"] = MockDT
-    
+
     sys.modules["homeassistant.config_entries"] = MagicMock()
     sys.modules["homeassistant.const"] = MagicMock()
     sys.modules["homeassistant.helpers"] = MagicMock()
     sys.modules["homeassistant.helpers.typing"] = MagicMock()
-    
+
     # Mock google package properly
     sys.modules["google"] = MagicMock()
     sys.modules["google"].__path__ = []  # Mark as package
@@ -644,7 +644,7 @@ def config_entry():
     entry.data = {
         "stage1_ip": os.environ.get("OLLAMA_HOST", "127.0.0.1"),
         "stage1_port": int(os.environ.get("OLLAMA_PORT", "11434")),
-        "stage1_model": os.environ.get("OLLAMA_MODEL", "qwen3.5:4b-q4_K_M"),
+        "stage1_model": os.environ.get("OLLAMA_MODEL", "qwen3:4b-q4_K_M"),
         "google_api_key": "test_key",
         "stage2_model": "gemini-test",
     }
@@ -677,10 +677,27 @@ def integration_llm_config():
     import os
     host = os.environ.get("OLLAMA_HOST", "127.0.0.1")
     port = int(os.environ.get("OLLAMA_PORT", "11434"))
-    model = os.environ.get("OLLAMA_MODEL", "qwen3.5:4b-q4_K_M")
-    
+    model = os.environ.get("OLLAMA_MODEL", "qwen3:4b-q4_K_M")
+
     return {
         "stage1_ip": host,
         "stage1_port": port,
         "stage1_model": model,
     }
+
+
+# --- SHARED TEST HELPERS ---
+
+def make_input(text: str):
+    """Create a ConversationInput for testing.
+    
+    Shared helper to avoid duplicating this across test files (REQ-QUAL-007).
+    """
+    from homeassistant.components import conversation
+    return conversation.ConversationInput(
+        text=text,
+        context=MagicMock(),
+        conversation_id="test_id",
+        device_id="test_device",
+        language="de",
+    )

@@ -369,19 +369,62 @@ class McpToolCapability(Capability):
 
     # --- LLM Reasoning Methods ---
 
+    async def _llm_tool_loop(
+        self,
+        llm_config: Dict[str, Any],
+        system_prompt: str,
+        user_message: str,
+        result_key: str,
+        domain: str = None,
+        max_turns: int = 4,
+    ) -> Optional[Any]:
+        """Generic multi-turn LLM tool-calling loop.
+        
+        Args:
+            llm_config: Dict with ip, port, model
+            system_prompt: System prompt for the LLM
+            user_message: Initial user message
+            result_key: Key to look for in LLM response (e.g. "intent", "final_answer")
+            domain: Optional domain filter for tools
+            max_turns: Maximum LLM turns
+            
+        Returns:
+            The value of result_key from parsed response, or None if not resolved.
+        """
+        from ..ollama_client import OllamaClient
+        from ..utils.json_utils import extract_json_from_llm_string
+
+        ip, port, model = llm_config.get("ip"), llm_config.get("port"), llm_config.get("model")
+        if not ip or not port:
+            return None
+        client = OllamaClient(ip, int(port))
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
+
+        for _ in range(max_turns):
+            response = await client.chat_completion(model, messages, temperature=0.0)
+            messages.append({"role": "assistant", "content": response})
+            try:
+                data = extract_json_from_llm_string(response)
+                if result_key in data:
+                    return data if result_key == "intent" else data[result_key]
+                if "tool" in data:
+                    res = await self.execute_tool(data["tool"], data.get("args", {}))
+                    messages.append({"role": "user", "content": f"Result: {json.dumps(res)}"})
+                    continue
+            except (ValueError, KeyError, TypeError) as e:
+                _LOGGER.debug("[MCP] LLM tool loop parse error: %s", e)
+        return None
+
     async def resolve_intent_via_llm(
         self,
         text: str,
         llm_config: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """Resolve user intent using MCP tools via multi-turn LLM reasoning."""
-        from ..ollama_client import OllamaClient
-        from ..utils.json_utils import extract_json_from_llm_string
-        
-        ip, port, model = llm_config.get("ip"), llm_config.get("port"), llm_config.get("model")
-        if not ip or not port: return None
-        client = OllamaClient(ip, int(port))
-        
         tools_def = json.dumps(self.get_tools(), indent=2)
         system_prompt = f"""You are a professional Home Assistant smart home assistant. 
 Determine the user's intent and extract required slots for controlling devices.
@@ -391,20 +434,9 @@ Tools to explore the home: {tools_def}
 
 OUTPUT: {{"tool": "name", "args": {{}}}} OR {{"intent": "Name", "slots": {{}}}}
 """
-        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Request: '{text}'"}]
-
-        for _ in range(4):
-            response = await client.chat_completion(model, messages, temperature=0.0)
-            messages.append({"role": "assistant", "content": response})
-            try:
-                data = extract_json_from_llm_string(response)
-                if "intent" in data: return data
-                if "tool" in data:
-                    res = await self.execute_tool(data["tool"], data.get("args", {}))
-                    messages.append({"role": "user", "content": f"Result: {json.dumps(res)}"})
-                    continue
-            except: pass
-        return None
+        return await self._llm_tool_loop(
+            llm_config, system_prompt, f"Request: '{text}'", "intent"
+        )
 
     async def resolve_entity_via_llm(
         self, 
@@ -415,29 +447,12 @@ OUTPUT: {{"tool": "name", "args": {{}}}} OR {{"intent": "Name", "slots": {{}}}}
         llm_config: Dict[str, Any]
     ) -> List[str]:
         """Resolve entity using MCP tools via multi-turn LLM loop."""
-        from ..ollama_client import OllamaClient
-        from ..utils.json_utils import extract_json_from_llm_string
-        
-        ip, port, model = llm_config.get("ip"), llm_config.get("port"), llm_config.get("model")
-        if not ip or not port: return []
-        client = OllamaClient(ip, int(port))
-        
         tools_def = json.dumps(self.get_tools(domain=domain), indent=2)
-        system_prompt = f"You are a Home Assistant expert. Find the correct entity ID for: '{text}' (Intent: {intent}). Tools to search the home: {tools_def}\nOUTPUT: {{\"tool\": \"...\"}} OR {{\"final_answer\": [\"id\"]}}"
-        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Slots: {slots}"}]
-
-        for _ in range(4):
-            response = await client.chat_completion(model, messages, temperature=0.0)
-            messages.append({"role": "assistant", "content": response})
-            try:
-                data = extract_json_from_llm_string(response)
-                if "final_answer" in data: return data["final_answer"]
-                if "tool" in data:
-                    res = await self.execute_tool(data["tool"], data.get("args", {}))
-                    messages.append({"role": "user", "content": f"Result: {json.dumps(res)}"})
-                    continue
-            except: pass
-        return []
+        system_prompt = f"You are a Home Assistant expert. Find the correct entity ID for the user's request (Intent: {intent}). Tools: {tools_def}\nOUTPUT: {{\"tool\": \"...\"}} OR {{\"final_answer\": [\"id\"]}}"
+        result = await self._llm_tool_loop(
+            llm_config, system_prompt, f"Slots: {slots}", "final_answer", domain=domain
+        )
+        return result if result is not None else []
 
     async def run(self, user_input, **kwargs) -> Dict[str, Any]:
         return {}

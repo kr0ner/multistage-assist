@@ -14,7 +14,7 @@
 |-------|---------|------------|
 | **Stage 0** | Fast path - instant NLU | Home Assistant built-in |
 | **Stage 1** | Semantic cache lookup | Cached command replay |
-| **Stage 2** | Local LLM intent | Ollama (qwen3.5:4b-q4_K_M) |
+| **Stage 2** | Local LLM intent | Ollama (qwen3:4b-q4_K_M) |
 | **Stage 3** | Cloud fallback + chat | Google Gemini |
 
 ## Key Features
@@ -30,7 +30,7 @@
 ### Prerequisites
 
 - Home Assistant 2024.1.0+
-- [Ollama](https://ollama.ai) with `qwen3.5:4b-q4_K_M` and `models/multilingual-minilm`
+- [Ollama](https://ollama.ai) with `qwen3:4b-q4_K_M` and `models/multilingual-minilm`
 - Google Gemini API Key
 - Optional: [Semantic Cache Addon](https://github.com/kr0ner/semantic-cache-addon)
 
@@ -53,14 +53,14 @@ multistage_assist:
   vector_threshold: 0.85
   hybrid_enabled: true
   hybrid_alpha: 0.7
-  
+
   # Low-hardware mode (cache-only, no LLM in Stage1)
   skip_stage1_llm: false
-  
+
   # LLM behavior
   llm_timeout: 30
   llm_max_retries: 2
-  
+
   # Debugging
   debug_cache_hits: false
   debug_llm_prompts: false

@@ -23,22 +23,23 @@ class ImplicitIntentCapability(Capability):
     description = "Handles implicit intents like 'too dark' or 'too cold' by translating them into explicit smart home commands. Uses fast path for common phrases and LLM for complex context-aware rephrasing."
 
     PROMPT = {
-        "system": """You are a smart home intent parser.
-Task: Translate implicit statements into explicit German commands.
+        "system": """You are a smart home intent translator.
+Task: Convert implicit user complaints into explicit device commands in the same language.
 
-CRITICAL RULES:
-1. **IMPLICIT BRIGHTNESS/TEMPERATURE RULES** (VERY IMPORTANT):
-   - "Zu dunkel" / "es ist dunkel" → "Mache Licht heller" (increase brightness)
-   - "Zu hell" / "es ist hell" → "Mache Licht dunkler" (decrease brightness)
-   - "Zu kalt" → "Mache Heizung wärmer" / "Stelle Heizung höher"
-   - "Zu warm" → "Mache Heizung kälter" / "Stelle Heizung niedriger"
-2. Use specific device names if given.
-3. **NEVER INVENT** durations or constraints that are not in the original input!
+Rules:
+1. Complaints about conditions map to the relevant device:
+   - Too dark → increase light brightness
+   - Too bright → decrease light brightness
+   - Too cold → increase heating
+   - Too warm → decrease heating
+   - Too loud → decrease volume
+   - Too quiet → increase volume
+2. Preserve area/room references from the input.
+3. Preserve device names if specified.
+4. Never invent parameters not present in the input.
+5. Output valid JSON only: a JSON array of strings.
 
-Examples:
-Input: "Im Büro ist es zu dunkel"
-Output: ["Mache das Licht im Büro heller"]
-
+Example:
 Input: "Es ist zu hell im Wohnzimmer"
 Output: ["Mache das Licht im Wohnzimmer dunkler"]
 """,

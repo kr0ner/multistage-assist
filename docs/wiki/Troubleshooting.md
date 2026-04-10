@@ -76,8 +76,9 @@ logger:
 | Logger | Shows |
 |--------|-------|
 | `stage0` | NLU results |
-| `stage1` | LLM flow |
-| `clarification` | Command splitting |
-| `keyword_intent` | Intent extraction |
+| `stage1_cache` | Cache lookup hits/misses |
+| `stage2_llm` | LLM intent parsing |
+| `stage3_cloud` | Cloud LLM calls |
+| `semantic_cache` | Cache operations |
 | `entity_resolver` | Entity matching |
 | `intent_executor` | Execution |

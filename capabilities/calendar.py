@@ -9,9 +9,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.components import conversation
 
 from .multi_turn_base import MultiTurnCapability
-from custom_components.multistage_assist.conversation_utils import make_response
+from ..conversation_utils import make_response
 from ..utils.fuzzy_utils import fuzzy_match_candidates
 from ..constants.messages_de import CALENDAR_MESSAGES, CONFIRMATION_TEMPLATES
+from ..constants.entity_keywords import CALENDAR_GENERIC_TITLES
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -50,12 +51,6 @@ Parse the following information if present:
 - is_all_day: true if no specific time is mentioned
 
 Today's date for reference: {today}
-
-Examples:
-"Termin morgen um 10 Uhr beim Zahnarzt" → {{"summary": "Zahnarzt", "start_date_time": "2023-12-14 10:00", "duration_minutes": 60}}
-"Geburtstag am 25. Dezember ganztägig" → {{"summary": "Geburtstag", "start_date": "2023-12-25", "end_date": "2023-12-26", "is_all_day": true}}
-"Meeting in 2 Stunden" → {{"summary": "Meeting", "start_date_time": "2023-12-13 14:00", "duration_minutes": 60}}
-"Arzttermin nächsten Montag 14:30 in der Praxis Dr. Müller" → {{"summary": "Arzttermin", "start_date_time": "2023-12-18 14:30", "location": "Praxis Dr. Müller", "duration_minutes": 60}}
 """,
         "schema": {
             "type": "object",
@@ -155,10 +150,7 @@ Examples:
         return None
     
     # Generic titles that should prompt for a real title
-    GENERIC_TITLES = {
-        "termin", "kalendereintrag", "eintrag", "event", "meeting", 
-        "besprechung", "termin erstellen", "neuer termin"
-    }
+    GENERIC_TITLES = CALENDAR_GENERIC_TITLES
     
     def _has_field(self, data: Dict[str, Any], field: str) -> bool:
         """Check if field has a valid value - special handling for datetime and summary."""

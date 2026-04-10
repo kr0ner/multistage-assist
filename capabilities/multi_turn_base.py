@@ -5,7 +5,7 @@ from abc import abstractmethod
 from typing import Any, Dict, List, Optional
 
 from .base import Capability
-from custom_components.multistage_assist.conversation_utils import make_response
+from ..conversation_utils import make_response
 from ..constants.messages_de import CONFIRMATION_TEMPLATES, SYSTEM_MESSAGES
 
 _LOGGER = logging.getLogger(__name__)
@@ -149,7 +149,8 @@ class MultiTurnCapability(Capability):
         self, user_input, field: str, data: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Ask user for a missing field."""
-        prompt = self.FIELD_PROMPTS.get(field, f"Bitte gib {field} an.")
+        from ..constants.messages_de import SYSTEM_MESSAGES
+        prompt = self.FIELD_PROMPTS.get(field, SYSTEM_MESSAGES["ask_field_generic"].format(field=field))
         
         return {
             "status": "handled",

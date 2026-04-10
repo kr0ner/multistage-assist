@@ -253,20 +253,8 @@ def build_question(field: str, context: str = None) -> str:
     Returns:
         German question string
     """
-    questions = {
-        "name": "Wie soll es heißen?",
-        "summary": "Wie soll der Termin heißen?",
-        "title": "Wie soll der Titel lauten?",
-        "duration": "Wie lange?",
-        "time": "Um wie viel Uhr?",
-        "date": "An welchem Tag?",
-        "datetime": "Wann soll es sein?",
-        "device": "Auf welchem Gerät?",
-        "area": "In welchem Bereich?",
-        "calendar": "In welchen Kalender?",
-    }
-    
-    return questions.get(field, f"Bitte gib {field} an.")
+    from ..constants.messages_de import QUESTION_TEMPLATES
+    return QUESTION_TEMPLATES.get(field, f"Bitte gib {field} an.")
 
 
 def build_selection_question(

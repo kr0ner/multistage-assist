@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 from .capabilities.command_processor import CommandProcessorCapability
 from .capabilities.semantic_cache import SemanticCacheCapability
 from .stage_result import StageResult
+from .const import SERVICE_DOMAINS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -88,9 +89,6 @@ class ExecutionPipeline:
                         # CRITICAL: Must filter out non-exposed entities even for global queries
                         from homeassistant.components.conversation import DOMAIN as CONVERSATION_DOMAIN
                         from homeassistant.components.homeassistant.exposed_entities import async_should_expose
-                        
-                        # service domains (like notify) can't be exposed via UI, so skip
-                        SERVICE_DOMAINS = {"notify", "tts", "script", "automation", "scene"}
 
                         exposed_entities = [
                             eid for eid in all_entities

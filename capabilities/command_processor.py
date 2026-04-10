@@ -13,7 +13,7 @@ from .plural_detection import PluralDetectionCapability
 from .disambiguation_select import DisambiguationSelectCapability
 from .knowledge_graph import KnowledgeGraphCapability
 
-from custom_components.multistage_assist.conversation_utils import (
+from ..conversation_utils import (
     make_response,
     error_response,
     filter_candidates_by_state,
@@ -23,12 +23,13 @@ from ..constants.messages_de import QUESTION_TEMPLATES, SYSTEM_MESSAGES
 _LOGGER = logging.getLogger(__name__)
 
 # ============================================================================
-# INTENTS THAT SHOULD NEVER BE CACHED
+# INTENTS TO SKIP RE-CACHING
 # ============================================================================
-# Timer and calendar commands have variable context (names, descriptions)
-# that can't be generalized. See stage1_cache.py for detailed explanation.
+# Timer/calendar intents are cached as intent patterns (empty variable slots).
+# Skip re-caching on cache hits to avoid overwriting the pattern with specific
+# instance data (descriptions, durations etc).
 # ============================================================================
-NOCACHE_INTENTS = {"HassTimerSet", "HassTimerCancel"}
+NOCACHE_INTENTS = {"HassTimerSet", "HassTimerCancel", "HassCalendarCreate"}
 
 
 class CommandProcessorCapability(Capability):

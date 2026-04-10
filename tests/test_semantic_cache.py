@@ -191,19 +191,24 @@ async def test_cache_skips_short_commands(semantic_cache, hass):
     assert len(semantic_cache._cache) == 0
 
 
-async def test_cache_skips_timer_commands(semantic_cache, hass):
-    """Test that timer commands are not cached."""
+async def test_cache_stores_timer_with_stripped_slots(semantic_cache, hass):
+    """Test that timer commands ARE cached but variable slots are stripped."""
     await semantic_cache.store(
         text="Stelle einen Timer für 5 Minuten",
         intent="HassTimerSet",
         entity_ids=[],
-        slots={"duration": "5 minutes"},
+        slots={"duration_minutes": 5, "description": "Pizza"},
         verified=True,
         required_disambiguation=False,
         disambiguation_options=None,
     )
 
-    assert len(semantic_cache._cache) == 0
+    assert len(semantic_cache._cache) == 1
+    entry = semantic_cache._cache[0]
+    assert entry.intent == "HassTimerSet"
+    # Variable slots should be stripped 
+    assert "duration_minutes" not in entry.slots
+    assert "description" not in entry.slots
 
 
 async def test_cache_stores_relative_commands(semantic_cache, hass):
@@ -395,9 +400,10 @@ async def test_lookup_preserves_query_casing(semantic_cache, hass):
         # Force a miss by ensuring embedding of query returns None
         semantic_cache._get_embedding = AsyncMock(return_value=None)
         
-        # Query with specific casing
+        # Query with specific casing — normalize_for_cache will lowercase and
+        # convert fractions ("zur Hälfte" → "50 prozent") before sending to addon
         await semantic_cache.lookup("Fahr den Rollladen im Büro zur Hälfte runter")
         
-        # Verify that the JSON payload contains the cased query
+        # Verify the normalized query is sent (lowercase, umlauts→ascii, fraction→centroid)
         args, kwargs = mock_post.call_args
-        assert kwargs["json"]["query"] == "Fahr den Rollladen im Büro zur Hälfte runter"
+        assert kwargs["json"]["query"] == "fahr den rollladen im buero zur 50 prozent runter"

@@ -23,6 +23,7 @@ import numpy as np
 
 from .base import Capability
 from ..utils.german_utils import canonicalize, normalize_for_cache
+from ..constants.entity_keywords import ON_INDICATORS, OFF_INDICATORS, QUESTION_KEYWORDS
 from ..utils.semantic_cache_types import (
     CacheEntry,
     MIN_CACHE_WORDS,
@@ -71,6 +72,9 @@ class SemanticCacheCapability(Capability):
         # Local state
         self.enabled = config.get("cache_enabled", True)
         self.max_entries = config.get("cache_max_entries", DEFAULT_MAX_ENTRIES)
+        
+        # Security key for production cache modifications
+        self.prod_cache_key = config.get("prod_cache_key") or os.getenv("PROD_CACHE_KEY", "")
 
         _LOGGER.info(
             "[SemanticCache] Configured: enabled=%s, add-on=%s:%s (Add-on Only Mode)",
@@ -152,10 +156,14 @@ class SemanticCacheCapability(Capability):
         url = self._embedding_url("/embed")
         entries = [{"text": t, "intent": "none", "entity_ids": [], "slots": {}} for t in texts]
         payload = {"entries": entries}
+        
+        headers = {}
+        if self.prod_cache_key:
+            headers["Authorization"] = f"Bearer {self.prod_cache_key}"
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, timeout=60) as resp:
+                async with session.post(url, json=payload, timeout=60, headers=headers) as resp:
                     if resp.status != 200:
                         _LOGGER.warning("[SemanticCache] Batch embed failed: %d", resp.status)
                         return None
@@ -169,12 +177,16 @@ class SemanticCacheCapability(Capability):
         """Get embedding for normalized text using the addon's /embed/text endpoint."""
         url = self._embedding_url("/embed/text")
         payload = {"text": text.strip()} # Already lower/normed from normalize_for_cache
+        
+        headers = {}
+        if self.prod_cache_key:
+            headers["Authorization"] = f"Bearer {self.prod_cache_key}"
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, timeout=15) as resp:
+                async with session.post(url, json=payload, timeout=15, headers=headers) as resp:
                     if resp.status != 200:
-                        _LOGGER.warning("[SemanticCache] Add-on embedding failed: %d", resp.status)
+                        _LOGGER.warning("[SemanticCache] Add-on embedding failed: %d (check PROD_CACHE_KEY)", resp.status)
                         return None
                     data = await resp.json()
                     embedding = np.array(data["embedding"], dtype=np.float32)
@@ -314,7 +326,7 @@ class SemanticCacheCapability(Capability):
         if len(text.strip().split()) < MIN_CACHE_WORDS:
             return
 
-        if intent in ("HassCalendarCreate", "HassTimerSet", "HassStartTimer", "TemporaryControl"):
+        if intent in ("HassStartTimer", "TemporaryControl"):
             return
 
         text_norm, _ = self._normalize_numeric_value(text)
@@ -334,9 +346,14 @@ class SemanticCacheCapability(Capability):
                 await self._save_cache()
                 return
 
+        # Strip variable context from timer/calendar before caching
+        # These intents are cached as patterns; variable fields are re-extracted from original text
+        _VARIABLE_SLOTS = {"description", "summary", "location", "duration_minutes",
+                           "start_date", "end_date", "start_date_time", "end_date_time"}
+
         entry = CacheEntry(
             text=text, embedding=embedding.tolist(), intent=intent, entity_ids=entity_ids,
-            slots={k: v for k, v in (slots or {}).items() if k not in ("brightness", "_prerequisites")},
+            slots={k: v for k, v in (slots or {}).items() if k not in {"brightness", "_prerequisites"} | _VARIABLE_SLOTS},
             required_disambiguation=required_disambiguation,
             disambiguation_options=disambiguation_options,
             hits=1, last_hit=time.strftime("%Y-%m-%dT%H:%M:%S"), verified=True
@@ -366,7 +383,7 @@ class SemanticCacheCapability(Capability):
             data = await self.hass.async_add_executor_job(_read)
             for item in data.get("entries", []):
                 try: self._cache.append(CacheEntry(**item))
-                except: continue
+                except (TypeError, KeyError, ValueError): continue
             if self._cache:
                 self._embeddings_matrix = np.array([e.embedding for e in self._cache])
                 self._embedding_dim = self._embeddings_matrix.shape[1]
@@ -417,8 +434,7 @@ class SemanticCacheCapability(Capability):
         entry_slots = (entry.slots if hasattr(entry, "slots") else entry.get("slots", {})) or {}
 
         # 1. Question vs Command separation
-        # Questions typically start with these or contain status-oriented verbs
-        question_keywords = ["ist ", "sind ", "brennt ", "leuchtet ", "status", "wie ", "wo ", "welche "]
+        question_keywords = QUESTION_KEYWORDS
         is_query_question = any(q in query_canon for q in question_keywords) or query_canon.endswith("?")
         
         if is_query_question and intent not in ["HassGetState", "HassTimerStatus"]:
@@ -428,11 +444,8 @@ class SemanticCacheCapability(Capability):
             return False
 
         # 2. Opposite Intent Blocking (Principle 5)
-        # TurnOn keywords: an, oeffne, hoch, heller, mach
-        # TurnOff keywords: aus, schliesse, runter, zu, dunkler, mach
-        
-        ON_INDICATORS = {" an", "oeffne", " hoch", "heller", "helligkeit erhoehen"}
-        OFF_INDICATORS = {" aus", "schliesse", " runter", " zu", "dunkler", "helligkeit verringern"}
+        # Ensure cached intent direction matches query direction
+        # Ensure cached intent direction matches query direction
 
         if intent in ("HassTurnOn", "HassLightSet"):
             if any(off in query_canon for off in OFF_INDICATORS):

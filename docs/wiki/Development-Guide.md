@@ -8,28 +8,54 @@ Guide for developers contributing to MultiStage Assist.
 multistage_assist/
 ├── __init__.py            # Integration setup
 ├── conversation.py        # Main orchestrator (4-stage pipeline)
+├── conversation_utils.py  # Response helpers, duration parsing
 ├── execution_pipeline.py  # Unified execution for all stages
 ├── stage0.py              # Stage 0: NLU (Home Assistant built-in)
 ├── stage1_cache.py        # Stage 1: Semantic cache lookup
 ├── stage2_llm.py          # Stage 2: Local LLM (Ollama)
-├── stage3_gemini.py       # Stage 3: Gemini cloud fallback
-├── base_stage.py          # Base class for stages
+├── stage3_cloud.py        # Stage 3: Cloud LLM (Gemini/OpenAI/Anthropic/Grok)
+├── base_stage.py          # Base class for stages with DI
 ├── stage_result.py        # StageResult data class
+├── const.py               # All configuration constants
+├── config_flow.py         # HA config UI
+├── ollama_client.py       # Local Ollama API client
+├── prompt_executor.py     # Shared LLM prompt execution
 ├── capabilities/          # Modular capability implementations
-│   ├── semantic_cache.py      # Cache lookup via cache add-on
-│   ├── semantic_cache_builder.py  # Anchor pattern generation
+│   ├── base.py                # Abstract Capability base class
+│   ├── semantic_cache.py      # Cache lookup (vector + BM25 hybrid)
 │   ├── keyword_intent.py      # LLM-based intent detection
 │   ├── entity_resolver.py     # Entity ID resolution
-│   ├── intent_executor.py     # HA intent execution
-│   └── ...                    # Other capabilities
+│   ├── area_resolver.py       # Fuzzy area matching
+│   ├── intent_executor.py     # HA intent execution + state verify
+│   ├── intent_confirmation.py # Natural confirmation messages
+│   ├── command_processor.py   # Execution orchestration
+│   ├── knowledge_graph.py     # Device deps, aliases, personal data
+│   ├── implicit_intent.py     # Vague command rephrasing
+│   ├── atomic_command.py      # Compound command splitting
+│   ├── mcp.py                 # MCP tool registry for LLM access
+│   ├── prompt_context.py      # LLM prompt context builder
+│   ├── timer.py               # Timer creation (multi-turn)
+│   ├── calendar.py            # Calendar events (multi-turn)
+│   ├── vacuum.py              # Vacuum room/mode parsing
+│   ├── step_control.py        # Relative adjustments
+│   ├── plural_detection.py    # Singular/plural detection
+│   ├── disambiguation.py      # Entity selection
+│   └── disambiguation_select.py
 ├── constants/             # Configuration constants
 │   ├── domain_config.py       # Domain-specific config
 │   ├── entity_keywords.py     # German domain keywords
-│   └── messages_de.py         # German response messages
+│   ├── messages_de.py         # German response messages
+│   ├── area_keywords.py       # Area aliases, prepositions, floors
+│   └── sensor_units.py        # Sensor unit mappings
 ├── utils/                 # Utility modules
-│   ├── knowledge_graph.py     # Entity relationships
+│   ├── german_utils.py        # Cache normalization, duration extraction
+│   ├── fuzzy_utils.py         # Levenshtein matching
 │   ├── response_builder.py    # German text generation
-│   └── ...
+│   ├── duration_utils.py      # Duration parsing
+│   ├── json_utils.py          # LLM response JSON extraction
+│   ├── service_discovery.py   # HA service discovery
+│   ├── semantic_cache_types.py # CacheEntry dataclass, constants
+│   └── semantic_cache_builder.py # Anchor pattern generation
 ├── scripts/               # HA scripts for temp/delay actions
 └── tests/                 # Test suite
 ```
@@ -62,8 +88,9 @@ User Input → conversation.py
 └─────────────────────────────────────────────┘
     ↓ (escalate if unresolved or chat request)
 ┌─────────────────────────────────────────────┐
-│ Stage 3: Gemini (stage3_gemini.py)          │
-│ • Cloud fallback for complex cases          │
+│ Stage 3: Cloud LLM (stage3_cloud.py)        │
+│ • Polymorphic (Gemini/OpenAI/Anthropic/Grok)│
+│ • Multi-turn MCP tool reasoning (5 turns)   │
 │ • Chat mode for general conversation        │
 └─────────────────────────────────────────────┘
     ↓

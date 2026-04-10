@@ -148,8 +148,17 @@ class Stage3CloudProcessor(BaseStage):
                 tool_name = tc["name"]
                 args = tc["args"]
                 if isinstance(args, str):
-                    try: args = json.loads(args)
-                    except: args = {}
+                    try:
+                        args = json.loads(args)
+                    except (json.JSONDecodeError, ValueError):
+                        _LOGGER.warning("[Stage 3] Malformed tool args for %s: %s", tool_name, args)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.get("id"),
+                            "name": tool_name,
+                            "content": json.dumps({"error": "Invalid JSON arguments"})
+                        })
+                        continue
                 
                 _LOGGER.info("[Stage 3] Tool Call: %s(%s)", tool_name, args)
                 result = await mcp.execute_tool(tool_name, args)

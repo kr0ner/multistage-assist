@@ -36,13 +36,37 @@ DEFAULT_THRESHOLD = 0.85
 
 
 async def call_lookup(query: str) -> dict:
-    """Call lookup API and return result."""
+    """Helper to call reranker lookup."""
     url = f"http://{CACHE_HOST}:{CACHE_PORT}/lookup"
     payload = {"query": query}
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload, timeout=30) as resp:
-            return await resp.json()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, timeout=30) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise Exception(f"Lookup failed ({resp.status}): {text}")
+                return await resp.json()
+    except Exception as e:
+        print(f"ERROR: Lookup failed for '{query}': {e}")
+        return {"score": 0.0, "candidates": []}
+
+def format_candidates(result: dict) -> str:
+    """Format top candidates for failure messages."""
+    candidates = [f"- {c['text']} ({c['score']:.3f})" for c in result.get("candidates", [])]
+    return "Top candidates:\n" + "\n".join(candidates) if candidates else "No candidates found."
+
+def assert_hit(query: str, result: dict, threshold: float):
+    """Assert that a query resulted in a hit."""
+    score = result.get("score", 0)
+    assert score >= threshold, \
+        f"Expected HIT for '{query}' but got score {score:.3f} (threshold {threshold})\n{format_candidates(result)}"
+
+def assert_miss(query: str, result: dict, threshold: float, description: str = ""):
+    """Assert that a query resulted in a miss."""
+    score = result.get("score", 0)
+    desc_str = f" ({description})" if description else ""
+    assert score < threshold, \
+        f"Expected MISS for '{query}'{desc_str} but got score {score:.3f} (threshold {threshold})\n{format_candidates(result)}"
 
 
 async def check_addon_available() -> bool:
@@ -54,7 +78,7 @@ async def check_addon_available() -> bool:
                 timeout=2
             ) as resp:
                 return resp.status == 200
-    except:
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
         return False
 
 
@@ -105,12 +129,7 @@ class TestHassTurnOnAnchorHits:
     async def test_turn_on_hit(self, query):
         """Test that TurnOn synonyms score above threshold."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        threshold = DOMAIN_THRESHOLDS["light"]
-        
-        assert score >= threshold, \
-            f"Expected HIT for '{query}' but got score {score:.3f} (threshold {threshold})"
+        assert_hit(query, result, DOMAIN_THRESHOLDS["light"])
 
 
 class TestHassTurnOnAnchorMisses:
@@ -134,11 +153,7 @@ class TestHassTurnOnAnchorMisses:
     async def test_turn_on_miss(self, query, reason):
         """Test that non-matching queries score below threshold."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score < DOMAIN_THRESHOLDS["light"], \
-            f"Expected MISS for '{query}' ({reason}) but got score {score:.3f}"
+        assert_miss(query, result, DOMAIN_THRESHOLDS["light"], reason)
 
 
 # ============================================================================
@@ -167,11 +182,7 @@ class TestHassTurnOffAnchorHits:
     async def test_turn_off_hit(self, query):
         """Test TurnOff anchor hits."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score >= DOMAIN_THRESHOLDS["light"], \
-            f"Expected HIT for '{query}' but got score {score:.3f}"
+        assert_hit(query, result, DOMAIN_THRESHOLDS["light"])
 
 
 class TestHassTurnOffAnchorMisses:
@@ -195,11 +206,7 @@ class TestHassTurnOffAnchorMisses:
     async def test_turn_off_miss(self, query, reason):
         """Test TurnOff anchor misses."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score < DOMAIN_THRESHOLDS["light"], \
-            f"Expected MISS for '{query}' ({reason}) but got score {score:.3f}"
+        assert_miss(query, result, DOMAIN_THRESHOLDS["light"], reason)
 
 
 # ============================================================================
@@ -228,11 +235,7 @@ class TestHassLightSetAnchorHits:
     async def test_light_set_hit(self, query):
         """Test LightSet anchor hits."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score >= DOMAIN_THRESHOLDS["light"], \
-            f"Expected HIT for '{query}' but got score {score:.3f}"
+        assert_hit(query, result, DOMAIN_THRESHOLDS["light"])
 
 
 class TestHassLightSetAnchorMisses:
@@ -256,11 +259,7 @@ class TestHassLightSetAnchorMisses:
     async def test_light_set_miss(self, query, reason):
         """Test LightSet anchor misses."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score < DOMAIN_THRESHOLDS["light"], \
-            f"Expected MISS for '{query}' ({reason}) but got score {score:.3f}"
+        assert_miss(query, result, DOMAIN_THRESHOLDS["light"], reason)
 
 
 # ============================================================================
@@ -289,11 +288,7 @@ class TestHassGetStateAnchorHits:
     async def test_get_state_hit(self, query):
         """Test GetState anchor hits."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score >= DOMAIN_THRESHOLDS["light"], \
-            f"Expected HIT for '{query}' but got score {score:.3f}"
+        assert_hit(query, result, DOMAIN_THRESHOLDS["light"])
 
 
 class TestHassGetStateAnchorMisses:
@@ -317,11 +312,7 @@ class TestHassGetStateAnchorMisses:
     async def test_get_state_miss(self, query, reason):
         """Test GetState anchor misses."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score < DOMAIN_THRESHOLDS["light"], \
-            f"Expected MISS for '{query}' ({reason}) but got score {score:.3f}"
+        assert_miss(query, result, DOMAIN_THRESHOLDS["light"], reason)
 
 
 # NOTE: TemporaryControl tests removed - duration patterns are now
@@ -354,11 +345,7 @@ class TestHassSetPositionAnchorHits:
     async def test_set_position_hit(self, query):
         """Test SetPosition anchor hits."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score >= DOMAIN_THRESHOLDS["cover"], \
-            f"Expected HIT for '{query}' but got score {score:.3f}"
+        assert_hit(query, result, DOMAIN_THRESHOLDS["cover"])
 
 
 class TestHassSetPositionAnchorMisses:
@@ -382,11 +369,7 @@ class TestHassSetPositionAnchorMisses:
     async def test_set_position_miss(self, query, reason):
         """Test SetPosition anchor misses."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score < DOMAIN_THRESHOLDS["cover"], \
-            f"Expected MISS for '{query}' ({reason}) but got score {score:.3f}"
+        assert_miss(query, result, DOMAIN_THRESHOLDS["cover"], reason)
 
 
 class TestHassSetPositionCloseAnchorHits:
@@ -410,11 +393,7 @@ class TestHassSetPositionCloseAnchorHits:
     async def test_set_position_close_hit(self, query):
         """Test SetPosition close anchor hits."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score >= DOMAIN_THRESHOLDS["cover"], \
-            f"Expected HIT for '{query}' but got score {score:.3f}"
+        assert_hit(query, result, DOMAIN_THRESHOLDS["cover"])
 
 
 class TestHassSetPositionCloseAnchorMisses:
@@ -434,11 +413,7 @@ class TestHassSetPositionCloseAnchorMisses:
     async def test_set_position_close_miss(self, query, reason):
         """Test SetPosition close anchor misses."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score < DOMAIN_THRESHOLDS["cover"], \
-            f"Expected MISS for '{query}' ({reason}) but got score {score:.3f}"
+        assert_miss(query, result, DOMAIN_THRESHOLDS["cover"], reason)
 # CLIMATE SET TEMPERATURE ANCHOR TESTS
 # ============================================================================
 
@@ -464,11 +439,7 @@ class TestHassClimateSetTemperatureAnchorHits:
     async def test_climate_set_temp_hit(self, query):
         """Test ClimateSetTemperature anchor hits."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score >= DOMAIN_THRESHOLDS["climate"], \
-            f"Expected HIT for '{query}' but got score {score:.3f}"
+        assert_hit(query, result, DOMAIN_THRESHOLDS["climate"])
 
 
 class TestHassClimateSetTemperatureAnchorMisses:
@@ -492,11 +463,7 @@ class TestHassClimateSetTemperatureAnchorMisses:
     async def test_climate_set_temp_miss(self, query, reason):
         """Test ClimateSetTemperature anchor misses."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score < DOMAIN_THRESHOLDS["climate"], \
-            f"Expected MISS for '{query}' ({reason}) but got score {score:.3f}"
+        assert_miss(query, result, DOMAIN_THRESHOLDS["climate"], reason)
 
 
 # ============================================================================
@@ -520,11 +487,7 @@ class TestSwitchAnchorHits:
     async def test_switch_on_hit(self, query):
         """Test switch on anchor hits."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score >= DOMAIN_THRESHOLDS["switch"], \
-            f"Expected HIT for '{query}' but got score {score:.3f}"
+        assert_hit(query, result, DOMAIN_THRESHOLDS["switch"])
 
 
 class TestSwitchAnchorMisses:
@@ -541,11 +504,7 @@ class TestSwitchAnchorMisses:
     async def test_switch_miss(self, query, reason):
         """Test switch anchor misses."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score < DOMAIN_THRESHOLDS["switch"], \
-            f"Expected MISS for '{query}' ({reason}) but got score {score:.3f}"
+        assert_miss(query, result, DOMAIN_THRESHOLDS["switch"], reason)
 
 
 # ============================================================================
@@ -576,11 +535,7 @@ class TestGlobalPatternHits:
     async def test_global_pattern_hit(self, query, anchor):
         """Test global pattern anchor hits."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score >= DEFAULT_THRESHOLD, \
-            f"Expected HIT for '{query}' but got score {score:.3f}"
+        assert_hit(f"{query} (target: {anchor})", result, DEFAULT_THRESHOLD)
 
 
 class TestGlobalPatternMisses:
@@ -596,11 +551,7 @@ class TestGlobalPatternMisses:
     async def test_global_pattern_miss(self, query, anchor, reason):
         """Test global pattern anchor misses."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score < DEFAULT_THRESHOLD, \
-            f"Expected MISS for '{query}' ({reason}) but got score {score:.3f}"
+        assert_miss(f"{query} (target: {anchor})", result, DEFAULT_THRESHOLD, reason)
 
 
 # ============================================================================
@@ -623,11 +574,7 @@ class TestMediaPlayerAnchorHits:
     async def test_media_player_hit(self, query):
         """Test media player anchor hits."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score >= DEFAULT_THRESHOLD, \
-            f"Expected HIT for '{query}' but got score {score:.3f}"
+        assert_hit(query, result, DEFAULT_THRESHOLD)
 
 
 class TestMediaPlayerAnchorMisses:
@@ -645,8 +592,4 @@ class TestMediaPlayerAnchorMisses:
     async def test_media_player_miss(self, query, reason):
         """Test media player anchor misses."""
         result = await call_lookup(query)
-        results = result.get("results", [])
-        score = results[0].get("score", 0) if results else 0
-        
-        assert score < DEFAULT_THRESHOLD, \
-            f"Expected MISS for '{query}' ({reason}) but got score {score:.3f}"
+        assert_miss(query, result, DEFAULT_THRESHOLD, reason)

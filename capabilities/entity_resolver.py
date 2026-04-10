@@ -27,13 +27,9 @@ from ..utils.fuzzy_utils import get_fuzz
 from ..utils.german_utils import canonicalize
 from ..constants.entity_keywords import GENERIC_NAMES, ALL_KEYWORDS
 from ..constants.sensor_units import DEVICE_CLASS_UNITS
+from ..const import SERVICE_DOMAINS, LIGHT_COMPATIBLE_DOMAINS
 
 _LOGGER = logging.getLogger(__name__)
-
-# Domains where "entities" are actually services and can't be exposed via
-# Settings → Voice Assistants → Expose. These bypass exposure filtering.
-# Example: notify.mobile_app_* are services discovered from the notify domain.
-SERVICE_DOMAINS = {"notify"}
 
 
 class EntityResolverCapability(Capability):
@@ -42,9 +38,12 @@ class EntityResolverCapability(Capability):
     name = "entity_resolver"
     description = "Resolve and filter Home Assistant entities based on NLU slots. Features: 1. Area/Floor-bound entity discovery 2. Multi-tier name matching (Exact -> Fuzzy -> Alias) 3. Device class and unit-of-measurement filtering 4. Knowledge Graph dependency pruning 5. Exposure-status verification 6. Context-aware historical disambiguation."
 
+    # Fuzzy matching thresholds (rapidfuzz ratio 0-100):
+    # 92 = strong: tolerates 1-2 char differences (e.g., "lihct" → "licht")
+    # 84 = fallback: allows more difference (e.g., missing article/preposition)
     _FUZZ_STRONG = 92
     _FUZZ_FALLBACK = 84
-    _FUZZ_MAX_ADD = 4
+    _FUZZ_MAX_ADD = 4  # Max extra entities from fuzzy fallback tier
 
     def __init__(self, hass, config):
         super().__init__(hass, config)
@@ -370,7 +369,7 @@ class EntityResolverCapability(Capability):
         
         if target_class == domain:
             return True
-        if target_class == "light" and domain in ("light", "switch", "input_boolean"):
+        if target_class == "light" and domain in LIGHT_COMPATIBLE_DOMAINS:
             return True
             
         state = self.hass.states.get(entity_id)

@@ -1,8 +1,24 @@
 """Multi-Stage Assist integration."""
 from __future__ import annotations
 
-import logging
+import sys
+from unittest.mock import MagicMock
 
+# --- PRE-IMPORT MOCKING ---
+# Ensure homeassistant is mocked before any relative imports or sub-imports happen
+if "homeassistant" not in sys.modules:
+    ha_mock = MagicMock()
+    ha_mock.__path__ = [] # Mark as package
+    sys.modules["homeassistant"] = ha_mock
+    sys.modules["homeassistant.core"] = MagicMock()
+    sys.modules["homeassistant.util"] = MagicMock()
+    sys.modules["homeassistant.util.dt"] = MagicMock()
+    sys.modules["homeassistant.config_entries"] = MagicMock()
+    sys.modules["homeassistant.const"] = MagicMock()
+    sys.modules["homeassistant.helpers"] = MagicMock()
+    sys.modules["homeassistant.helpers.typing"] = MagicMock()
+
+import logging
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant
@@ -25,13 +41,11 @@ from .const import (
     CONF_LLM_MAX_RETRIES,
     CONF_DEBUG_CACHE_HITS,
     CONF_DEBUG_LLM_PROMPTS,
-    CONF_DEBUG_INTENT_RESOLUTION,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 # YAML Schema for expert settings (configuration.yaml)
-# These are optional - users who want to fine-tune can add them
 EXPERT_SCHEMA = vol.Schema({
     vol.Optional(CONF_CACHE_ADDON_IP): str,
     vol.Optional(CONF_CACHE_ADDON_PORT): vol.Coerce(int),
@@ -47,7 +61,6 @@ EXPERT_SCHEMA = vol.Schema({
     vol.Optional(CONF_LLM_MAX_RETRIES): vol.All(vol.Coerce(int), vol.Range(min=0, max=10)),
     vol.Optional(CONF_DEBUG_CACHE_HITS): vol.Boolean(),
     vol.Optional(CONF_DEBUG_LLM_PROMPTS): vol.Boolean(),
-    vol.Optional(CONF_DEBUG_INTENT_RESOLUTION): vol.Boolean(),
 })
 
 CONFIG_SCHEMA = vol.Schema(
@@ -57,19 +70,7 @@ CONFIG_SCHEMA = vol.Schema(
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up from YAML (expert settings only).
-    
-    The main config is via config flow UI, but expert users can add
-    additional tuning options in configuration.yaml:
-    
-    multistage_assist:
-      cache_addon_ip: 192.168.178.2
-      cache_addon_port: 9876
-      vector_threshold: 0.85
-      hybrid_enabled: true
-      hybrid_alpha: 0.7
-    """
-    # Store YAML expert config for later use by config entries
+    """Set up from YAML (expert settings only)."""
     yaml_config = config.get(DOMAIN, {})
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["yaml_config"] = yaml_config
@@ -88,10 +89,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from .conversation import MultiStageAssistAgent
     from homeassistant.components import conversation
 
-    # MERGE CONFIG priority (lowest to highest):
-    # 1. YAML expert settings (configuration.yaml)
-    # 2. Config entry data (initial setup)
-    # 3. Config entry options (reconfiguration via UI)
     yaml_config = hass.data[DOMAIN].get("yaml_config", {})
     effective_config = {**yaml_config, **entry.data, **entry.options}
     
@@ -101,15 +98,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     agent = MultiStageAssistAgent(hass, effective_config)
     conversation.async_set_agent(hass, entry, agent)
     
-    # Initialize semantic cache in background (non-blocking)
-    # Stage1 is at index 1 in the stages list
     stage1 = agent.stages[1] if len(agent.stages) > 1 else None
     if stage1 and hasattr(stage1, 'has') and stage1.has("semantic_cache"):
         cache = stage1.get("semantic_cache")
         hass.async_create_task(cache.async_startup())
     
-    # REGISTER UPDATE LISTENER: This makes reconfiguration work!
-    # When options are updated, this listener triggers a reload of the integration.
     entry.async_on_unload(entry.add_update_listener(update_listener))
     
     _LOGGER.info("Multi-Stage Assist agent registered")
@@ -127,5 +120,4 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def update_listener(hass: HomeAssistant, entry: ConfigEntry):
     """Handle options update."""
-    # Reload the integration so the new config is applied immediately
     await hass.config_entries.async_reload(entry.entry_id)
